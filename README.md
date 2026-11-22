@@ -53,7 +53,7 @@ Z [Vydaní (Releases)](https://github.com/tarzanislav/kometa/releases) stiahni s
 - **Windows 10/11:** `Kometa-X.Y.Z-windows-x64-setup.exe` – inštaluje sa len pre teba, bez práv správcu. Inštalátor nie je digitálne podpísaný, preto Windows ukáže „Windows ochránil váš počítač“ → **Ďalšie informácie → Spustiť aj tak**.
 - **macOS 11+ (Apple Silicon aj Intel):** `Kometa-X.Y.Z-macos.dmg` – presuň Kometu do Aplikácií. Pri prvom spustení: pravé tlačidlo → **Otvoriť** (alebo Nastavenia systému → Súkromie a bezpečnosť → **Aj tak otvoriť**).
 - **Linux:** `Kometa-X.Y.Z-linux-x86_64.AppImage` (stačí povoliť spustenie) alebo `Kometa-X.Y.Z-linux-amd64.deb` pre Ubuntu/Debian.
-- **Bez inštalácie:** `kometa-X.Y.Z-…` je jeden súbor – `kometa okno` otvorí to isté rozhranie v okne Edge/Chrome, ostatné príkazy sú v časti o jadre nižšie.
+- **Bez inštalácie, pre príkazový riadok:** `kometa-X.Y.Z-…-noGUI` je jeden súbor bez vlastného okna (dvojklikom sa nič neotvorí). Príkaz `kometa okno` z neho otvorí rozhranie v okne Edge/Chrome, ostatné príkazy sú v časti o jadre nižšie. Na bežné používanie stačí aplikácia vyššie.
 
 Kontrolné súčty všetkých súborov sú v `SHA256SUMS.txt`.
 

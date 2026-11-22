@@ -1,6 +1,7 @@
 name: Balíky aplikácie
 
-# Inštalačné balíky aplikácie s jadrom v Ruste (Tauri) a samostatný program `kometa`.
+# Inštalačné balíky aplikácie s jadrom v Ruste (Tauri) a samostatný program `kometa`
+# pre príkazový riadok (v názve „noGUI“ – nemá vlastné okno, nič sa neinštaluje).
 # Volá ho „Vydanie“ pred zverejnením. Ručné spustenie (Run workflow) je len skúška –
 # balíky ostanú ako artefakty behu, nič sa nezverejní.
 on:
@@ -73,14 +74,14 @@ jobs:
           case "$RUNNER_OS" in
             Windows)
               cp target/release/bundle/nsis/*-setup.exe "dist/Kometa-$v-windows-x64-setup.exe"
-              cp target/release/kometa.exe "dist/kometa-$v-windows-x64.exe" ;;
+              cp target/release/kometa.exe "dist/kometa-$v-windows-x64-noGUI.exe" ;;
             macOS)
               cp target/universal-apple-darwin/release/bundle/dmg/*.dmg "dist/Kometa-$v-macos.dmg"
-              cp kometa-macos "dist/kometa-$v-macos" ;;
+              cp kometa-macos "dist/kometa-$v-macos-noGUI" ;;
             Linux)
               cp target/release/bundle/appimage/*.AppImage "dist/Kometa-$v-linux-x86_64.AppImage"
               cp target/release/bundle/deb/*.deb "dist/Kometa-$v-linux-amd64.deb"
-              cp target/release/kometa "dist/kometa-$v-linux-x86_64" ;;
+              cp target/release/kometa "dist/kometa-$v-linux-x86_64-noGUI" ;;
           esac
           ls -la dist
 
