@@ -21,6 +21,9 @@ pub enum Chyba {
     Stranka,
     #[error("Chyba disku: {0}")]
     Io(#[from] std::io::Error),
+    /// Vlastné spájanie tento kodek alebo formát (zatiaľ) nepozná – použije sa FFmpeg, ak je k dispozícii.
+    #[error("Nepodporovaný formát: {0}")]
+    Nepodporovane(String),
     #[error("{0}")]
     Ine(String),
 }
@@ -46,6 +49,7 @@ impl Chyba {
             Chyba::Pauza => "pauza",
             Chyba::Stranka => "stranka",
             Chyba::Io(_) => "disk",
+            Chyba::Nepodporovane(_) => "nepodporovane",
             Chyba::Ine(_) => "ine",
         }
     }

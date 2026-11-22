@@ -152,7 +152,8 @@ V priečinku [`jadro/`](jadro) vzniká nové jadro Komety v Ruste: jeden spustit
 
 - **súbory** po úsekoch cez viac spojení s pokračovaním, adaptívnym počtom spojení a obnovou odkazov;
 - **HLS** (`.m3u8`) aj **DASH** (`.mpd` – šablóny s číslom aj časovou osou, zoznamy, BaseURL) – vlastné parsery, kúsky sa sťahujú súbežne a po prerušení sa pokračuje;
-- **výber kvality** (`--max-vyska`) a **jazykov zvuku v poradí** (`-j cs,sk,en`) a spojenie do **MKV alebo MP4** s jazykmi a predvolenou stopou;
+- **výber kvality** (`--max-vyska`) a **jazykov zvuku v poradí** (`-j cs,sk,en`);
+- **vlastné spájanie do MKV aj MP4 – bez FFmpeg.** Číta MPEG-TS (H.264, AAC) a MP4/fragmentované MP4 (H.264, HEVC, AV1, VP9, AAC, Opus, MP3, AC-3, E-AC-3), zapisuje Matroska aj MP4 s jazykmi, názvami, predvolenou stopou a bodmi na pretáčanie. Nič sa neprekóduje, výsledok sa po zápise skontroluje. Zvláda B-snímky, edit listy aj nespojitosti časov v HLS. Pamäť ~10 MB aj pri veľkých súboroch. FFmpeg sa použije len pre formát, ktorý vlastné spájanie zatiaľ nepozná (napr. HEVC v MPEG-TS) – a nikdy potichu;
 - **šifrovaný obsah (DRM) zámerne nesťahuje** – skončí kódom 2; živé vysielanie kódom 4.
 
 ```
@@ -160,13 +161,14 @@ cd jadro && cargo build --release
 kometa info ODKAZ -j cs,sk                         # kvality, jazyky a stopy – nič nesťahuje
 kometa stiahni ODKAZ -o PRIEČINOK -j cs,sk,en      # HLS/DASH → MKV (alebo --mp4), súbor priamo
 kometa stiahni ODKAZ --max-vyska 1080 --json       # udalosti ako JSON pre okno Komety
+kometa spoj -o film.mkv video.ts "cs.ts#zvuk#cs#Čeština" "sk.ts#zvuk#sk#Slovenčina"   # vlastné súbory → MKV/MP4
 ```
 
-Ďalej: Vimeo a skener stránok v Ruste, vlastné spájanie bez FFmpeg a prepojenie s oknom Komety (Tauri).
+Ďalej: Vimeo a skener stránok v Ruste a prepojenie s oknom Komety (Tauri).
 
 ## Plán ďalšieho vývoja
 
-1. **Jadro v Ruste** – vlastné HLS a DASH, Vimeo a skener stránok, vlastné spájanie stôp do MKV/MP4 bez FFmpeg; jeden program pre Windows, macOS, Linux a Android (rozhranie cez Tauri).
+1. **Jadro v Ruste** – hotové: súbory, HLS, DASH a vlastné spájanie do MKV/MP4 bez FFmpeg. Ďalej Vimeo a skener stránok a jeden program pre Windows, macOS, Linux a Android (rozhranie cez Tauri).
 2. **Titulky a preklad lokálnou AI** – prepis reči, preložené titulky vložené do MKV/MP4. Bez účtu, bez internetu, bez kreditov.
 3. **AI dabing** – preklad zvuku do iného jazyka ako nová zvuková stopa: šablóny hlasov (ženské a mužské, rôzny vek), prirodzený prednes, zachovaná hudba a zvuky pozadia. Podrobný plán a pravidlá (licencie hlasov, ochrana skutočných ľudí, označovanie) sú v [docs/plan-ai.md](docs/plan-ai.md).
 

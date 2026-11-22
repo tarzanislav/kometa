@@ -1,6 +1,6 @@
 [package]
 name = "kometa-jadro"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Kometa – vlastné jadro na sťahovanie: HTTP po úsekoch s pokračovaním, HLS, DASH"
 license = "MIT"

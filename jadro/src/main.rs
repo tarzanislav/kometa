@@ -7,6 +7,7 @@ use clap::{Args, Parser, Subcommand};
 use kometa_jadro::chyba::{Chyba, Vysledok};
 use kometa_jadro::http::{self, Moznosti};
 use kometa_jadro::klient::{self, bezpecny_nazov, volna_cesta, Nastavenia};
+use kometa_jadro::media;
 use kometa_jadro::stream;
 use kometa_jadro::udalosti::{Hlasic, Udalost};
 use std::io::Write;
@@ -32,6 +33,20 @@ enum Prikaz {
         url: String,
         #[command(flatten)]
         volby: Volby,
+    },
+    /// Spojí súbory (MPEG-TS, MP4) do jedného MKV alebo MP4 bez prekódovania – vlastným kódom, bez FFmpeg
+    ///
+    /// VSTUP je cesta, voliteľne s údajmi oddelenými znakom #: cesta#druh#jazyk#názov,
+    /// napr. zvuk.ts#zvuk#cs#Čeština (druh: video, zvuk alebo video+zvuk).
+    Spoj {
+        /// Výsledný súbor (.mkv, .mka, .mp4 alebo .m4a)
+        #[arg(short = 'o', long = "vystup")]
+        vystup: PathBuf,
+        /// Názov (titul) výsledku
+        #[arg(short = 't', long)]
+        titul: Option<String>,
+        #[arg(required = true)]
+        vstupy: Vec<String>,
     },
     /// Stiahne súbor alebo stream (HLS/DASH sa spojí do jedného MKV alebo MP4)
     Stiahni {
@@ -144,6 +159,49 @@ fn urlencoding_dekod(s: &str) -> String {
 
 async fn spusti(cli: Cli, zrusenie: CancellationToken) -> Vysledok<()> {
     match cli.prikaz {
+        Prikaz::Spoj {
+            vystup,
+            titul,
+            vstupy,
+        } => {
+            let vstupy: Vec<media::spajac::Vstup> = vstupy
+                .iter()
+                .map(|v| {
+                    let mut casti = v.split('#');
+                    let cesta = PathBuf::from(casti.next().unwrap_or_default());
+                    let druh = casti
+                        .next()
+                        .filter(|x| !x.is_empty())
+                        .unwrap_or("video+zvuk")
+                        .to_string();
+                    let jazyk = casti.next().filter(|x| !x.is_empty()).map(str::to_string);
+                    let nazov = casti.next().filter(|x| !x.is_empty()).map(str::to_string);
+                    media::spajac::Vstup {
+                        cesta,
+                        druh,
+                        jazyk,
+                        nazov,
+                    }
+                })
+                .collect();
+            let titul = titul.unwrap_or_else(|| {
+                vystup
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_string()
+            });
+            let ciel = vystup.clone();
+            let pocty =
+                tokio::task::spawn_blocking(move || media::spajac::spoj(&vstupy, &ciel, &titul))
+                    .await
+                    .map_err(|e| Chyba::Ine(e.to_string()))??;
+            println!(
+                "{}",
+                serde_json::json!({"subor": vystup.display().to_string(), "vzorky": pocty})
+            );
+            Ok(())
+        }
         Prikaz::Info { url, volby } => {
             let n = volby.nastavenia();
             let k = klient::klient(&n)?;

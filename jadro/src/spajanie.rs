@@ -106,10 +106,43 @@ pub fn ffmpeg() -> Option<PathBuf> {
 }
 
 /// Spojí vstupy do `ciel` (prípona .mkv alebo .mp4 určuje formát). Prvá zvuková stopa je predvolená.
+///
+/// Spája vlastný kód jadra ([`crate::media::spajac`]); FFmpeg sa použije len vtedy, keď vlastné
+/// spájanie formát nepozná (napr. HEVC v MPEG-TS), alebo keď to vyžiada premenná
+/// `KOMETA_SPAJANIE=ffmpeg`.
 pub async fn spoj(vstupy: &[Vstup], ciel: &Path, titul: &str) -> Vysledok<PathBuf> {
     if vstupy.is_empty() {
         return Err(Chyba::Format("nie je čo spájať".into()));
     }
+    let vynutit_ffmpeg =
+        std::env::var("KOMETA_SPAJANIE").is_ok_and(|v| v.eq_ignore_ascii_case("ffmpeg"));
+    if !vynutit_ffmpeg {
+        let vlastne: Vec<crate::media::spajac::Vstup> = vstupy
+            .iter()
+            .map(|v| crate::media::spajac::Vstup {
+                cesta: v.cesta.clone(),
+                druh: v.druh.clone(),
+                jazyk: v.jazyk.clone(),
+                nazov: v.nazov.clone(),
+            })
+            .collect();
+        let (c, t) = (ciel.to_path_buf(), titul.to_string());
+        let vysledok =
+            tokio::task::spawn_blocking(move || crate::media::spajac::spoj(&vlastne, &c, &t))
+                .await
+                .map_err(|e| Chyba::Ine(format!("spájanie sa prerušilo: {e}")))?;
+        match vysledok {
+            Ok(_) => return Ok(ciel.to_path_buf()),
+            // šifrovanie a chyby disku sa neobchádzajú
+            Err(e @ (Chyba::Drm(_) | Chyba::Io(_))) => return Err(e),
+            Err(e) if ffmpeg().is_none() => return Err(e),
+            Err(_) => {} // nepodporovaný alebo nezvyčajný formát → FFmpeg
+        }
+    }
+    spoj_ffmpeg(vstupy, ciel, titul).await
+}
+
+async fn spoj_ffmpeg(vstupy: &[Vstup], ciel: &Path, titul: &str) -> Vysledok<PathBuf> {
     let Some(ff) = ffmpeg() else {
         if vstupy.len() == 1 {
             // jedna stopa sa zaobíde bez spájania – ostane v pôvodnom kontajneri

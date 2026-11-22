@@ -102,14 +102,15 @@ def main() -> int:
         udalosti = [json.loads(r) for r in so.splitlines() if r.strip()]
         assert udalosti[-1]["typ"] == "hotovo", udalosti[-1]
         fmt, st = sonda(out / "hls.mkv")
-        assert "matroska" in fmt and st == [("video", 360, None, 0), ("audio", None, "cze", 1), ("audio", None, "slo", 0)], st
+        assert "matroska" in fmt and st == [("video", 360, None, 1), ("audio", None, "cze", 1), ("audio", None, "slo", 0)], st
         print("HLS master → MKV, 360p, cze+slo: OK")
         # 2) najviac 200 px, MP4
         kod, so, se = kometa("stiahni", base + "master.m3u8", "-o", str(out), "-n", "male", "--max-vyska", "200",
                              "-j", "sk", "--mp4")
         assert kod == 0, (kod, se)
         fmt, st = sonda(out / "male.mp4")
-        assert "mp4" in fmt and st[0][1] == 180 and [s[2] for s in st[1:]] == ["slo"], st
+        # MP4 má jazyk podľa normy v tvare ISO 639-2/T (slk), MKV v tvare B (slo)
+        assert "mp4" in fmt and st[0][1] == 180 and [s[2] for s in st[1:]] == ["slk"], st
         print("HLS --max-vyska 200 --mp4: OK")
         # 3) DASH s časovou osou aj s číslom
         for meno in ("dash_tl", "dash_num"):
