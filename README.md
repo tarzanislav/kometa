@@ -154,21 +154,26 @@ V priečinku [`jadro/`](jadro) vzniká nové jadro Komety v Ruste: jeden spustit
 - **HLS** (`.m3u8`) aj **DASH** (`.mpd` – šablóny s číslom aj časovou osou, zoznamy, BaseURL) – vlastné parsery, kúsky sa sťahujú súbežne a po prerušení sa pokračuje;
 - **výber kvality** (`--max-vyska`) a **jazykov zvuku v poradí** (`-j cs,sk,en`);
 - **vlastné spájanie do MKV aj MP4 – bez FFmpeg.** Číta MPEG-TS (H.264, AAC) a MP4/fragmentované MP4 (H.264, HEVC, AV1, VP9, AAC, Opus, MP3, AC-3, E-AC-3), zapisuje Matroska aj MP4 s jazykmi, názvami, predvolenou stopou a bodmi na pretáčanie. Nič sa neprekóduje, výsledok sa po zápise skontroluje. Zvláda B-snímky, edit listy aj nespojitosti časov v HLS. Pamäť ~10 MB aj pri veľkých súboroch. FFmpeg sa použije len pre formát, ktorý vlastné spájanie zatiaľ nepozná (napr. HEVC v MPEG-TS) – a nikdy potichu;
-- **šifrovaný obsah (DRM) zámerne nesťahuje** – skončí kódom 2; živé vysielanie kódom 4.
+- **skener stránok** – vlastný čítač HTML prejde stránku aj vnorené rámčeky (2 úrovne), nájde prehrávače, streamy a súbory v značkách, atribútoch `data-*`, metaúdajoch (Open Graph, JSON-LD) aj v skriptoch, vynechá reklamy a vyberie hlavné video. Či ide o stránku, stream alebo súbor, rozhodne obsah – nie len typ, ktorý pošle server;
+- **Vimeo** – verejné, neverejné (s kľúčom `h=…`) aj obmedzené na doménu: skener sám pošle adresu stránky, kde je video vložené (Referer). Pri videu s heslom povie, čo robiť;
+- **JW Player, Wistia, Cloudflare Stream a Bunny Stream** cez ich verejné rozhrania prehrávača;
+- **šifrovaný obsah (DRM) zámerne nesťahuje** – skončí kódom 2; živé vysielanie kódom 4; služby, ktoré jadro ešte nepozná (napr. YouTube), kódom 5 – tie zatiaľ sťahuje okno Komety.
 
 ```
 cd jadro && cargo build --release
-kometa info ODKAZ -j cs,sk                         # kvality, jazyky a stopy – nič nesťahuje
-kometa stiahni ODKAZ -o PRIEČINOK -j cs,sk,en      # HLS/DASH → MKV (alebo --mp4), súbor priamo
+kometa skenuj STRÁNKA                              # čo je na stránke (★ = odporúčané), --json pre program
+kometa info ODKAZ -j cs,sk                         # čo sa stiahne: kvality, jazyky a stopy – nič nesťahuje
+kometa stiahni ODKAZ -o PRIEČINOK -j cs,sk,en      # stránka, prehrávač, HLS/DASH → MKV (alebo --mp4), súbor
+kometa stiahni ODKAZ_NA_VIMEO --referer STRÁNKA    # video obmedzené na doménu, keď nemáš adresu celej stránky
 kometa stiahni ODKAZ --max-vyska 1080 --json       # udalosti ako JSON pre okno Komety
 kometa spoj -o film.mkv video.ts "cs.ts#zvuk#cs#Čeština" "sk.ts#zvuk#sk#Slovenčina"   # vlastné súbory → MKV/MP4
 ```
 
-Ďalej: Vimeo a skener stránok v Ruste a prepojenie s oknom Komety (Tauri).
+Ďalej: prepojenie s oknom Komety (Tauri) – jadro bude sťahovať všetko okrem YouTube a podobných služieb, tie ostanú na yt-dlp.
 
 ## Plán ďalšieho vývoja
 
-1. **Jadro v Ruste** – hotové: súbory, HLS, DASH a vlastné spájanie do MKV/MP4 bez FFmpeg. Ďalej Vimeo a skener stránok a jeden program pre Windows, macOS, Linux a Android (rozhranie cez Tauri).
+1. **Jadro v Ruste** – hotové: súbory, HLS, DASH, vlastné spájanie do MKV/MP4 bez FFmpeg, skener stránok, Vimeo a ďalšie prehrávače. Ďalej jeden program pre Windows, macOS, Linux a Android (rozhranie cez Tauri).
 2. **Titulky a preklad lokálnou AI** – prepis reči, preložené titulky vložené do MKV/MP4. Bez účtu, bez internetu, bez kreditov.
 3. **AI dabing** – preklad zvuku do iného jazyka ako nová zvuková stopa: šablóny hlasov (ženské a mužské, rôzny vek), prirodzený prednes, zachovaná hudba a zvuky pozadia. Podrobný plán a pravidlá (licencie hlasov, ochrana skutočných ľudí, označovanie) sú v [docs/plan-ai.md](docs/plan-ai.md).
 

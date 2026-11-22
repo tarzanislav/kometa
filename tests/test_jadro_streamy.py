@@ -134,7 +134,7 @@ def main() -> int:
         print("Živé vysielanie (kód 4): OK")
         # 7) info
         kod, so, se = kometa("info", base + "master.m3u8", "-j", "sk,en")
-        plan = json.loads(so)
+        plan = json.loads(so)["plan"]
         assert kod == 0 and plan["format"] == "hls" and plan["jazyky"] == ["en", "cs", "sk"], plan
         assert [s["jazyk"] for s in plan["stopy"][1:]] == ["sk", "en"] and len(plan["kvality"]) == 2, plan
         print("info: OK")

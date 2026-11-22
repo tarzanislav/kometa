@@ -307,7 +307,10 @@ pub async fn stiahni(
             (None, "zvuk") => "zvuk".to_string(),
             _ => "obraz".to_string(),
         };
-        udalosti::info(hlasic, format!("Sťahujem {meno} ({} kúskov)…", s.kuskov));
+        udalosti::info(
+            hlasic,
+            format!("Sťahujem {meno} ({})…", pocet_kuskov(s.kuskov)),
+        );
         kusky::stiahni_stopu(k, &s.stopa, &cesta, spojenia, zrusenie, hlasic, &meno).await?;
         vstupy.push(Vstup {
             cesta,
@@ -324,6 +327,15 @@ pub async fn stiahni(
         }
     }
     Ok(vysledok)
+}
+
+/// „1 kúsok“, „3 kúsky“, „7 kúskov“.
+fn pocet_kuskov(n: usize) -> String {
+    match n {
+        1 => "1 kúsok".into(),
+        2..=4 => format!("{n} kúsky"),
+        _ => format!("{n} kúskov"),
+    }
 }
 
 #[cfg(test)]

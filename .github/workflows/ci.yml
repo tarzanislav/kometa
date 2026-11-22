@@ -74,7 +74,7 @@ jobs:
         run: |
           cargo build --locked
           cargo test --locked
-      - name: Skutočné streamy HLS a DASH a vlastné spájanie MKV/MP4 (FFmpeg len na prípravu a kontrolu)
+      - name: Streamy HLS/DASH, vlastné spájanie MKV/MP4 a skener stránok (FFmpeg len na prípravu a kontrolu)
         if: runner.os == 'Linux'
         working-directory: .
         run: |
@@ -82,3 +82,4 @@ jobs:
           (cd jadro && cargo build --release --locked)
           python3 tests/test_jadro_streamy.py
           python3 tests/test_jadro_spajanie.py
+          python3 tests/test_jadro_web.py

@@ -9,7 +9,9 @@ use kometa_jadro::http::{self, Moznosti};
 use kometa_jadro::klient::{self, bezpecny_nazov, volna_cesta, Nastavenia};
 use kometa_jadro::media;
 use kometa_jadro::stream;
+use kometa_jadro::udalosti;
 use kometa_jadro::udalosti::{Hlasic, Udalost};
+use kometa_jadro::web::{self, riesenie::Ciel};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -28,6 +30,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Prikaz {
+    /// Prehľadá stránku (aj vnorené rámčeky) a vypíše nájdené videá, prehrávače a súbory
+    Skenuj {
+        url: String,
+        /// Výsledok ako JSON
+        #[arg(long)]
+        json: bool,
+        #[command(flatten)]
+        volby: Volby,
+    },
     /// Zistí, čo je na adrese (pri streame kvality, jazyky a stopy) – nič nesťahuje
     Info {
         url: String,
@@ -157,6 +168,25 @@ fn urlencoding_dekod(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+fn s_refererom(n: &Nastavenia, referer: &Option<String>) -> Nastavenia {
+    let mut n2 = n.clone();
+    if referer.is_some() {
+        n2.referer = referer.clone();
+    }
+    n2
+}
+
+/// Čo sa z adresy stiahne: prehrávač, stream, súbor alebo najlepší nález zo stránky.
+async fn ciel_adresy(
+    k: &reqwest::Client,
+    url: &str,
+    n: &Nastavenia,
+    h: &Hlasic,
+) -> Vysledok<(Ciel, Vec<web::skener::Nalez>)> {
+    let r = web::riesenie::vyries(k, url, n.referer.as_deref(), h).await?;
+    Ok((r.ciel, r.dalsie))
+}
+
 async fn spusti(cli: Cli, zrusenie: CancellationToken) -> Vysledok<()> {
     match cli.prikaz {
         Prikaz::Spoj {
@@ -202,21 +232,64 @@ async fn spusti(cli: Cli, zrusenie: CancellationToken) -> Vysledok<()> {
             );
             Ok(())
         }
+        Prikaz::Skenuj { url, json, volby } => {
+            let n = volby.nastavenia();
+            let k = klient::klient(&n)?;
+            let h = if json {
+                udalosti::tichy()
+            } else {
+                hlasic(false)
+            };
+            let nalezy = web::skener::Skener::new(&k, &h)
+                .prehladaj(&url, n.referer.as_deref())
+                .await?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&nalezy).unwrap_or_default()
+                );
+            } else if nalezy.is_empty() {
+                println!("Na stránke sa nenašlo nič na stiahnutie.");
+            } else {
+                for x in &nalezy {
+                    println!(
+                        "{} {:>3}  {:<10} {:<14} {}{}",
+                        if x.odporucane { "★" } else { " " },
+                        x.skore,
+                        x.druh_text,
+                        x.poskytovatel,
+                        x.url,
+                        if x.poznamka.is_empty() {
+                            String::new()
+                        } else {
+                            format!("  ({})", x.poznamka)
+                        }
+                    );
+                }
+            }
+            Ok(())
+        }
         Prikaz::Info { url, volby } => {
             let n = volby.nastavenia();
             let k = klient::klient(&n)?;
-            if stream::je_stream(&k, &url).await? {
-                let plan = stream::naplanuj(&k, &url, &n).await?;
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&plan).unwrap_or_default()
-                );
-            } else {
-                println!(
-                    "{}",
-                    serde_json::json!({"format": "subor", "nazov": nazov_z_adresy(&url)})
-                );
-            }
+            let h = udalosti::tichy();
+            let (ciel, dalsie) = ciel_adresy(&k, &url, &n, &h).await?;
+            let plan = match &ciel {
+                Ciel::Stream {
+                    url: s, referer, ..
+                } => {
+                    let n2 = s_refererom(&n, referer);
+                    Some(stream::naplanuj(&klient::klient(&n2)?, s, &n2).await?)
+                }
+                Ciel::Subor { .. } => None,
+            };
+            println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    &serde_json::json!({"ciel": ciel, "plan": plan, "dalsie": dalsie})
+                )
+                .unwrap_or_default()
+            );
             Ok(())
         }
         Prikaz::Stiahni {
@@ -231,36 +304,70 @@ async fn spusti(cli: Cli, zrusenie: CancellationToken) -> Vysledok<()> {
             let k = klient::klient(&n)?;
             let h = hlasic(json);
             tokio::fs::create_dir_all(&vystup).await?;
-            let subor = if stream::je_stream(&k, &url).await? {
-                let plan = stream::naplanuj(&k, &url, &n).await?;
-                let meno = nazov.clone().unwrap_or_else(|| {
-                    let z = nazov_z_adresy(&url);
-                    Path::new(&z)
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("kometa")
-                        .to_string()
-                });
-                let pripona = if mp4 { "mp4" } else { "mkv" };
-                // rovnaký cieľ pri opakovanom spustení = pokračovanie (kúsky ostali na disku)
-                let ciel = vystup.join(format!("{}.{pripona}", bezpecny_nazov(&meno)));
-                let ciel = if tokio::fs::try_exists(&ciel).await.unwrap_or(false) {
-                    volna_cesta(&ciel)
-                } else {
-                    ciel
-                };
-                stream::stiahni(&k, &plan, &ciel, &meno, n.spojenia, &zrusenie, &h).await?
-            } else {
-                let meno = nazov
-                    .map(|x| bezpecny_nazov(&x))
-                    .unwrap_or_else(|| bezpecny_nazov(&nazov_z_adresy(&url)));
-                let m = Moznosti {
-                    spojenia: n.spojenia,
-                    ocakavana_velkost: None,
-                    zrusenie: zrusenie.clone(),
-                    hlasic: h.clone(),
-                };
-                http::stiahni(&k, http::pevna_url(url.clone()), &vystup.join(meno), &m).await?
+            let (ciel, _) = ciel_adresy(&k, &url, &n, &h).await?;
+            let subor = match ciel {
+                Ciel::Stream {
+                    url: s_url,
+                    referer,
+                    nazov: zisteny,
+                    poskytovatel,
+                } => {
+                    let n2 = s_refererom(&n, &referer);
+                    let k2 = klient::klient(&n2)?;
+                    if let Some(z) = &zisteny {
+                        udalosti::info(&h, format!("{poskytovatel}: {z}"));
+                    }
+                    let plan = stream::naplanuj(&k2, &s_url, &n2).await?;
+                    let meno = nazov.clone().or(zisteny).unwrap_or_else(|| {
+                        let z = nazov_z_adresy(&s_url);
+                        Path::new(&z)
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("kometa")
+                            .to_string()
+                    });
+                    let pripona = if mp4 { "mp4" } else { "mkv" };
+                    // rovnaký cieľ pri opakovanom spustení = pokračovanie (kúsky ostali na disku)
+                    let ciel = vystup.join(format!("{}.{pripona}", bezpecny_nazov(&meno)));
+                    let ciel = if tokio::fs::try_exists(&ciel).await.unwrap_or(false) {
+                        volna_cesta(&ciel)
+                    } else {
+                        ciel
+                    };
+                    stream::stiahni(&k2, &plan, &ciel, &meno, n2.spojenia, &zrusenie, &h).await?
+                }
+                Ciel::Subor {
+                    url: f_url,
+                    referer,
+                    nazov: zisteny,
+                    pripona,
+                    ..
+                } => {
+                    let n2 = s_refererom(&n, &referer);
+                    let k2 = klient::klient(&n2)?;
+                    let s_priponou = |meno: String| match &pripona {
+                        Some(p) if Path::new(&meno).extension().is_none() => format!("{meno}.{p}"),
+                        _ => meno,
+                    };
+                    let meno = match (nazov, zisteny) {
+                        (Some(x), _) => s_priponou(x),
+                        (None, Some(z)) => s_priponou(z),
+                        (None, None) => nazov_z_adresy(&f_url),
+                    };
+                    let m = Moznosti {
+                        spojenia: n2.spojenia,
+                        ocakavana_velkost: None,
+                        zrusenie: zrusenie.clone(),
+                        hlasic: h.clone(),
+                    };
+                    http::stiahni(
+                        &k2,
+                        http::pevna_url(f_url.clone()),
+                        &vystup.join(bezpecny_nazov(&meno)),
+                        &m,
+                    )
+                    .await?
+                }
             };
             h(Udalost::Hotovo {
                 subor: subor.display().to_string(),
@@ -288,6 +395,7 @@ async fn main() {
         std::process::exit(match e {
             Chyba::Drm(_) => 2,
             Chyba::Zive => 4,
+            Chyba::Nepodporovane(_) => 5,
             Chyba::Pauza => 130,
             _ => 1,
         });
