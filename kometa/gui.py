@@ -15,7 +15,7 @@ from tkinter import font as tkfont
 from . import media, skener
 from .common import (ANSI, APP_NAME, CONFIG_DIR, DEFAULT_LANGS, Cancelled, apply_settings, check_dependencies,
                      clean_error, default_outdir, delete_password, format_duration, get_password, human_eta,
-                     human_size, human_speed, load_config, open_folder, save_config, set_password)
+                     human_size, human_speed, load_config, open_folder, safe_name, save_config, set_password)
 from .fronta import STATUS_TEXT, DownloadQueue
 from .hosts import Accounts, FastshareClient, WebshareClient
 from .jazyky import fetch_info, list_audio_tracks, pick_tracks, run_job
@@ -179,6 +179,9 @@ def _extra_styles(theme) -> None:
     s.configure("Ok.Card.TLabel", background=CARD, foreground="#15803d", font=theme.f_bold)
     s.configure("Err.Card.TLabel", background=CARD, foreground=ACCENT_DARK, font=theme.f_bold)
     s.configure("Warn.TLabel", background=BG, foreground=ACCENT_DARK, font=theme.f_small_bold)
+    s.configure("Plain.TCheckbutton", background=BG)
+    s.layout("Plain.TCheckbutton", s.layout("TCheckbutton"))
+    s.map("Plain.TCheckbutton", background=[("active", BG)])
 
 
 def _bar(frac: float | None, width: int = 8) -> str:
@@ -696,7 +699,7 @@ class DownloadsTab:
         row.pack(fill="x")
         box = tk.Frame(row, bg="white", highlightthickness=1, highlightbackground="#cfd4db", highlightcolor=ACCENT)
         box.pack(side="left", fill="both", expand=True)
-        self.links = tk.Text(box, height=5, width=40, relief="flat", bd=0, bg="white", fg=TEXT, wrap="none",
+        self.links = tk.Text(box, height=6, width=40, relief="flat", bd=0, bg="white", fg=TEXT, wrap="none",
                              font=self.t.f_sub, padx=8, pady=6, insertbackground=TEXT, undo=True)
         self.links.pack(fill="both", expand=True)
         self.links.tag_configure("hint", foreground="#9aa1ab")
@@ -707,6 +710,8 @@ class DownloadsTab:
         side = ttk.Frame(row, style="Card.TFrame")
         side.pack(side="left", fill="y", padx=(10, 0))
         ttk.Button(side, text="Vložiť zo schránky", command=self.paste).pack(fill="x")
+        ttk.Button(side, text="Playlist / kanál…", style="Soft.TButton", command=self.open_playlist).pack(
+            fill="x", pady=(6, 0))
         ttk.Button(side, text="Prehľadať stránku…", style="Soft.TButton", command=self.scan_page).pack(
             fill="x", pady=(6, 0))
         ttk.Button(side, text="Stiahnuť", style="Accent.TButton", command=self.add).pack(fill="x", pady=(6, 0))
@@ -725,7 +730,8 @@ class DownloadsTab:
         ttk.Entry(opts, textvariable=self.win.outdir_var).pack(side="left", fill="x", expand=True, padx=(6, 6))
         ttk.Button(opts, text="Zmeniť…", command=self.win.pick_outdir).pack(side="left")
         ttk.Label(b1, style="Muted.Card.TLabel",
-                  text="YouTube · Facebook · Instagram · TikTok (bez vodoznaku) · Webshare · Fastshare · "
+                  text="YouTube (aj celé playlisty a kanály) · Facebook · Instagram · TikTok (bez vodoznaku) · "
+                       "Webshare · Fastshare · "
                        "ďalšie stránky s videom aj priame odkazy na súbory. Prerušené sťahovanie pokračuje "
                        "tam, kde skončilo. Na iných stránkach (kurzy, články, Vimeo vo vložených prehrávačoch) "
                   "nájde video skener – automaticky alebo cez „Prehľadať stránku…“.", wraplength=860,
@@ -829,15 +835,28 @@ class DownloadsTab:
             messagebox.showerror(APP_NAME, f"Do priečinka sa nedá ukladať:\n{e}")
             return
         self._save_preset()
-        new = self.dq.add(urls, self._preset(), outdir)
+        collections = [u for u in urls if media.is_collection(u)]
+        urls = [u for u in urls if u not in collections]
+        new = self.dq.add(urls, self._preset(), outdir) if urls else []
         self.links.delete("1.0", "end")
         self._show_hint()
+        for u in collections:          # playlist alebo kanál → okno s výberom videí
+            PlaylistDialog(self.win, u)
+        if not urls:
+            return
         skipped = len(urls) - len(new)
         self.win.set_status(f"Pridané do frontu: {len(new)}" + (f" (už vo fronte: {skipped})" if skipped else ""))
 
     def scan_page(self):
         urls = self._get_links()
+        if urls and media.is_collection(urls[0]):
+            PlaylistDialog(self.win, urls[0])
+            return
         ScanDialog(self.win, urls[0] if urls else "")
+
+    def open_playlist(self):
+        urls = self._get_links()
+        PlaylistDialog(self.win, urls[0] if urls else "")
 
     def _selected(self) -> list[str]:
         return list(self.tv.selection())
@@ -1084,6 +1103,178 @@ class ScanDialog:
             self.win.dq.add([n.url], d._preset(), outdir, referer=n.referer, password=self.pw_var.get() or None,
                             titles=[n.title], providers=[n.provider], from_scan=True)
         self.win.set_status(f"Pridané do frontu: {len(picks)}")
+        self.win.nb.select(0)
+        self.top.destroy()
+
+
+class PlaylistDialog:
+    """Okno „Playlist / kanál“ – zoznam videí na výber (všetky, najnovšie, podľa filtra)."""
+
+    COLS = (("n", "#", 46, "e"), ("title", "Názov", 470, "w"), ("dur", "Dĺžka", 80, "e"), ("date", "Dátum", 96, "w"))
+
+    def __init__(self, win, url: str = ""):
+        self.win, self.root, self.t = win, win.root, win.theme
+        self.info: dict | None = None
+        self.shown: list[int] = []
+        self.q: queue.Queue = queue.Queue()
+        top = self.top = tk.Toplevel(self.root)
+        top.title("Playlist / kanál – Kometa")
+        top.configure(bg=BG)
+        top.transient(self.root)
+        top.minsize(760, 520)
+        wrap = ttk.Frame(top, padding=(18, 14, 18, 14))
+        wrap.pack(fill="both", expand=True)
+        ttk.Label(wrap, text="Stiahnuť playlist alebo kanál", font=self.t.f_head).pack(anchor="w")
+        ttk.Label(wrap, style="Muted.TLabel", wraplength=820, justify="left",
+                  text="Vlož odkaz na playlist (youtube.com/playlist?list=…) alebo kanál (youtube.com/@meno). "
+                       "Zobrazí sa zoznam videí – vyber, ktoré chceš stiahnuť.").pack(anchor="w", pady=(2, 10))
+        row = ttk.Frame(wrap)
+        row.pack(fill="x")
+        self.url_var = tk.StringVar(value=url)
+        e = ttk.Entry(row, textvariable=self.url_var)
+        e.pack(side="left", fill="x", expand=True)
+        e.bind("<Return>", lambda ev: self.load())
+        self.tab_var = tk.StringVar(value="Videá")
+        self.tab_cb = ttk.Combobox(row, textvariable=self.tab_var, values=["Videá", "Shorts", "Naživo"],
+                                   state="readonly", width=8)
+        self.tab_cb.pack(side="left", padx=(8, 0))
+        self.load_btn = ttk.Button(row, text="Načítať", style="Soft.TButton", command=self.load)
+        self.load_btn.pack(side="left", padx=(8, 0))
+        self.status = tk.StringVar(value="")
+        ttk.Label(wrap, textvariable=self.status, style="Muted.TLabel").pack(anchor="w", pady=(8, 4))
+
+        tools = ttk.Frame(wrap)
+        tools.pack(fill="x", pady=(0, 6))
+        ttk.Label(tools, text="Filter:").pack(side="left")
+        self.filter_var = tk.StringVar()
+        fe = ttk.Entry(tools, textvariable=self.filter_var, width=24)
+        fe.pack(side="left", padx=(6, 14))
+        self.filter_var.trace_add("write", lambda *_: self._fill())
+        ttk.Button(tools, text="Všetky", style="Link.TButton", command=self.select_all).pack(side="left")
+        ttk.Button(tools, text="Žiadne", style="Link.TButton", command=self.select_none).pack(side="left", padx=(4, 0))
+        ttk.Label(tools, text="Najnovších:").pack(side="left", padx=(14, 4))
+        self.n_var = tk.IntVar(value=10)
+        ttk.Spinbox(tools, from_=1, to=5000, textvariable=self.n_var, width=6).pack(side="left")
+        ttk.Button(tools, text="Vybrať", style="Link.TButton", command=self.select_newest).pack(side="left", padx=(4, 0))
+
+        ttk.Label(wrap, style="Muted.TLabel", text="Ctrl/Shift + klik = výber viacerých. Len na súkromné použitie."
+                  ).pack(side="bottom", anchor="w", pady=(6, 0))
+        bottom = ttk.Frame(wrap)
+        bottom.pack(side="bottom", fill="x", pady=(10, 0))
+        self.folder_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(bottom, text="Uložiť do priečinka s názvom playlistu", variable=self.folder_var,
+                        style="Plain.TCheckbutton").pack(side="left")
+        ttk.Button(bottom, text="Zavrieť", command=top.destroy).pack(side="right")
+        self.go = ttk.Button(bottom, text="Stiahnuť vybrané", style="Accent.TButton", command=self.download,
+                             state="disabled")
+        self.go.pack(side="right", padx=(0, 8))
+
+        box = tk.Frame(wrap, bg=CARD, highlightthickness=1, highlightbackground=BORDER)
+        box.pack(fill="both", expand=True)
+        self.tv = ttk.Treeview(box, columns=[c[0] for c in self.COLS], show="headings", selectmode="extended")
+        for key, text, width, anchor in self.COLS:
+            self.tv.heading(key, text=text, anchor=anchor)
+            self.tv.column(key, width=width, anchor=anchor, stretch=key == "title")
+        sb = ttk.Scrollbar(box, orient="vertical", command=self.tv.yview)
+        self.tv.configure(yscrollcommand=sb.set)
+        self.tv.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+        self.tv.bind("<<TreeviewSelect>>", lambda ev: self._update_btn())
+
+        w, h = 900, 640
+        x = self.root.winfo_rootx() + max((self.root.winfo_width() - w) // 2, 0)
+        y = self.root.winfo_rooty() + 40
+        top.geometry(f"{w}x{h}+{x}+{y}")
+        e.focus_set()
+        if url:
+            top.after(150, self.load)
+
+    def load(self):
+        url = self.url_var.get().strip()
+        if not re.match(r"^https?://", url):
+            self.status.set("Zadaj odkaz na playlist alebo kanál (začína na http:// alebo https://).")
+            return
+        tab = {"Videá": "videos", "Shorts": "shorts", "Naživo": "streams"}[self.tab_var.get()]
+        self.load_btn.configure(state="disabled")
+        self.status.set("Načítavam zoznam videí… (pri veľkom kanáli to môže trvať dlhšie)")
+        for i in self.tv.get_children():
+            self.tv.delete(i)
+
+        def work():
+            try:
+                self.q.put(("ok", media.list_collection(media.collection_url(url, tab), log=lambda m: None)))
+            except Exception as e:  # noqa: BLE001
+                self.q.put(("err", clean_error(e)))
+
+        threading.Thread(target=work, daemon=True).start()
+        self.top.after(150, self._poll)
+
+    def _poll(self):
+        try:
+            kind, data = self.q.get_nowait()
+        except queue.Empty:
+            if self.top.winfo_exists():
+                self.top.after(150, self._poll)
+            return
+        self.load_btn.configure(state="normal")
+        if kind == "err":
+            self.status.set("✖ " + data.splitlines()[0][:200])
+            return
+        self.info = data
+        self._fill()
+        self.select_all()
+
+    def _fill(self):
+        if not self.info:
+            return
+        flt = self.filter_var.get().strip().lower()
+        for i in self.tv.get_children():
+            self.tv.delete(i)
+        self.shown = []
+        for n, e in enumerate(self.info["entries"]):
+            if flt and flt not in (e["title"] or "").lower():
+                continue
+            d = e.get("date") or ""
+            date = f"{d[6:8]}.{d[4:6]}.{d[:4]}" if len(d) == 8 else ""
+            self.tv.insert("", "end", iid=str(n), values=(n + 1, e["title"], format_duration(e.get("duration")), date))
+            self.shown.append(n)
+        total = sum(e.get("duration") or 0 for e in self.info["entries"])
+        who = f" · {self.info['uploader']}" if self.info.get("uploader") and self.info["uploader"] not in self.info["title"] else ""
+        self.status.set(f"{self.info['title']}{who} · videí: {len(self.info['entries'])}"
+                        + (f" · spolu {format_duration(total)}" if total else "")
+                        + (f" · zobrazené: {len(self.shown)}" if flt else ""))
+        self._update_btn()
+
+    def select_all(self):
+        self.tv.selection_set([str(n) for n in self.shown])
+
+    def select_none(self):
+        self.tv.selection_set(())
+
+    def select_newest(self):
+        try:
+            k = max(1, int(self.n_var.get()))
+        except (tk.TclError, ValueError):
+            k = 10
+        self.tv.selection_set([str(n) for n in self.shown[:k]])   # playlist/kanál je zoradený od najnovších
+
+    def _update_btn(self):
+        n = len(self.tv.selection())
+        self.go.configure(state="normal" if n else "disabled",
+                          text=f"Stiahnuť vybrané ({n})" if n else "Stiahnuť vybrané")
+
+    def download(self):
+        if not self.info:
+            return
+        picks = [self.info["entries"][int(i)] for i in sorted(self.tv.selection(), key=int)]
+        if not picks:
+            return
+        outdir = self.win.outdir_var.get().strip() or str(default_outdir())
+        if self.folder_var.get():
+            outdir = str(Path(outdir) / safe_name(self.info["title"], 100))
+        new = self.win.dq.add([e["url"] for e in picks], self.win.downloads._preset(), outdir,
+                              titles=[e["title"] for e in picks])
+        self.win.set_status(f"Pridané do frontu: {len(new)} z {len(picks)}")
         self.win.nb.select(0)
         self.top.destroy()
 

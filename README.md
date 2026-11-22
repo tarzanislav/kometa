@@ -12,6 +12,7 @@ YouTube · Vimeo (aj vložené) · Facebook · Instagram · TikTok (bez vodoznak
 - **Sťahuje z YouTube, Facebooku, Instagramu, TikToku** a z ďalších viac ako 1000 stránok, ktoré podporuje [yt-dlp](https://github.com/yt-dlp/yt-dlp), aj z priamych odkazov na súbory.
 - **Akákoľvek stránka – vlastný skener.** Nájde video aj tam, kde ho iné nástroje nevidia: vložené prehrávače (Vimeo aj s obmedzením na doménu, YouTube, Wistia, Bunny, JW Player, Brightcove, Cloudflare Stream, Dailymotion, Loom…), streamy HLS/DASH, `<video>`, adresy schované v JavaScripte, OpenGraph a JSON-LD, aj prehrávače vo vnorených rámčekoch. Každému nálezu priradí skóre (reklamy idú preč) a správny Referer stránky.
 - **Viac spojení naraz.** Veľké súbory sa delia na úseky; voľné spojenie prevezme polovicu najväčšieho zvyšku a pri odmietnutí serverom (429/503) sa počet spojení sám zníži. Streamy HLS/DASH sa sťahujú po viacerých kúskoch súčasne.
+- **Playlisty a kanály.** Celý playlist alebo kanál YouTube (Videá, Shorts, Naživo) so zoznamom na výber: všetky, najnovších N alebo podľa filtra názvu. Ukladá sa do priečinka s názvom playlistu.
 - **TikTok bez vodoznaku.** Verzie s vodoznakom sa vynechávajú.
 - **Webshare.cz a Fastshare.cz** cez tvoj vlastný účet (Webshare cez oficiálne API).
 - **Pokračovanie prerušeného sťahovania.** Pri pauze, výpadku siete aj po zatvorení programu sa pokračuje od miesta, kde sa skončilo. Keď odkaz z úložiska vyprší, Kometa si vypýta nový.
@@ -19,9 +20,13 @@ YouTube · Vimeo (aj vložené) · Facebook · Instagram · TikTok (bez vodoznak
 - **Jazykové stopy z YouTube**: z videí s preloženým zvukom stiahne vybrané jazyky a spojí ich s videom do jedného `.mkv`. Predvolené poradie je CZ, SK, EN, EN-US, PL, HU a pôvodná stopa ide na koniec.
 - Formáty: najlepšia kvalita, MP4 pre TV a mobil, najviac 1080p alebo 720p, MP3, zvuk v pôvodnej kvalite.
 
-| Prehľadať stránku | Jazykové stopy | Účty a nastavenia |
-|---|---|---|
-| ![Skener](docs/skener.png) | ![Jazyky](docs/jazyky.png) | ![Účty](docs/ucty.png) |
+| Playlist / kanál | Prehľadať stránku |
+|---|---|
+| ![Playlist](docs/playlist.png) | ![Skener](docs/skener.png) |
+
+| Jazykové stopy | Účty a nastavenia |
+|---|---|
+| ![Jazyky](docs/jazyky.png) | ![Účty](docs/ucty.png) |
 
 ## Inštalácia (Windows 10/11)
 
@@ -47,6 +52,7 @@ python app.py
 ### Karta Sťahovanie
 1. Vlož jeden alebo viac odkazov (každý na nový riadok) alebo klikni na **Vložiť zo schránky**.
 2. Vyber formát a priečinok a klikni na **Stiahnuť**. Odkaz môže byť aj na bežnú stránku (kurz, článok): ak ju yt-dlp nepozná, Kometa ju prehľadá skenerom – jedno video stiahne hneď, viac videí pridá do frontu.
+   - **Playlist / kanál…** (alebo vlož odkaz na playlist či kanál a klikni na Stiahnuť) ukáže zoznam videí; vyber všetky, najnovších N alebo filtruj podľa názvu.
    - **Prehľadať stránku…** ukáže všetko, čo sa na stránke našlo (prehrávače, streamy, videá, súbory), a ty vyberieš, čo stiahnuť. Pri videu chránenom heslom (Vimeo) ho zadaj dole v okne.
 3. Vo fronte vidíš priebeh, rýchlosť a zostávajúci čas.
    - **Dvojklik:** hotové otvorí priečinok so súborom, rozbehnuté pozastaví, pozastavené spustí, pri chybe ukáže podrobnosti.
@@ -95,6 +101,14 @@ kometa/
   media.py           YouTube/Facebook/Instagram/TikTok cez yt-dlp
   jazyky.py          jazykové stopy YouTube a spájanie cez FFmpeg
   common.py          nastavenia, heslá, pomôcky
+```
+
+## Vlastné jadro v Ruste (vo vývoji)
+
+V priečinku [`jadro/`](jadro) vzniká nové jadro Komety v Ruste: jeden spustiteľný súbor bez inštalácie pre Windows, macOS, Linux a neskôr Android. Hotové je sťahovanie po úsekoch s pokračovaním, adaptívnym počtom spojení a obnovou odkazov. Pripravuje sa vlastné HLS a DASH so zastavením pri šifrovanom obsahu, potom Vimeo a skener stránok. Šifrovaný obsah (DRM) jadro zámerne nesťahuje.
+
+```
+cd jadro && cargo build --release
 ```
 
 ## Plán ďalšieho vývoja

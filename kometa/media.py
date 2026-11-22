@@ -125,3 +125,60 @@ def download_media(url: str, outdir: Path, preset: str = "video", *, on_progress
             raise Unsupported(str(e)) from e
         raise
     return Path(path)
+
+
+# --------------------------------------------------------------------------- #
+#  Playlisty a kanály
+# --------------------------------------------------------------------------- #
+
+_YT_CHANNEL_RE = re.compile(r"^(https?://(?:www\.|m\.)?youtube\.com/(?:@[\w.%-]+|channel/[\w-]+|c/[\w.%-]+|user/[\w.%-]+))"
+                            r"(/(?:videos|shorts|streams|playlists|featured|live)?)?/?(?:[?#].*)?$", re.I)
+_COLLECTION_RES = [
+    re.compile(r"youtube\.com/playlist\?", re.I),
+    _YT_CHANNEL_RE,
+    re.compile(r"vimeo\.com/(?:showcase|album)/\d+", re.I),
+    re.compile(r"vimeo\.com/channels/[\w-]+/?(?:[?#].*)?$", re.I),
+    re.compile(r"soundcloud\.com/[\w-]+/sets/", re.I),
+    re.compile(r"dailymotion\.com/playlist/", re.I),
+]
+
+
+def is_collection(url: str) -> bool:
+    """Playlist alebo kanál (nie jedno video). Video z playlistu (watch?v=…&list=…) je jedno video."""
+    return any(rx.search(url.strip()) for rx in _COLLECTION_RES)
+
+
+def collection_url(url: str, tab: str = "videos") -> str:
+    """Kanál YouTube bez karty → karta Videá (prípadne Shorts / Naživo)."""
+    m = _YT_CHANNEL_RE.match(url.strip())
+    if m and not (m.group(2) or "").strip("/"):
+        return f"{m.group(1)}/{tab}"
+    return url.strip()
+
+
+def list_collection(url: str, log=print, limit: int | None = None) -> dict:
+    """Načíta zoznam videí playlistu/kanála bez sťahovania: {title, uploader, url, entries:[{url,title,duration,…}]}."""
+    from yt_dlp import YoutubeDL
+
+    url = collection_url(url)
+    opts = ydl_opts(log, extract_flat="in_playlist", noplaylist=False, skip_download=True)
+    if limit:
+        opts["playlistend"] = limit
+    with YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+    entries = []
+    for e in info.get("entries") or []:
+        if not e or e.get("_type") == "playlist":
+            continue
+        u = e.get("url") or e.get("webpage_url") or ""
+        if not u.startswith("http"):
+            if (e.get("ie_key") or "").startswith("Youtube") and e.get("id"):
+                u = f"https://www.youtube.com/watch?v={e['id']}"
+            else:
+                continue
+        entries.append({"url": u, "title": e.get("title") or e.get("id") or u, "duration": e.get("duration"),
+                        "id": e.get("id"), "date": e.get("upload_date") or "", "views": e.get("view_count")})
+    title = info.get("title") or info.get("playlist_title") or info.get("uploader") or "Playlist"
+    title = re.sub(r"\s+-\s+(Videos|Videá|Shorts|Live)$", "", title)
+    return {"title": title, "uploader": info.get("uploader") or info.get("channel") or "", "url": url,
+            "entries": entries}
