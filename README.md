@@ -142,6 +142,10 @@ npm run build    # preloží rozhranie do kometa/webui
 
 Preložené rozhranie je súčasťou repozitára, aby Kometa fungovala bez Node.js. CI overuje, že zodpovedá zdrojovému kódu v `ui/`.
 
+### Vydanie
+
+Nová verzia = číslo v `kometa/__init__.py` a `ui/package.json` a poznámky `docs/releases/vX.Y.Z.md`. Po odoslaní do vetvy `main` GitHub vydanie sám otestuje a zabalí a **čaká na schválenie vlastníkom** (prostredie `release` so schvaľovaním → *Review deployments → Approve*). Bez nastaveného schvaľovania sa automaticky nezverejní nič – vtedy sa vydanie spustí ručne cez *Actions → Vydanie → Run workflow* (verziu netreba písať).
+
 ## Vlastné jadro v Ruste (vo vývoji)
 
 V priečinku [`jadro/`](jadro) vzniká nové jadro Komety v Ruste: jeden spustiteľný súbor bez inštalácie pre Windows, macOS, Linux a neskôr Android. Už vie:

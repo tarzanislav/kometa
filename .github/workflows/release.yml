@@ -1,19 +1,25 @@
 name: Vydanie
 
-# Vydanie vznikne len so súhlasom vlastníka: značkou „v1.2.3“ alebo cez „Run workflow“ na vetve main
-# s číslom verzie (značka potom vznikne až pri zverejnení). Zverejnenie čaká na schválenie
-# v prostredí „release“.
+# Vydanie nikdy nevznikne bez súhlasu vlastníka. Tri cesty:
+#
+# 1. Nová verzia na vetve main (zmena kometa/__init__.py): balík sa pripraví sám a zverejnenie
+#    čaká na schválenie v prostredí „release“ (Review deployments → Approve). Ak prostredie
+#    nemá nastavené schvaľovanie, vydanie sa automaticky nezverejní.
+# 2. „Run workflow“ na vetve main – verziu netreba písať, berie sa z kometa/__init__.py.
+# 3. Značka „v1.2.3“.
 #
 # Dve úlohy: „build“ skontroluje, otestuje a zabalí (len čítanie, žiadne tajomstvá);
 # „publish“ len zverejní to, čo „build“ vytvoril.
 on:
   push:
+    branches: [main]
+    paths: ['kometa/__init__.py', '.github/workflows/release.yml']
     tags: ['v*.*.*']
   workflow_dispatch:
     inputs:
       version:
-        description: 'Verzia (napr. 1.4.0) – vznikne značka v1.4.0 a vydanie z vetvy main'
-        required: true
+        description: 'Verzia – nechaj prázdne, vezme sa z programu (kometa/__init__.py)'
+        required: false
         type: string
 
 permissions:
@@ -30,30 +36,54 @@ jobs:
     outputs:
       version: ${{ steps.verzia.outputs.number }}
       tag: ${{ steps.verzia.outputs.tag }}
+      vydat: ${{ steps.verzia.outputs.vydat }}
     steps:
-      - name: Verzia zo značky alebo zo zadania
-        id: verzia
-        env:
-          EVENT: ${{ github.event_name }}
-          REF: ${{ github.ref }}
-          TAG: ${{ github.ref_name }}
-          INPUT: ${{ inputs.version }}
-        run: |
-          if [ "$EVENT" = "workflow_dispatch" ]; then
-            [ "$REF" = "refs/heads/main" ] || { echo "::error::Vydanie sa robí len z vetvy main."; exit 1; }
-            tag="v$(echo "$INPUT" | tr -d '[:space:]')"
-          else
-            tag="$TAG"
-          fi
-          [[ "$tag" =~ ^v([0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4})$ ]] || { echo "::error::Verzia nemá tvar 1.2.3."; exit 1; }
-          echo "number=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
+      - name: Verzia a či ju treba vydať
+        id: verzia
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_TYPE: ${{ github.ref_type }}
+          TAG: ${{ github.ref_name }}
+          INPUT: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          v_programe="$(sed -n 's/^__version__ = "\([0-9.]*\)"$/\1/p' kometa/__init__.py)"
+          if [ "$EVENT" = "push" ] && [ "$REF_TYPE" = "tag" ]; then
+            tag="$TAG"
+          else
+            [ "$REF" = "refs/heads/main" ] || { echo "::error::Vydanie sa robí len z vetvy main."; exit 1; }
+            zadane="$(echo "$INPUT" | tr -d '[:space:]')"
+            tag="v${zadane:-$v_programe}"
+          fi
+          [[ "$tag" =~ ^v([0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4})$ ]] || { echo "::error::Verzia nemá tvar 1.2.3."; exit 1; }
+          echo "number=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            if [ "$EVENT" = "push" ] && [ "$REF_TYPE" = "branch" ]; then
+              echo "::notice::Vydanie $tag už existuje – nič nové na vydanie."
+              echo "vydat=nie" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            echo "::error::Vydanie $tag už existuje."; exit 1
+          fi
+          if [ "$EVENT" = "push" ] && [ "$REF_TYPE" = "branch" ]; then
+            # automaticky len so schvaľovaním – inak by sa vydanie zverejnilo bez súhlasu
+            schvalovatelia="$(gh api "repos/$GH_REPO/environments/release" \
+              --jq '[.protection_rules[]? | select(.type == "required_reviewers")] | length' 2>/dev/null || echo 0)"
+            if [ "${schvalovatelia:-0}" = "0" ]; then
+              echo "::notice::Prostredie „release“ nemá schvaľovanie – vydanie $tag spusti cez Run workflow."
+              echo "vydat=nie" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+          fi
+          echo "vydat=ano" >> "$GITHUB_OUTPUT"
+
       - name: Verzia v programe, v rozhraní a poznámky k vydaniu
+        if: steps.verzia.outputs.vydat == 'ano'
         env:
           VERSION: ${{ steps.verzia.outputs.number }}
         run: |
@@ -62,23 +92,28 @@ jobs:
           [ -f "docs/releases/v$VERSION.md" ] || { echo "::error::Chýbajú poznámky docs/releases/v$VERSION.md."; exit 1; }
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.verzia.outputs.vydat == 'ano'
         with:
           node-version: 22
       - name: Rozhranie zodpovedá zdrojom
+        if: steps.verzia.outputs.vydat == 'ano'
         run: |
           (cd ui && npm ci --no-audit --no-fund && npm run check && npm run build)
           [ -z "$(git status --porcelain -- kometa/webui)" ] || { echo "::error::kometa/webui nezodpovedá ui/."; exit 1; }
 
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        if: steps.verzia.outputs.vydat == 'ano'
         with:
           python-version: '3.13'
       - name: Skúšky
+        if: steps.verzia.outputs.vydat == 'ano'
         run: |
           python -m pip install -r requirements.txt pyflakes
           python -m pyflakes app.py kometa tests
           python tests/test_webapp.py
 
       - name: Balík pre Windows (ZIP) a kontrolné súčty
+        if: steps.verzia.outputs.vydat == 'ano'
         env:
           VERSION: ${{ steps.verzia.outputs.number }}
         run: |
@@ -88,6 +123,7 @@ jobs:
           cat release/SHA256SUMS.txt
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.verzia.outputs.vydat == 'ano'
         with:
           name: release
           path: release/
@@ -96,6 +132,7 @@ jobs:
   publish:
     name: Zverejnenie (po schválení)
     needs: build
+    if: needs.build.outputs.vydat == 'ano'
     runs-on: ubuntu-24.04
     environment: release
     permissions:
@@ -114,7 +151,7 @@ jobs:
         env:
           VERSION: ${{ needs.build.outputs.version }}
           TAG: ${{ needs.build.outputs.tag }}
-          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
           SHA: ${{ github.sha }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -124,11 +161,11 @@ jobs:
           [ "$(head -1 SHA256SUMS.txt)" = "# Kometa $VERSION" ] || { echo "::error::Zoznam súčtov nepatrí k verzii."; exit 1; }
           tail -n +2 SHA256SUMS.txt | sha256sum --check --strict
           cd ..
-          if [ "$EVENT" = "workflow_dispatch" ]; then
+          if [ "$REF_TYPE" = "tag" ]; then
+            target=(--verify-tag)
+          else
             if gh release view "$TAG" >/dev/null 2>&1; then echo "::error::Vydanie $TAG už existuje."; exit 1; fi
             target=(--target "$SHA")
-          else
-            target=(--verify-tag)
           fi
           gh release create "$TAG" "release/Kometa-$VERSION.zip" release/SHA256SUMS.txt \
             --title "Kometa $VERSION" --notes-file "docs/releases/v$VERSION.md" "${target[@]}"
