@@ -170,10 +170,20 @@ impl Prostredie for Systemove {
         let _ = std::fs::create_dir_all(priecinok);
         #[cfg(windows)]
         {
+            use std::os::windows::process::CommandExt;
+            // Prieskumník chce `/select,"cesta"` doslova. Úvodzovky okolo celého argumentu, ktoré
+            // pridá Command::arg pri medzerách v názve, nepochopí a otvorí predvolený priečinok.
+            let mut c = Command::new("explorer.exe");
             match oznac {
-                Some(s) => spusti("explorer.exe", &[&format!("/select,{}", s.display())]),
-                None => spusti("explorer.exe", &[&priecinok.to_string_lossy()]),
+                Some(s) => c.raw_arg(argument_oznac(s)),
+                None => c.raw_arg(format!("\"{}\"", priecinok.display())),
             };
+            c.creation_flags(0x0800_0000);
+            let _ = c
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
         }
         #[cfg(target_os = "macos")]
         {
@@ -193,5 +203,24 @@ impl Prostredie for Systemove {
                 .stderr(Stdio::null())
                 .spawn();
         }
+    }
+}
+
+/// Argument Prieskumníka, ktorý otvorí priečinok a označí v ňom súbor.
+pub fn argument_oznac(subor: &Path) -> String {
+    format!("/select,\"{}\"", subor.display())
+}
+
+#[cfg(test)]
+mod testy {
+    use super::*;
+
+    #[test]
+    fn prieskumnik_oznac() {
+        let p = Path::new(r"D:\DOKUMENTY\Videos\Kometa\Výhľad z Lomnického štítu.mkv");
+        assert_eq!(
+            argument_oznac(p),
+            r#"/select,"D:\DOKUMENTY\Videos\Kometa\Výhľad z Lomnického štítu.mkv""#
+        );
     }
 }

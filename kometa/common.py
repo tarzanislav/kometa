@@ -78,9 +78,57 @@ def check_dependencies() -> dict:
     }
 
 
+_FOLDERID = {"videos": "18989B1D-99B5-455B-841C-AB7C74E4DDFC", "downloads": "374DE290-123F-4565-9164-39C4925E467B"}
+
+
+def known_folder(kind: str) -> Path | None:
+    """Systémový priečinok Videá/Stiahnuté – vo Windows aj presmerovaný (napr. na D:),
+    v Linuxe podľa XDG (aj preložený „Videá“), v macOS „Movies“."""
+    if os.name == "nt":
+        try:
+            import ctypes
+            import uuid
+            from ctypes import wintypes
+
+            class GUID(ctypes.Structure):
+                _fields_ = [("d1", wintypes.DWORD), ("d2", wintypes.WORD), ("d3", wintypes.WORD), ("d4", ctypes.c_ubyte * 8)]
+
+            u = uuid.UUID(_FOLDERID[kind])
+            g = GUID(u.time_low, u.time_mid, u.time_hi_version, (ctypes.c_ubyte * 8).from_buffer_copy(u.bytes[8:]))
+            p = ctypes.c_wchar_p()
+            hr = ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(g), 0, None, ctypes.byref(p))
+            try:
+                return Path(p.value) if hr == 0 and p.value else None
+            finally:
+                ctypes.windll.ole32.CoTaskMemFree(p)
+        except Exception:
+            return None
+    if sys.platform == "darwin":
+        return Path.home() / ("Movies" if kind == "videos" else "Downloads")
+    key = "XDG_VIDEOS_DIR" if kind == "videos" else "XDG_DOWNLOAD_DIR"
+    conf = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "user-dirs.dirs"
+    try:
+        for line in conf.read_text(encoding="utf-8").splitlines():
+            m = re.match(rf'\s*{key}\s*=\s*"?([^"]*)"?', line)
+            if m:
+                path = Path(m.group(1).replace("$HOME", str(Path.home())))
+                return None if path == Path.home() else path
+    except OSError:
+        pass
+    return Path.home() / ("Videos" if kind == "videos" else "Downloads")
+
+
 def default_outdir() -> Path:
-    videos = Path.home() / "Videos"
-    return (videos if videos.is_dir() else Path.home() / "Downloads") / APP_NAME
+    videos = known_folder("videos")
+    if videos and videos.is_dir():
+        return videos / APP_NAME
+    downloads = known_folder("downloads")
+    return (downloads if downloads and downloads.is_dir() else Path.home() / "Downloads") / APP_NAME
+
+
+def _same_path(a: str, b: Path) -> bool:
+    norm = lambda x: str(x).replace("\\", "/").rstrip("/")  # noqa: E731
+    return norm(a).lower() == norm(b).lower() if os.name == "nt" else norm(a) == norm(b)
 
 
 # --------------------------------------------------------------------------- #
@@ -242,8 +290,14 @@ def load_config() -> dict:
         cfg.update(json.loads(CONFIG_PATH.read_text(encoding="utf-8")))
     except Exception:
         pass
+    new = default_outdir()
     if not cfg.get("outdir"):
-        cfg["outdir"] = str(default_outdir())
+        cfg["outdir"] = str(new)
+    elif not _same_path(cfg["outdir"], new) and any(
+            _same_path(cfg["outdir"], Path.home() / d / APP_NAME) for d in ("Videos", "Downloads")):
+        # predvolený priečinok starších verzií (pevne ~/Videos) – systém ho medzitým presmeroval
+        cfg["outdir"] = str(new)
+        save_config(cfg)
     return cfg
 
 

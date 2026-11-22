@@ -68,19 +68,164 @@ pub fn priecinok_nastaveni() -> PathBuf {
         .unwrap_or_else(|| domov().join(".kometa"))
 }
 
-pub fn predvoleny_vystup() -> PathBuf {
-    let videa = domov().join("Videos");
-    if videa.is_dir() {
-        videa
-    } else {
-        domov().join("Downloads")
+/// Systémové priečinky podľa operačného systému – nie podľa pevného názvu v domovskom priečinku.
+/// Vo Windows aj presmerované (napr. Videá na D:), v Linuxe preložené (XDG: „Videá“), v macOS „Movies“.
+#[derive(Clone, Copy)]
+pub enum Znamy {
+    Videa,
+    Stiahnute,
+}
+
+#[cfg(windows)]
+mod windows {
+    use std::ffi::{c_void, OsString};
+    use std::os::windows::ffi::OsStringExt;
+    use std::path::PathBuf;
+
+    #[repr(C)]
+    pub struct Guid(u32, u16, u16, [u8; 8]);
+
+    /// FOLDERID_Videos {18989B1D-99B5-455B-841C-AB7C74E4DDFC}
+    pub const VIDEA: Guid = Guid(
+        0x1898_9B1D,
+        0x99B5,
+        0x455B,
+        [0x84, 0x1C, 0xAB, 0x7C, 0x74, 0xE4, 0xDD, 0xFC],
+    );
+    /// FOLDERID_Downloads {374DE290-123F-4565-9164-39C4925E467B}
+    pub const STIAHNUTE: Guid = Guid(
+        0x374D_E290,
+        0x123F,
+        0x4565,
+        [0x91, 0x64, 0x39, 0xC4, 0x92, 0x5E, 0x46, 0x7B],
+    );
+
+    #[link(name = "shell32")]
+    extern "system" {
+        fn SHGetKnownFolderPath(
+            id: *const Guid,
+            flags: u32,
+            token: *mut c_void,
+            cesta: *mut *mut u16,
+        ) -> i32;
     }
-    .join("Kometa")
+    #[link(name = "ole32")]
+    extern "system" {
+        fn CoTaskMemFree(p: *mut c_void);
+    }
+
+    pub fn znamy(id: &Guid) -> Option<PathBuf> {
+        let mut p: *mut u16 = std::ptr::null_mut();
+        // SAFETY: platné GUID; výsledok treba uvoľniť CoTaskMemFree aj pri chybe (null je povolený)
+        unsafe {
+            let hr = SHGetKnownFolderPath(id, 0, std::ptr::null_mut(), &mut p);
+            let out = if hr == 0 && !p.is_null() {
+                let mut n = 0;
+                while *p.add(n) != 0 {
+                    n += 1;
+                }
+                Some(PathBuf::from(OsString::from_wide(
+                    std::slice::from_raw_parts(p, n),
+                )))
+            } else {
+                None
+            };
+            CoTaskMemFree(p.cast());
+            out
+        }
+    }
+}
+
+/// Priečinok z `~/.config/user-dirs.dirs` (napr. `XDG_VIDEOS_DIR="$HOME/Videá"`).
+pub fn xdg_z_textu(text: &str, kluc: &str, domov: &Path) -> Option<PathBuf> {
+    text.lines().find_map(|r| {
+        let hodnota = r
+            .trim()
+            .strip_prefix(kluc)?
+            .trim_start()
+            .strip_prefix('=')?
+            .trim()
+            .trim_matches('"');
+        let cesta = match hodnota.strip_prefix("$HOME") {
+            Some(z) => domov.join(z.trim_start_matches('/')),
+            None if hodnota.starts_with('/') => PathBuf::from(hodnota),
+            None => return None,
+        };
+        // XDG nastaví priečinok na samotný domov, keď ho používateľ zrušil
+        (cesta.as_path() != domov && !z_domova_je_domov(&cesta, domov)).then_some(cesta)
+    })
+}
+
+fn z_domova_je_domov(c: &Path, domov: &Path) -> bool {
+    c.components().eq(domov.components())
+}
+
+pub fn znamy_priecinok(k: Znamy) -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        windows::znamy(match k {
+            Znamy::Videa => &windows::VIDEA,
+            Znamy::Stiahnute => &windows::STIAHNUTE,
+        })
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Some(domov().join(match k {
+            Znamy::Videa => "Movies",
+            Znamy::Stiahnute => "Downloads",
+        }))
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let konf = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| domov().join(".config"));
+        let text = std::fs::read_to_string(konf.join("user-dirs.dirs")).unwrap_or_default();
+        let (kluc, inak) = match k {
+            Znamy::Videa => ("XDG_VIDEOS_DIR", "Videos"),
+            Znamy::Stiahnute => ("XDG_DOWNLOAD_DIR", "Downloads"),
+        };
+        xdg_z_textu(&text, kluc, &domov()).or_else(|| Some(domov().join(inak)))
+    }
+}
+
+/// Predvolený priečinok na sťahovanie: `Videá/Kometa`, inak `Stiahnuté/Kometa`.
+pub fn predvoleny_vystup() -> PathBuf {
+    let videa = znamy_priecinok(Znamy::Videa).filter(|p| p.is_dir());
+    let stiahnute = || {
+        znamy_priecinok(Znamy::Stiahnute)
+            .filter(|p| p.is_dir())
+            .unwrap_or_else(|| domov().join("Downloads"))
+    };
+    videa.unwrap_or_else(stiahnute).join("Kometa")
+}
+
+/// Predvolené priečinky starších verzií (pevne `~/Videos/Kometa` a `~/Downloads/Kometa`) –
+/// pri presmerovaných alebo preložených priečinkoch ukazovali na zlé miesto.
+fn stare_predvolene() -> [PathBuf; 2] {
+    [
+        domov().join("Videos").join("Kometa"),
+        domov().join("Downloads").join("Kometa"),
+    ]
+}
+
+fn rovnaka_cesta(a: &str, b: &Path) -> bool {
+    let n = |s: &str| {
+        let s = s.trim_end_matches(['/', '\\']).replace('\\', "/");
+        if cfg!(windows) {
+            s.to_lowercase()
+        } else {
+            s
+        }
+    };
+    n(a) == n(&b.to_string_lossy())
 }
 
 pub struct Nastavenia {
     subor: PathBuf,
     data: Map<String, Value>,
+    /// ak sa pri načítaní opravil zlý predvolený priečinok: (pôvodný, nový)
+    pub opraveny_priecinok: Option<(String, String)>,
 }
 
 impl Nastavenia {
@@ -92,18 +237,33 @@ impl Nastavenia {
                 data.extend(m);
             }
         }
-        if data
+        let ulozeny = data
             .get("outdir")
             .and_then(Value::as_str)
             .unwrap_or("")
-            .is_empty()
+            .to_string();
+        let novy = predvoleny_vystup();
+        let mut opraveny_priecinok = None;
+        if ulozeny.is_empty() {
+            data.insert("outdir".into(), json!(novy.to_string_lossy()));
+        } else if !rovnaka_cesta(&ulozeny, &novy)
+            && stare_predvolene()
+                .iter()
+                .any(|s| rovnaka_cesta(&ulozeny, s))
         {
-            data.insert(
-                "outdir".into(),
-                json!(predvoleny_vystup().to_string_lossy()),
-            );
+            // starší predvolený priečinok, ktorý systém presmeroval – nie voľba používateľa
+            data.insert("outdir".into(), json!(novy.to_string_lossy()));
+            opraveny_priecinok = Some((ulozeny, novy.to_string_lossy().into_owned()));
         }
-        Nastavenia { subor, data }
+        let n = Nastavenia {
+            subor,
+            data,
+            opraveny_priecinok,
+        };
+        if n.opraveny_priecinok.is_some() {
+            n.uloz();
+        }
+        n
     }
 
     pub fn uloz(&self) {
@@ -255,6 +415,29 @@ pub fn over(k: &str, v: &Value) -> Option<Value> {
 #[cfg(test)]
 mod testy {
     use super::*;
+
+    #[test]
+    fn priecinky_xdg() {
+        let d = Path::new("/home/jano");
+        let t = "# komentár\nXDG_DESKTOP_DIR=\"$HOME/Plocha\"\nXDG_VIDEOS_DIR=\"$HOME/Videá\"\nXDG_DOWNLOAD_DIR=\"$HOME/\"\n";
+        assert_eq!(
+            xdg_z_textu(t, "XDG_VIDEOS_DIR", d),
+            Some(PathBuf::from("/home/jano/Videá"))
+        );
+        assert_eq!(xdg_z_textu(t, "XDG_DOWNLOAD_DIR", d), None);
+        assert_eq!(
+            xdg_z_textu("XDG_VIDEOS_DIR=\"/data/filmy\"", "XDG_VIDEOS_DIR", d),
+            Some(PathBuf::from("/data/filmy"))
+        );
+        assert!(rovnaka_cesta("/a/b/", Path::new("/a/b")));
+    }
+
+    #[test]
+    fn znamy_priecinok_systemu() {
+        let v = znamy_priecinok(Znamy::Videa).expect("priečinok Videá");
+        assert!(v.is_absolute(), "{v:?}");
+        assert!(predvoleny_vystup().ends_with("Kometa"));
+    }
 
     #[test]
     fn kontrola_hodnot() {

@@ -187,6 +187,12 @@ impl Sluzba {
             verzia,
         });
         let s = Sluzba { v };
+        let oprava = s.v.nastavenia.lock().unwrap().opraveny_priecinok.clone();
+        if let Some((stary, novy)) = oprava {
+            s.v.zapis(format!(
+                "Sťahujem do {novy} (systémový priečinok Videá). Skôr stiahnuté súbory ostali v {stary}."
+            ));
+        }
         s.v.naplanuj();
         ucty::over_pri_starte(&s.v);
         s

@@ -391,6 +391,35 @@ def doinstalovanie():
         o.zatvor()
 
 
+def priecinky():
+    print("Systémový priečinok Videá (presmerovaný / preložený)")
+    domov = D / "domov"
+    (domov / ".config").mkdir(parents=True)
+    (domov / "Videos").mkdir()
+    (domov / "Videá").mkdir()
+    (domov / ".config/user-dirs.dirs").write_text('XDG_VIDEOS_DIR="$HOME/Videá"\n', encoding="utf-8")
+    cfg = D / "cfg-priecinky"
+    cfg.mkdir()
+    stary = domov / "Videos" / "Kometa"
+    (cfg / "nastavenia.json").write_text(json.dumps({"outdir": str(stary), "tema": "more"}), encoding="utf-8")
+    o = Okno(cfg, HOME=str(domov), XDG_CONFIG_HOME=str(domov / ".config"))
+    try:
+        i = o.data("init")
+        s = o.data("stav")
+        skontroluj("starý predvolený priečinok sa opraví na systémový (Videá)",
+                   i["nastavenia"]["outdir"] == str(domov / "Videá" / "Kometa") and i["nastavenia"]["tema"] == "more"
+                   and any("Skôr stiahnuté súbory ostali" in z for z in s["zaznam"]), (i["nastavenia"], s["zaznam"]))
+    finally:
+        o.zatvor()
+    vlastny = D / "moje-filmy"
+    (cfg / "nastavenia.json").write_text(json.dumps({"outdir": str(vlastny)}), encoding="utf-8")
+    o = Okno(cfg, HOME=str(domov), XDG_CONFIG_HOME=str(domov / ".config"))
+    try:
+        skontroluj("vlastný priečinok používateľa ostane", o.data("init")["nastavenia"]["outdir"] == str(vlastny))
+    finally:
+        o.zatvor()
+
+
 def restart(out: Path):
     print("Zatvorenie počas sťahovania a pokračovanie po spustení")
     cfg = D / "cfg-restart"
@@ -473,6 +502,7 @@ def main() -> int:
         ytdlp_plny(out)
         if sys.platform.startswith("linux"):
             doinstalovanie()
+            priecinky()
         restart(out)
     finally:
         srv.shutdown()
