@@ -65,8 +65,9 @@ jobs:
           echo "number=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           if gh release view "$tag" >/dev/null 2>&1; then
-            if [ "$EVENT" = "push" ] && [ "$REF_TYPE" = "branch" ]; then
-              echo "::notice::Vydanie $tag už existuje – nič nové na vydanie."
+            if [ "$REF_TYPE" = "branch" ]; then
+              # nie je to chyba – verzia je už vydaná, beh skončí zelený
+              echo "::notice::Kometa $tag je už vydaná – na vydanie nič nové nie je. Novú verziu treba najprv pripraviť."
               echo "vydat=nie" >> "$GITHUB_OUTPUT"; exit 0
             fi
             echo "::error::Vydanie $tag už existuje."; exit 1
