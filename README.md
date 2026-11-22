@@ -33,7 +33,31 @@ YouTube · Vimeo (aj vložené) · Facebook · Instagram · TikTok (bez vodoznak
 |---|---|
 | ![Noc](docs/stahovanie-noc.png) | ![Súmrak](docs/tema-sumrak.png) |
 
-## Inštalácia (Windows 10/11)
+## Inštalácia
+
+Kometa je v dvoch vydaniach s tým istým rozhraním:
+
+| | **Aplikácia** (nová, jadro v Ruste) | **Kometa pre Python** |
+|---|---|---|
+| inštalácia | jeden inštalátor, bez Pythonu | `Instalacia.bat` (Python, FFmpeg, knižnice) |
+| systémy | Windows, macOS, Linux | Windows (inde ručne) |
+| stránky, Vimeo, streamy, súbory | áno, vlastným jadrom | áno |
+| Webshare, Fastshare | áno | áno |
+| YouTube a ďalšie služby | áno, cez yt-dlp (doinštaluje sa jedným klikom) | áno |
+| jazykové stopy YouTube | zatiaľ nie | áno |
+
+### Aplikácia
+
+Z [Vydaní (Releases)](https://github.com/tarzanislav/kometa/releases) stiahni súbor pre svoj systém:
+
+- **Windows 10/11:** `Kometa-X.Y.Z-windows-x64-setup.exe` – inštaluje sa len pre teba, bez práv správcu. Inštalátor nie je digitálne podpísaný, preto Windows ukáže „Windows ochránil váš počítač“ → **Ďalšie informácie → Spustiť aj tak**.
+- **macOS 11+ (Apple Silicon aj Intel):** `Kometa-X.Y.Z-macos.dmg` – presuň Kometu do Aplikácií. Pri prvom spustení: pravé tlačidlo → **Otvoriť** (alebo Nastavenia systému → Súkromie a bezpečnosť → **Aj tak otvoriť**).
+- **Linux:** `Kometa-X.Y.Z-linux-x86_64.AppImage` (stačí povoliť spustenie) alebo `Kometa-X.Y.Z-linux-amd64.deb` pre Ubuntu/Debian.
+- **Bez inštalácie:** `kometa-X.Y.Z-…` je jeden súbor – `kometa okno` otvorí to isté rozhranie v okne Edge/Chrome, ostatné príkazy sú v časti o jadre nižšie.
+
+Kontrolné súčty všetkých súborov sú v `SHA256SUMS.txt`.
+
+### Kometa pre Python (Windows 10/11)
 
 1. Stiahni Kometu z [Vydaní (Releases)](https://github.com/tarzanislav/kometa/releases): súbor `Kometa-X.Y.Z.zip`. Rozbaľ ho (napr. do `Dokumenty\Kometa`). Pri aktualizácii stačí rozbaliť cez staré súbory – nastavenia, účty a front ostanú.
 2. Dvakrát klikni na **`Instalacia.bat`**. Cez `winget` nainštaluje Python, FFmpeg, Deno a knižnice (yt-dlp, requests, keyring, pywebview) a na plochu dá ikonu **Kometa**.

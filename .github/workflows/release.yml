@@ -8,12 +8,13 @@ name: Vydanie
 # 2. „Run workflow“ na vetve main – verziu netreba písať, berie sa z kometa/__init__.py.
 # 3. Značka „v1.2.3“.
 #
-# Dve úlohy: „build“ skontroluje, otestuje a zabalí (len čítanie, žiadne tajomstvá);
-# „publish“ len zverejní to, čo „build“ vytvoril.
+# Úlohy: „build“ skontroluje, otestuje a zabalí Kometu pre Python; „balicky“ zostaví aplikáciu
+# s jadrom v Ruste pre Windows, macOS a Linux; „suhrn“ spočíta kontrolné súčty všetkého
+# (všetko len čítanie, žiadne tajomstvá); „publish“ po schválení len zverejní, čo vzniklo.
 on:
   push:
     branches: [main]
-    paths: ['kometa/__init__.py', '.github/workflows/release.yml']
+    paths: ['kometa/__init__.py', '.github/workflows/release.yml', '.github/workflows/balicky.yml']
     tags: ['v*.*.*']
   workflow_dispatch:
     inputs:
@@ -90,6 +91,7 @@ jobs:
         run: |
           grep -qx "__version__ = \"$VERSION\"" kometa/__init__.py || { echo "::error::kometa/__init__.py nemá verziu $VERSION."; exit 1; }
           grep -q "\"version\": \"$VERSION\"" ui/package.json || { echo "::error::ui/package.json nemá verziu $VERSION."; exit 1; }
+          grep -qx "version = \"$VERSION\"" aplikacia/Cargo.toml || { echo "::error::aplikacia/Cargo.toml nemá verziu $VERSION."; exit 1; }
           [ -f "docs/releases/v$VERSION.md" ] || { echo "::error::Chýbajú poznámky docs/releases/v$VERSION.md."; exit 1; }
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -119,7 +121,8 @@ jobs:
           VERSION: ${{ steps.verzia.outputs.number }}
         run: |
           mkdir release
-          git archive --format=zip --prefix=Kometa/ -o "release/Kometa-$VERSION.zip" HEAD -- . ':!ui' ':!jadro' ':!.github' ':!tests'
+          git archive --format=zip --prefix=Kometa/ -o "release/Kometa-$VERSION.zip" HEAD -- . ':!ui' ':!jadro' ':!aplikacia' \
+            ':!Cargo.toml' ':!Cargo.lock' ':!.github' ':!tests'
           (cd release && { echo "# Kometa $VERSION"; sha256sum "Kometa-$VERSION.zip"; } > SHA256SUMS.txt)
           cat release/SHA256SUMS.txt
 
@@ -130,9 +133,49 @@ jobs:
           path: release/
           if-no-files-found: error
 
+  balicky:
+    name: Aplikácia pre Windows, macOS a Linux
+    needs: build
+    if: needs.build.outputs.vydat == 'ano'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/balicky.yml
+
+  suhrn:
+    name: Kontrolné súčty všetkých súborov
+    needs: [build, balicky]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: balik-*
+          path: release
+          merge-multiple: true
+      - name: SHA256SUMS.txt
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          cd release
+          (tail -n +2 SHA256SUMS.txt | sha256sum --check --strict) || { echo "::error::ZIP sa zmenil."; exit 1; }
+          rm SHA256SUMS.txt
+          for f in *; do
+            case "$f" in *"$VERSION"*) ;; *) echo "::error::$f nemá v názve verziu $VERSION."; exit 1 ;; esac
+          done
+          { echo "# Kometa $VERSION"; sha256sum -- *; } > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vydanie
+          path: release/
+          if-no-files-found: error
+
   publish:
     name: Zverejnenie (po schválení)
-    needs: build
+    needs: [build, suhrn]
     if: needs.build.outputs.vydat == 'ano'
     runs-on: ubuntu-24.04
     environment: release
@@ -145,7 +188,7 @@ jobs:
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: release
+          name: vydanie
           path: release
 
       - name: Kontrola a zverejnenie
@@ -168,5 +211,5 @@ jobs:
             if gh release view "$TAG" >/dev/null 2>&1; then echo "::error::Vydanie $TAG už existuje."; exit 1; fi
             target=(--target "$SHA")
           fi
-          gh release create "$TAG" "release/Kometa-$VERSION.zip" release/SHA256SUMS.txt \
+          gh release create "$TAG" release/* \
             --title "Kometa $VERSION" --notes-file "docs/releases/v$VERSION.md" "${target[@]}"
