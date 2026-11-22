@@ -433,8 +433,8 @@ def prud(p: Path):
     return out
 
 
-def jazyky(out: Path):
-    print("Jazykové stopy z YouTube (simulovaný yt-dlp, sťahuje a spája jadro)")
+def priprav_jazyky() -> tuple[Path, str]:
+    """Médiá a simulovaný yt-dlp, ktorý vráti údaje o videe s jazykmi EN (originál), CZ a SK."""
     m = D / "web" / "media" / "yt"
     m.mkdir()
     ff = lambda *a: subprocess.run([FF, "-hide_banner", "-loglevel", "error", "-y", *a], cwd=m, check=True)  # noqa: E731
@@ -467,7 +467,12 @@ def jazyky(out: Path):
     nastroj = D / "falosny-yt-dlp"
     nastroj.write_text(f"#!/bin/sh\ncat '{D / 'info.json'}'\n", encoding="utf-8")
     nastroj.chmod(0o755)
-    url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    return nastroj, "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+
+
+def jazyky(out: Path):
+    print("Jazykové stopy z YouTube (simulovaný yt-dlp, sťahuje a spája jadro)")
+    nastroj, url = priprav_jazyky()
 
     def uloha(o: Okno, volby: dict):
         o.data("jazyky_nacitat", url)
@@ -479,21 +484,28 @@ def jazyky(out: Path):
     try:
         o.data("ulozit_nastavenia", {"outdir": str(out / "jz")})
         n = o.data("jazyky_nacitat", url)
-        skontroluj("načítanie jazykov: originál prvý, výber CZ → SK podľa nastavení",
+        skontroluj("načítanie jazykov: originál prvý, výber CZ → SK → EN podľa poradia",
                    [(x["kod"], x["nazov"], x["original"], x["aac"]) for x in n["stopy"]]
                    == [("en", "Angličtina", True, True), ("cs", "Čeština", False, True), ("sk", "Slovenčina", False, False)]
                    and n["vybrane"] == ["cs", "sk"] and n["original"] == "Angličtina" and n["nazov"] == "Jazyková skúška", n)
+        # pozn.: angličtina je originál, preto nie je vo „vybrane“ – pridá sa prepínačom „Pôvodná stopa na koniec“
         s, f = uloha(o, {"poradie": ["cs", "sk"], "rezim": "video", "original": True, "kvalita": "Najlepšia",
                          "zvuk": "oboje", "kontajner": "mkv"})
         p = prud(f) if f else []
         cakane = [("video", "vp9", "", "", 1),
-                  ("audio", "aac", "cze", "Čeština", 1), ("audio", "aac", "slo", "Slovenčina", 0),
-                  ("audio", "aac", "eng", "Angličtina – originál", 0),
-                  ("audio", "opus", "cze", "Čeština – Opus (vyššia kvalita)", 0),
-                  ("audio", "opus", "slo", "Slovenčina – Opus (vyššia kvalita)", 0),
-                  ("audio", "opus", "eng", "Angličtina – originál – Opus (vyššia kvalita)", 0)]
-        skontroluj("MKV: obraz VP9, AAC v poradí CZ → SK → originál, potom tie isté v Opus",
+                  ("audio", "aac", "cze", "Čeština – AAC", 1), ("audio", "opus", "cze", "Čeština – Opus", 0),
+                  ("audio", "aac", "slo", "Slovenčina – AAC", 0), ("audio", "opus", "slo", "Slovenčina – Opus", 0),
+                  ("audio", "aac", "eng", "Angličtina – originál – AAC", 0),
+                  ("audio", "opus", "eng", "Angličtina – originál – Opus", 0)]
+        skontroluj("MKV: obraz VP9, stopy CZ (AAC), CZ (Opus), SK (AAC), SK (Opus), originál (AAC, Opus)",
                    s["text"] == "Hotovo" and f.name == "Jazyková skúška [cs+sk+en].mkv" and p == cakane, (s, p))
+        s, f = uloha(o, {"poradie": ["cs", "sk", "en"], "rezim": "audio", "zvuk": "oboje", "kontajner": "mkv",
+                         "zvuky": {"cs": "aac", "sk": "aac", "en": "opus"}})
+        p = prud(f) if f else []
+        skontroluj("voľba pri jazyku: CZ len AAC, SK len AAC (prevodom, bez Opus), EN len Opus",
+                   s["text"] == "Hotovo" and p == [("audio", "aac", "cze", "Čeština", 1), ("audio", "aac", "slo", "Slovenčina", 0),
+                                                   ("audio", "opus", "eng", "Angličtina – originál", 0)]
+                   and any("prevedené do AAC" in r for r in s["log"]), (s, p))
         s, f = uloha(o, {"poradie": ["cs", "sk"], "rezim": "video", "original": False, "zvuk": "oboje", "kontajner": "mp4"})
         p = prud(f) if f else []
         skontroluj("MP4: obraz H.264 a len AAC", s["text"] == "Hotovo" and [x[:3] for x in p]

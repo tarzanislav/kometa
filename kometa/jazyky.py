@@ -310,8 +310,11 @@ def run_job(job: dict, log=print, progress=lambda frac, text: None, cancel: thre
     """Celý postup: stiahne zvolené stopy (a príp. video) a spojí ich do jedného súboru.
 
     job: info, tracks, outdir, mode ("audio" | "video" | "existing"), existing_path,
-         include_original, keep_separate, max_height, audio_mode ("oboje" | "aac" | "opus"),
+         include_original, keep_separate, max_height, audio_mode ("oboje" | "aac" | "opus") pre všetky jazyky,
+         zvuky ({kód: "oboje" | "aac" | "opus"} – voľba pri jednotlivom jazyku),
          kontajner ("mkv" | "mp4" – MP4 má vždy len stopy AAC)
+
+    Poradie stôp: CZ (AAC), CZ (Opus), SK (AAC), SK (Opus)… – prvá je predvolená.
     """
     cancel = cancel or threading.Event()
     info = job["info"]
@@ -336,9 +339,13 @@ def run_job(job: dict, log=print, progress=lambda frac, text: None, cancel: thre
     if audio_mode not in AUDIO_MODES:
         audio_mode = "oboje"
     mp4 = job.get("kontajner") == "mp4"
-    if mp4:
-        audio_mode = "aac"    # MP4 = najširšia kompatibilita: obraz H.264 a zvuk AAC (Opus by mnohé zariadenia neprehrali)
-    total_steps = len(tracks) * (2 if audio_mode == "oboje" else 1) + (1 if mode == "video" else 0) + 1
+    per_track = {k: v for k, v in (job.get("zvuky") or {}).items() if v in AUDIO_MODES}
+
+    def track_mode(t):
+        # MP4 = najširšia kompatibilita: obraz H.264 a zvuk AAC (Opus by mnohé zariadenia neprehrali)
+        return "aac" if mp4 else per_track.get(t["code"], audio_mode)
+
+    total_steps = sum(2 if track_mode(t) == "oboje" else 1 for t in tracks) + (1 if mode == "video" else 0) + 1
     state = {"step": 0, "text": ""}
 
     def sub(frac):
@@ -363,32 +370,33 @@ def run_job(job: dict, log=print, progress=lambda frac, text: None, cancel: thre
             stem = tmp / ("a%02d_%s_%s" % (n, re.sub(r"[^\w-]", "_", t["code"] or "orig"), kind))
             return download_format(info, fmt["format_id"], stem, log, sub, cancel)
 
-        files = []        # hlavné stopy (AAC alebo Opus podľa režimu) – v poradí jazykov
-        extra = []        # druhé stopy (Opus pri režime „oboje“)
+        per_lang = []     # [(stopa, [(cesta, "aac" | "opus"), …])] – súbory jazyka v poradí AAC, Opus
         for n, t in enumerate(tracks, 1):
             if cancel.is_set():
                 raise Cancelled()
+            tm = track_mode(t)
+            want_aac, want_opus = tm != "opus", tm != "aac"
             state["text"] = f"Sťahujem: {t['label']} ({n}/{len(tracks)})…"
-            log(f"⬇ {t['label']}  [{t['code'] or '—'}]")
+            log(f"⬇ {t['label']}  [{t['code'] or '—'}] – {dict(aac='AAC', opus='Opus').get(tm, 'AAC + Opus')}")
             sub(0)
-            aac_fmt, opus_fmt = t.get("aac"), t.get("opus") or t["format"]
-            if audio_mode == "opus":
-                files.append((t, fetch(t, opus_fmt, n, "opus"), "opus"))
+            got, opus_path = [], None
+            if want_aac:
+                if t.get("aac"):
+                    got.append((fetch(t, t["aac"], n, "aac"), "aac"))
+                else:  # zdroj AAC neponúka → prevedieme z Opus (Opus ostane, len ak ho chceš)
+                    opus_path = fetch(t, t.get("opus") or t["format"], n, "opus")
+                    log(f"↻ Prevádzam {t['label']} do AAC (zdroj ho neponúka)…")
+                    got.append((to_aac(opus_path, tmp / ("a%02d_aac.m4a" % n)), "aac"))
                 state["step"] += 1
-                continue
-            opus_path = None
-            if aac_fmt:
-                main = fetch(t, aac_fmt, n, "aac")
-            else:  # zdroj AAC neponúka → prevedieme z Opus
-                opus_path = fetch(t, opus_fmt, n, "opus")
-                log(f"↻ Prevádzam {t['label']} do AAC (zdroj ho neponúka)…")
-                main = to_aac(opus_path, tmp / ("a%02d_aac.m4a" % n))
-            files.append((t, main, "aac"))
-            state["step"] += 1
-            if audio_mode == "oboje" and t.get("opus"):
+            if want_opus:
                 sub(0)
-                extra.append((t, opus_path or fetch(t, t["opus"], n, "opus"), "opus"))
-            state["step"] += 1 if audio_mode == "oboje" else 0
+                if t.get("opus"):
+                    got.append((opus_path or fetch(t, t["opus"], n, "opus"), "opus"))
+                elif not want_aac:
+                    log(f"ℹ {t['label']}: zdroj nemá Opus – použijem AAC")
+                    got.append((fetch(t, t.get("aac") or t["format"], n, "aac"), "aac"))
+                state["step"] += 1
+            per_lang.append((t, got))
 
         if cancel.is_set():
             raise Cancelled()
@@ -396,7 +404,7 @@ def run_job(job: dict, log=print, progress=lambda frac, text: None, cancel: thre
         log("⇒ Spájam stopy…")
         sub(0)
 
-        codes = [t["code"] or "orig" for t, _, _ in files]
+        codes = [t["code"] or "orig" for t, _ in per_lang]
         tag = "+".join(codes) if len(codes) <= 8 else f"{len(codes)} jazykov"
         inputs: list[dict] = []
         if mode == "existing":
@@ -409,15 +417,19 @@ def run_job(job: dict, log=print, progress=lambda frac, text: None, cancel: thre
             out = unique_path(outdir / f"{safe_name(title)} [{tag}].{'mp4' if mp4 else 'mkv'}")
         else:
             out = unique_path(outdir / f"{safe_name(title)} [{tag}].{'m4a' if mp4 else 'mka'}")
-        # najprv AAC v poradí jazykov (prvá = predvolená, prehrá ju každý prehrávač), potom tie isté jazyky v Opus
-        for t, p, codec in files + extra:
-            suffix = " – Opus (vyššia kvalita)" if (codec == "opus" and audio_mode == "oboje") else ""
-            inputs.append({"path": p, "kind": "audio", "lang3": iso3(t["code"]),
-                           "title": t["label"] + (" – originál" if t["original"] else "") + suffix})
+        # CZ (AAC), CZ (Opus), SK (AAC), SK (Opus)… – prvá je predvolená
+        for t, got in per_lang:
+            for p, codec in got:
+                suffix = (" – AAC" if codec == "aac" else " – Opus") if len(got) > 1 else ""
+                inputs.append({"path": p, "kind": "audio", "lang3": iso3(t["code"]),
+                               "title": t["label"] + (" – originál" if t["original"] else "") + suffix})
         mux(out, inputs, title)
 
         if job.get("keep_separate"):
-            for t, p, _ in files:
+            for t, got in per_lang:
+                if not got:
+                    continue
+                p = got[0][0]
                 single = _export_single(p, outdir / f"{safe_name(title)} [{t['code'] or 'orig'}]")
                 log(f"   ↳ {single.name}")
 

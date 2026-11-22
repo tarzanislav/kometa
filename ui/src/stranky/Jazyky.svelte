@@ -22,14 +22,39 @@
   let subor = $state('')
   let zaznam = $state(false)
   let tahany = $state<number | null>(null)
+  /** zvuk pre všetky jazyky a voľba pri jednotlivých jazykoch (prebije spoločnú) */
+  let zvukVsetky = $state<Zvuk>(n.audio_mode ?? 'oboje')
+  let zvuky = $state<Record<string, Zvuk>>({})
 
-  const kompat = $derived(app.nastavenia?.audio_mode !== 'opus')
+  type Zvuk = 'oboje' | 'aac' | 'opus'
+  const ZVUKY: { id: Zvuk; text: string }[] = [
+    { id: 'oboje', text: 'AAC + Opus' },
+    { id: 'aac', text: 'Len AAC' },
+    { id: 'opus', text: 'Len Opus' },
+  ]
+  /** Poradie jazykov: CZ, SK, EN, PL, HU, RU – ostatné za nimi. */
+  const PRIORITA = ['cs', 'sk', 'en', 'pl', 'hu', 'ru']
+  const priorita = (kod: string) => {
+    const i = PRIORITA.indexOf(kod.toLowerCase().split('-')[0])
+    return i < 0 ? Infinity : i
+  }
   const uloha = $derived(app.stav?.jazyky)
   const stopy = $derived(video?.stopy ?? [])
   const podlaKodu = $derived(new Map(stopy.map((s) => [s.kod, s])))
   const vybrane = $derived(poradie.map((k) => podlaKodu.get(k)).filter((s): s is Stopa => !!s))
   const ostatne = $derived(stopy.filter((s) => !s.original && !poradie.includes(s.kod)))
   const orig = $derived(stopy.find((s) => s.original))
+  const zvukStopy = (kod: string): Zvuk => (kontajner === 'mp4' ? 'aac' : (zvuky[kod] ?? zvukVsetky))
+  /** Stopy výsledku v poradí CZ (AAC), CZ (Opus), SK (AAC)… */
+  const vysledok = $derived.by(() => {
+    const jazyky = [...vybrane]
+    if (original && orig && !jazyky.some((s) => s.kod === orig.kod)) jazyky.push(orig)
+    return jazyky.flatMap((s) => {
+      const z = zvukStopy(s.kod)
+      const kody: ('AAC' | 'Opus')[] = z === 'oboje' ? ['AAC', 'Opus'] : [z === 'aac' ? 'AAC' : 'Opus']
+      return kody.map((k) => ({ kod: s.kod, kodek: k }))
+    })
+  })
   const mozeStiahnut = $derived(
     !!video && (vybrane.length > 0 || (original && !!orig)) && !uloha?.busy && (rezim !== 'existing' || !!subor),
   )
@@ -43,6 +68,7 @@
       const v = await volaj<VideoJazyky>('jazyky_nacitat', url.trim())
       video = v
       poradie = v.vybrane
+      zvuky = {}
     } catch (e) {
       chybaNacitania = e instanceof ChybaJadra ? e.message : String(e)
     } finally {
@@ -72,6 +98,24 @@
     poradie = p
   }
 
+  /** Pridá jazyk: z poradia CZ, SK, EN, PL, HU, RU na svoje miesto, ostatné na koniec. */
+  function pridat(kod: string) {
+    const p = priorita(kod)
+    const j = p === Infinity ? -1 : poradie.findIndex((k) => priorita(k) > p)
+    poradie = j < 0 ? [...poradie, kod] : [...poradie.slice(0, j), kod, ...poradie.slice(j)]
+  }
+
+  function vsetky() {
+    const kody = stopy.filter((s) => !s.original).map((s) => s.kod)
+    poradie = kody.map((k, i) => [k, i] as const).sort((a, b) => priorita(a[0]) - priorita(b[0]) || a[1] - b[1]).map(([k]) => k)
+  }
+
+  function zvukPreVsetky(z: Zvuk) {
+    zvukVsetky = z
+    zvuky = {}
+    nastav({ audio_mode: z })
+  }
+
   function predvolene() {
     if (!video) return
     poradie = video.vybrane
@@ -86,7 +130,8 @@
       samostatne,
       kvalita,
       kontajner,
-      zvuk: app.nastavenia?.audio_mode ?? 'oboje',
+      zvuk: zvukVsetky,
+      zvuky: Object.fromEntries(Object.entries(zvuky).filter(([, z]) => z !== zvukVsetky)),
       subor,
     })
   }
@@ -96,17 +141,20 @@
     if (s) subor = s
   }
 
-  function zvukStopy(s: Stopa): { text: string; trieda: string; titul: string } {
-    if (kontajner === 'mp4' || kompat) {
-      return s.aac
-        ? { text: 'AAC zo zdroja', trieda: 'ok', titul: 'YouTube ponúka AAC – stopa sa len prebalí, bez straty kvality.' }
-        : {
-            text: 'AAC prevodom',
-            trieda: 'pozor',
-            titul: 'YouTube ponúka len Opus – do AAC sa prekóduje (192 kb/s). Opus ostane v MKV navyše.',
-          }
-    }
-    return { text: `Opus${s.kbps ? ` ${s.kbps} kb/s` : ''}`, trieda: '', titul: 'Pôvodný zvuk bez prekódovania.' }
+  /** Čo z jazyka vznikne – podľa voľby a toho, čo YouTube ponúka. */
+  function popisZvuku(s: Stopa): { text: string; trieda: string; titul: string } {
+    const z = zvukStopy(s.kod)
+    const opus = `Opus${s.kbps ? ` ${s.kbps} kb/s` : ''}`
+    if (z === 'opus') return { text: opus, trieda: '', titul: 'Pôvodný zvuk Opus bez prekódovania.' }
+    const aac = s.aac
+      ? { text: 'AAC zo zdroja', trieda: 'ok', titul: 'YouTube ponúka AAC – stopa sa len prebalí, bez straty kvality.' }
+      : {
+          text: 'AAC prevodom',
+          trieda: 'pozor',
+          titul: 'YouTube ponúka len Opus – do AAC sa prekóduje (192 kb/s, treba FFmpeg).',
+        }
+    if (z === 'aac') return aac
+    return { text: `${aac.text} + Opus`, trieda: aac.trieda, titul: `${aac.titul} K tomu pôvodný Opus.` }
   }
 </script>
 
@@ -159,16 +207,19 @@
           <h2 id="h-poradie">Jazyky a ich poradie</h2>
           <div class="rychle">
             <button class="tl tiche" onclick={predvolene}>Predvolené</button>
-            <button class="tl tiche" onclick={() => (poradie = stopy.filter((s) => !s.original).map((s) => s.kod))}>Všetky</button>
+            <button class="tl tiche" onclick={vsetky}>Všetky</button>
             <button class="tl tiche" onclick={() => (poradie = [])}>Žiadne</button>
           </div>
         </div>
-        <p class="tlmene male">Prvá stopa bude predvolená. Poradie zmeníš potiahnutím alebo šípkami.</p>
+        <p class="tlmene male">
+          Prvá stopa bude predvolená. Poradie CZ, SK, EN, PL, HU, RU – ďalšie jazyky idú za nimi. Zmeníš ho potiahnutím
+          alebo šípkami.
+        </p>
 
         {#if vybrane.length}
           <ol class="poradie">
             {#each vybrane as s, i (s.kod)}
-              {@const z = zvukStopy(s)}
+              {@const z = popisZvuku(s)}
               <li
                 draggable="true"
                 class:tahany={tahany === i}
@@ -193,9 +244,22 @@
               >
                 <span class="uchop" aria-hidden="true"><Ikona meno="uchop" velkost={16} /></span>
                 <span class="poradove cisla">{i + 1}</span>
-                <span class="meno">{s.nazov}</span>
-                <span class="kod">{kratkyKod(s.kod)}</span>
+                <span class="meno-blok">
+                  <span class="meno">{s.nazov}</span>
+                  <span class="kod">{kratkyKod(s.kod)}</span>
+                </span>
+                <span class="zvuk-blok">
+                <select
+                  class="vyber zvuk-stopy"
+                  aria-label="Zvuk – {s.nazov}"
+                  value={zvukStopy(s.kod)}
+                  disabled={kontajner === 'mp4'}
+                  onchange={(e) => (zvuky = { ...zvuky, [s.kod]: (e.currentTarget as HTMLSelectElement).value as Zvuk })}
+                >
+                  {#each ZVUKY as m (m.id)}<option value={m.id}>{m.text}</option>{/each}
+                </select>
                 <span class="stitok {z.trieda}" title={z.titul}>{z.text}</span>
+                </span>
                 <span class="sipky">
                   <button class="tl ikona" aria-label="Posunúť {s.nazov} vyššie" disabled={i === 0} onclick={() => presun(i, i - 1)}>
                     <Ikona meno="hore" velkost={16} />
@@ -227,7 +291,7 @@
           <h3 class="dalsie">Ďalšie jazyky videa</h3>
           <div class="cipy">
             {#each ostatne as s (s.kod)}
-              <button class="cip" onclick={() => (poradie = [...poradie, s.kod])}>
+              <button class="cip" onclick={() => pridat(s.kod)}>
                 <Ikona meno="plus" velkost={14} />
                 {s.nazov}
               </button>
@@ -288,22 +352,39 @@
           </p>
         </div>
 
+        <div class="riadok">
+          <span class="popis">Zvuk pre všetky jazyky</span>
+          {#if kontajner === 'mp4'}
+            <p class="tlmene male vysvetlenie">MP4 má vždy zvuk AAC – ak ho YouTube neponúka, prevedie sa z Opus.</p>
+          {:else}
+            <Segment popis="Zvuk pre všetky jazyky" hodnota={zvukVsetky} zmena={zvukPreVsetky} moznosti={ZVUKY} />
+            <p class="tlmene male vysvetlenie">
+              AAC prehrá každý prehrávač; ak ho YouTube nemá, prevedie sa z Opus. Opus je kvalitnejší. Pri každom jazyku
+              to môžeš zmeniť zvlášť.
+            </p>
+          {/if}
+        </div>
+
         <div class="prepinace">
-          <Prepinac
-            nazov="Kompatibilný zvuk"
-            zapnute={kompat || kontajner === 'mp4'}
-            zakazane={kontajner === 'mp4'}
-            popis={kontajner === 'mp4'
-              ? 'MP4 má vždy zvuk AAC.'
-              : 'Každý jazyk aj v AAC, ktoré prehrá každý prehrávač – tieto stopy sú prvé. Opus ostane za nimi.'}
-            zmena={(v) => nastav({ audio_mode: v ? 'oboje' : 'opus' })}
-          />
           {#if orig}
             <Prepinac
               nazov="Pôvodná stopa na koniec"
               bind:zapnute={original}
               popis="{orig.nazov} – jazyk, v ktorom bolo video natočené."
             />
+            {#if original && kontajner !== 'mp4' && !poradie.includes(orig.kod)}
+              <div class="zvuk-originalu">
+                <span class="male tlmene">Zvuk originálu</span>
+                <select
+                  class="vyber zvuk-stopy"
+                  aria-label="Zvuk – {orig.nazov} (originál)"
+                  value={zvukStopy(orig.kod)}
+                  onchange={(e) => (zvuky = { ...zvuky, [orig!.kod]: (e.currentTarget as HTMLSelectElement).value as Zvuk })}
+                >
+                  {#each ZVUKY as m (m.id)}<option value={m.id}>{m.text}</option>{/each}
+                </select>
+              </div>
+            {/if}
           {/if}
           <Prepinac
             nazov="Každý jazyk aj samostatne"
@@ -312,17 +393,14 @@
           />
         </div>
 
-        {#if vybrane.length || (original && orig)}
-          <div class="nahlad-poradia" aria-label="Poradie stôp vo výsledku">
-            {#each vybrane as s, i (s.kod)}
+        {#if vysledok.length}
+          <div class="nahlad-poradia" aria-label="Poradie zvukových stôp vo výsledku">
+            {#each vysledok as st, i (`${st.kod}-${st.kodek}`)}
               {#if i}<Ikona meno="vpravo" velkost={14} />{/if}
-              <span class="kod-vysledok" class:prvy={i === 0}>{kratkyKod(s.kod)}</span>
+              <span class="kod-vysledok" class:prvy={i === 0} class:opus={st.kodek === 'Opus'}>
+                {kratkyKod(st.kod)} <small>{st.kodek}</small>
+              </span>
             {/each}
-            {#if original && orig}
-              {#if vybrane.length}<Ikona meno="vpravo" velkost={14} />{/if}
-              <span class="kod-vysledok">{kratkyKod(orig.kod)}</span>
-            {/if}
-            {#if kompat && kontajner === 'mkv'}<span class="tlmene male">a za nimi to isté v Opus</span>{/if}
           </div>
         {/if}
 
@@ -468,9 +546,14 @@
     gap: 4px;
   }
   .poradie li {
-    display: flex;
+    /* riadok 1: úchop, poradie, jazyk, šípky – riadok 2: zvuk (výber a čo z neho vznikne) */
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      'uchop cislo meno sipky'
+      '. . zvuk zvuk';
     align-items: center;
-    gap: var(--s2);
+    gap: 4px var(--s2);
     padding: 6px var(--s1) 6px var(--s2);
     border: 1px solid var(--line);
     border-radius: var(--r-ctl);
@@ -503,8 +586,27 @@
     background: var(--accent);
     color: var(--on-accent);
   }
+  .uchop {
+    grid-area: uchop;
+  }
+  .poradove {
+    grid-area: cislo;
+  }
+  .meno-blok {
+    grid-area: meno;
+    display: flex;
+    align-items: baseline;
+    gap: var(--s2);
+    min-width: 0;
+  }
+  .zvuk-blok {
+    grid-area: zvuk;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2);
+  }
   .meno {
-    flex: 1;
     min-width: 0;
     font-weight: 600;
     overflow: hidden;
@@ -518,6 +620,7 @@
     letter-spacing: 0.02em;
   }
   .sipky {
+    grid-area: sipky;
     display: flex;
   }
   .sipky .tl {
@@ -615,6 +718,27 @@
     background: var(--sunken);
     color: var(--ink);
     font: 700 var(--t-s) / 1.2 var(--font-display);
+  }
+  .kod-vysledok small {
+    font: 600 var(--t-xs) / 1 var(--font-body);
+    opacity: 0.8;
+  }
+  .kod-vysledok.opus:not(.prvy) {
+    background: transparent;
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+  .zvuk-stopy {
+    width: auto;
+    min-width: 0;
+    padding-block: 4px;
+    font-size: var(--t-s);
+  }
+  .zvuk-originalu {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s3);
+    margin: calc(-1 * var(--s1)) 0 var(--s1);
   }
   .kod-vysledok.prvy {
     background: var(--accent);

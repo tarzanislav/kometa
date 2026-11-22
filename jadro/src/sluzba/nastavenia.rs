@@ -4,7 +4,10 @@
 use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
 
-pub const PREDVOLENE_JAZYKY: [&str; 6] = ["cs", "sk", "en", "en-US", "pl", "hu"];
+/// Poradie jazykov: CZ, SK, EN, PL, HU, RU – ostatné vybrané idú za nimi.
+pub const PREDVOLENE_JAZYKY: [&str; 6] = ["cs", "sk", "en", "pl", "hu", "ru"];
+/// Predvolené poradie starších verzií – pri načítaní sa nahradí novým.
+const STARE_JAZYKY: [&str; 6] = ["cs", "sk", "en", "en-US", "pl", "hu"];
 pub const PREHLIADACE: [&str; 8] = [
     "firefox", "chrome", "edge", "brave", "opera", "vivaldi", "chromium", "safari",
 ];
@@ -254,6 +257,13 @@ impl Nastavenia {
             // starší predvolený priečinok, ktorý systém presmeroval – nie voľba používateľa
             data.insert("outdir".into(), json!(novy.to_string_lossy()));
             opraveny_priecinok = Some((ulozeny, novy.to_string_lossy().into_owned()));
+        }
+        if data
+            .get("langs")
+            .and_then(Value::as_array)
+            .is_some_and(|a| a.iter().map(|x| x.as_str().unwrap_or("")).eq(STARE_JAZYKY))
+        {
+            data.insert("langs".into(), json!(PREDVOLENE_JAZYKY));
         }
         let n = Nastavenia {
             subor,

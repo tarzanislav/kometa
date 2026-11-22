@@ -102,12 +102,25 @@
           <span class="cisla">{n.connections}</span>
         </div>
       </div>
-      <Prepinac
-        nazov="Kompatibilný zvuk vo videách"
-        zapnute={n.audio_mode !== 'opus'}
-        popis="Videá z YouTube dostanú zvuk AAC, ktorý prehrá každý prehrávač, a navyše kvalitnejší Opus – oboje v jednom MKV."
-        zmena={(v) => nastav({ audio_mode: v ? 'oboje' : 'opus' })}
-      />
+      <div class="riadok-zvuk">
+        <div>
+          <p class="nazov-zvuk">Zvuk vo videách z YouTube</p>
+          <p class="male tlmene">
+            AAC prehrá každý prehrávač (ak ho YouTube nemá, prevedie sa z Opus), Opus je kvalitnejší. „AAC + Opus“ dá
+            oboje do jedného MKV.
+          </p>
+        </div>
+        <Segment
+          popis="Zvuk vo videách z YouTube"
+          hodnota={n.audio_mode ?? 'oboje'}
+          zmena={(v) => nastav({ audio_mode: v })}
+          moznosti={[
+            { id: 'oboje', text: 'AAC + Opus' },
+            { id: 'aac', text: 'Len AAC' },
+            { id: 'opus', text: 'Len Opus' },
+          ]}
+        />
+      </div>
       <Prepinac
         nazov="Po spustení pokračovať v nedokončených"
         zapnute={n.autoresume}
@@ -305,6 +318,21 @@
     display: flex;
     flex-direction: column;
     gap: var(--s2);
+  }
+  .riadok-zvuk {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s3) var(--s5);
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--s3) 0;
+  }
+  .riadok-zvuk > div {
+    max-width: 52ch;
+  }
+  .nazov-zvuk {
+    font-weight: 650;
+    margin-bottom: var(--s1);
   }
   .pomocnik {
     display: flex;

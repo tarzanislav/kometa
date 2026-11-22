@@ -283,6 +283,7 @@ class Jadro:
         job = {"info": self._lang_info, "tracks": tracks, "outdir": self._outdir(), "mode": mode,
                "existing_path": existing, "include_original": bool(volby.get("original")),
                "keep_separate": bool(volby.get("samostatne")), "audio_mode": audio_mode, "kontajner": kontajner,
+               "zvuky": {str(k): v for k, v in (volby.get("zvuky") or {}).items() if v in AUDIO_MODES},
                "max_height": int(q[:-1]) if q.endswith("p") and q[:-1].isdigit() else None}
         self._lang_cancel = threading.Event()
         self._lang.update(busy=True, frac=0.0, text="Pripravujem…", log=[], file="", error="")

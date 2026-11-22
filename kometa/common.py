@@ -17,7 +17,8 @@ APP_ID = "kometa"
 CONFIG_DIR = Path.home() / ".kometa"
 CONFIG_PATH = CONFIG_DIR / "nastavenia.json"
 QUEUE_PATH = CONFIG_DIR / "fronta.json"
-DEFAULT_LANGS = ["cs", "sk", "en", "en-US", "pl", "hu"]
+DEFAULT_LANGS = ["cs", "sk", "en", "pl", "hu", "ru"]   # CZ, SK, EN, PL, HU, RU – ostatné vybrané za nimi
+_OLD_DEFAULT_LANGS = ["cs", "sk", "en", "en-US", "pl", "hu"]
 USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 
@@ -290,6 +291,8 @@ def load_config() -> dict:
         cfg.update(json.loads(CONFIG_PATH.read_text(encoding="utf-8")))
     except Exception:
         pass
+    if cfg.get("langs") == _OLD_DEFAULT_LANGS:
+        cfg["langs"] = list(DEFAULT_LANGS)
     new = default_outdir()
     if not cfg.get("outdir"):
         cfg["outdir"] = str(new)

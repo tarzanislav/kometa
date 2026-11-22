@@ -18,7 +18,7 @@ YouTube · Vimeo (aj vložené) · Facebook · Instagram · TikTok (bez vodoznak
 - **Webshare.cz a Fastshare.cz** cez tvoj vlastný účet (Webshare cez oficiálne API).
 - **Pokračovanie prerušeného sťahovania.** Pri pauze, výpadku siete aj po zatvorení programu sa pokračuje od miesta, kde sa skončilo. Keď odkaz z úložiska vyprší, Kometa si vypýta nový.
 - **Front sťahovania**: viac súborov naraz, pauza a pokračovanie, front ostane uložený aj po reštarte.
-- **Jazykové stopy z YouTube**: z videí s preloženým zvukom stiahne vybrané jazyky a spojí ich s videom do jedného `.mkv` alebo `.mp4`. Predvolené poradie je CZ, SK, EN, EN-US, PL, HU (zmeníš ho ťahaním) a pôvodná stopa ide na koniec. Kompatibilný zvuk: AAC, ktorý prehrá každý prehrávač, a navyše kvalitnejší Opus.
+- **Jazykové stopy z YouTube**: z videí s preloženým zvukom stiahne vybrané jazyky a spojí ich s videom do jedného `.mkv` alebo `.mp4`. Predvolené poradie je CZ, SK, EN, PL, HU, RU (zmeníš ho ťahaním) a pôvodná stopa ide na koniec. Pri každom jazyku zvolíš AAC, Opus alebo oboje; stopy idú po jazykoch – CZ (AAC), CZ (Opus), SK (AAC)…
 - Formáty: najlepšia kvalita, MP4 pre TV a mobil, najviac 1080p alebo 720p, MP3, zvuk v pôvodnej kvalite.
 
 | Jazykové stopy | Nastavenia a témy |
@@ -90,16 +90,20 @@ Okno aplikácie používa vo Windows WebView2 (súčasť Windows 10/11), v macOS
 3. Front je rozdelený na *Sťahuje sa*, *V poradí*, *Nepodarilo sa* a *Hotové*. Pri každej položke je pauza alebo pokračovanie, kopírovanie odkazu a odstránenie; pri hotovej otvorenie priečinka, pri chybe vysvetlenie a **Skúsiť znova**.
 
 ### Jazykové stopy (YouTube)
-Pre videá, ktoré majú na YouTube viac zvukových stôp (preklad či dabing). Vlož odkaz a klikni na **Načítať jazyky**. Predvolené jazyky sú vybrané v tvojom poradí; poradie zmeníš ťahaním alebo šípkami, ďalšie jazyky pridáš kliknutím. Prvá stopa bude predvolená. Vyber, čo vytvoriť – **video s jazykmi**, **jazyky k tvojmu stiahnutému videu** alebo **len zvuk** – a formát **MKV** alebo **MP4**.
+Pre videá, ktoré majú na YouTube viac zvukových stôp (preklad či dabing). Vlož odkaz a klikni na **Načítať jazyky**. Predvolené jazyky sú vybrané v poradí CZ, SK, EN, PL, HU, RU; poradie zmeníš ťahaním alebo šípkami, ďalšie jazyky pridáš kliknutím (zaradia sa za ne). Prvá stopa bude predvolená. Vyber, čo vytvoriť – **video s jazykmi**, **jazyky k tvojmu stiahnutému videu** alebo **len zvuk** – a formát **MKV** alebo **MP4**.
 
 - **MKV** udrží všetky stopy vrátane kvalitnejšieho Opus.
 - **MP4** má obraz H.264 a zvuk AAC – prehrá ho takmer každé zariadenie. Stopy Opus sa doň nepridávajú; H.264 dáva YouTube najviac v rozlíšení 1080p.
 
-**Kompatibilný zvuk** (prepínač, predvolene zapnutý): YouTube dáva preklady najmä vo formáte Opus, ktorý niektoré televízory, autorádiá a staršie prehrávače nevedia prehrať. So zapnutým prepínačom má každý jazyk dve stopy:
-1. **AAC** – prehrá ho každý prehrávač; tieto stopy idú prvé v tvojom poradí a prvá je predvolená. Pri každom jazyku vidíš, či ho YouTube ponúka priamo („AAC zo zdroja“ – len sa prebalí) alebo sa prevedie z Opus („AAC prevodom“, FFmpeg, 192 kb/s).
-2. **Opus** – tie isté jazyky v lepšej kvalite, s názvom „Opus (vyššia kvalita)“. Lepší prehrávač (VLC, mpv, Kodi) si ich vyberie v menu zvuku.
+**Zvuk – AAC, Opus alebo oboje.** YouTube dáva preklady najmä vo formáte Opus, ktorý niektoré televízory, autorádiá a staršie prehrávače nevedia prehrať. Preto si pri jazykoch vyberieš:
 
-Keď prepínač vypneš, vo výsledku budú len stopy Opus (menší súbor). Rovnaký prepínač je v Nastaveniach a platí aj pre bežné sťahovanie videí z YouTube.
+- **AAC + Opus** (predvolené) – každý jazyk dvakrát: AAC, ktorý prehrá každý prehrávač, a hneď za ním ten istý jazyk v kvalitnejšom Opus;
+- **Len AAC** – bez stôp Opus. Ak YouTube jazyk v AAC ponúka, len sa prebalí („AAC zo zdroja“); ak má len Opus, prevedie sa do AAC („AAC prevodom“, 192 kb/s) a Opus sa vynechá;
+- **Len Opus** – menší súbor v pôvodnej kvalite.
+
+Voľba **Zvuk pre všetky jazyky** nastaví všetky jazyky naraz a **pri každom jazyku** ju môžeš zmeniť zvlášť (napr. čeština AAC + Opus, slovenčina len AAC). Stopy idú vo výsledku po jazykoch: **CZ (AAC) → CZ (Opus) → SK (AAC) → SK (Opus) → EN (AAC) → EN (Opus)…** a prvá je predvolená. Predvolené poradie jazykov je **CZ, SK, EN, PL, HU, RU**; ďalšie jazyky, ktoré pridáš, idú za nimi.
+
+Prevod do AAC potrebuje FFmpeg (Kometa pre Python ho má vždy; aplikácia bez neho nechá Opus a povie to). Rovnaká voľba zvuku je v Nastaveniach a platí aj pre bežné sťahovanie videí z YouTube.
 
 ### Účty
 - **Webshare / Fastshare:** zadaj meno a heslo a klikni na **Prihlásiť**. Heslo sa uloží do systémovej kľúčenky (vo Windows *Správca poverení*), nikam inam sa neposiela. Na rýchle sťahovanie treba **VIP (Webshare)** alebo **kredit (Fastshare)**. Kometa neobchádza obmedzenia bezplatných účtov.
@@ -108,7 +112,7 @@ Keď prepínač vypneš, vo výsledku budú len stopy Opus (menší súbor). Rov
 ### Nastavenia
 - **Vzhľad:** 7 tém (Kometa, Polárna žiara, Súmrak, Les, More, Levanduľa, Grafit) a režim podľa systému, deň alebo noc. Režim prepneš aj ikonami dole v bočnom paneli.
 - **Súčasne sťahovať** (1–6 súborov naraz) a **Spojenia na jeden súbor** (1–16, predvolene 4).
-- **Kompatibilný zvuk vo videách** a **pokračovanie nedokončených sťahovaní po spustení**.
+- **Zvuk vo videách z YouTube** (AAC + Opus, len AAC, len Opus) a **pokračovanie nedokončených sťahovaní po spustení**.
 - **Priečinok na sťahovanie.**
 
 ## Ako funguje pokračovanie sťahovania
@@ -119,7 +123,7 @@ Rozpracovaný súbor sa ukladá ako `názov.part`. Pri ďalšom pokuse sa server
 
 ```
 py app.py ODKAZ [ODKAZ …] [-f video|mp4|1080|720|mp3|audio] [-o PRIEČINOK]
-py app.py jazyky ODKAZ                         # video + CZ, SK, EN, EN-US, PL, HU → .mkv
+py app.py jazyky ODKAZ                         # video + CZ, SK, EN, PL, HU, RU → .mkv
 py app.py jazyky ODKAZ --zoznam                # vypíše dostupné jazyky
 py app.py jazyky ODKAZ -j cs sk en -o "D:\Videa"
 py app.py jazyky ODKAZ --zvuk opus             # bez AAC stôp (oboje | aac | opus)

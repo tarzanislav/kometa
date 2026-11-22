@@ -450,7 +450,10 @@ struct Uloha {
     pridat_original: bool,
     samostatne: bool,
     vyska: Option<u32>,
+    /// zvuk pre všetky jazyky: "oboje" (AAC + Opus), "aac", "opus"
     zvuk: String,
+    /// voľba pri jednotlivých jazykoch (prebije `zvuk`)
+    zvuky: std::collections::HashMap<String, String>,
     mp4: bool,
     priecinok: PathBuf,
 }
@@ -531,7 +534,21 @@ pub fn stiahni(v: &Arc<Vnutro>, volby: &Map<String, Value>) -> Vysledok<()> {
         pridat_original: b("original"),
         samostatne: b("samostatne"),
         vyska: kvalita.strip_suffix('p').and_then(|x| x.parse().ok()),
-        zvuk: if mp4 { "aac".into() } else { zvuk }, // MP4 = najširšia podpora: H.264 a AAC
+        zvuk,
+        zvuky: volby
+            .get("zvuky")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+            .filter_map(|(k, x)| {
+                Some((
+                    k.clone(),
+                    x.as_str()
+                        .filter(|z| matches!(*z, "oboje" | "aac" | "opus"))?
+                        .to_string(),
+                ))
+            })
+            .collect(),
         mp4,
         priecinok: PathBuf::from(v.nastavenia.lock().unwrap().text("outdir")),
     };
@@ -709,10 +726,18 @@ async fn prace(v: &Arc<Vnutro>, u: Uloha, z: &CancellationToken) -> Vysledok<Pat
             stopy.push(o.clone());
         }
     }
-    let oboje = u.zvuk == "oboje";
-    let krokov = stopy.len() as f64 * if oboje { 2.0 } else { 1.0 }
-        + if u.rezim == "video" { 1.0 } else { 0.0 }
-        + 1.0;
+    let rezim_stopy = |t: &Stopa| -> &str {
+        if u.mp4 {
+            "aac" // MP4 = najširšia podpora: H.264 a AAC
+        } else {
+            u.zvuky.get(&t.kod).map(String::as_str).unwrap_or(&u.zvuk)
+        }
+    };
+    let vystupov: usize = stopy
+        .iter()
+        .map(|t| if rezim_stopy(t) == "oboje" { 2 } else { 1 })
+        .sum();
+    let krokov = vystupov as f64 + if u.rezim == "video" { 1.0 } else { 0.0 } + 1.0;
     let p = Arc::new(Mutex::new(Priebeh {
         krokov,
         krok: 0.0,
@@ -744,19 +769,26 @@ async fn prace(v: &Arc<Vnutro>, u: Uloha, z: &CancellationToken) -> Vysledok<Pat
             video = Some(stiahni_format(v, &na(&f, "video")?, &tmp.join("video"), z, &h).await?);
             dalsi(&p);
         }
-        let mut hlavne: Vec<(Stopa, PathBuf, &str)> = vec![];
-        let mut druhe: Vec<(Stopa, PathBuf)> = vec![];
+        // každý jazyk: jeho súbory v poradí AAC, Opus (podľa voľby pri jazyku)
+        let mut jazyky: Vec<(Stopa, Vec<(PathBuf, &'static str)>)> = vec![];
         for (i, t) in stopy.iter().enumerate() {
             if z.is_cancelled() {
                 return Err(Chyba::Pauza);
             }
+            let rezim = rezim_stopy(t);
+            let (chcem_aac, chcem_opus) = (rezim != "opus", rezim != "aac");
             krok(
                 v,
                 &p,
                 format!("Sťahujem: {} ({}/{})…", t.nazov, i + 1, stopy.len()),
             );
+            let popis_rezimu = match rezim {
+                "aac" => "AAC",
+                "opus" => "Opus",
+                _ => "AAC + Opus",
+            };
             v.jazyky.zapis(format!(
-                "⬇ {}  [{}]",
+                "⬇ {}  [{}] – {popis_rezimu}",
                 t.nazov,
                 if t.kod.is_empty() { "—" } else { &t.kod }
             ));
@@ -767,68 +799,84 @@ async fn prace(v: &Arc<Vnutro>, u: Uloha, z: &CancellationToken) -> Vysledok<Pat
                     bezpecny_nazov(if t.kod.is_empty() { "orig" } else { &t.kod }, 20)
                 ))
             };
-            let opus_f = t.opus.clone().unwrap_or_else(|| t.najlepsi.clone());
-            if u.zvuk == "opus" {
-                hlavne.push((
-                    t.clone(),
-                    stiahni_format(v, &na(&opus_f, "zvuk")?, &meno("opus"), z, &h).await?,
-                    "opus",
-                ));
-                dalsi(&p);
-                continue;
-            }
-            let mut opus_cesta = None;
-            let (hlavna, kodek) = match &t.aac {
-                Some(a) => (
-                    stiahni_format(v, &na(a, "zvuk")?, &meno("aac"), z, &h).await?,
-                    "aac",
-                ),
-                None => {
-                    let o = stiahni_format(v, &na(&opus_f, "zvuk")?, &meno("opus"), z, &h).await?;
-                    opus_cesta = Some(o.clone());
-                    match na_aac(v, &o, &meno("aac").with_extension("m4a")).await {
-                        Some(a) => {
-                            v.jazyky.zapis(format!(
-                                "↻ {} prevedené do AAC (zdroj ho neponúka)",
-                                t.nazov
-                            ));
-                            (a, "aac")
+            let mut subory: Vec<(PathBuf, &'static str)> = vec![];
+            let mut opus_cesta: Option<PathBuf> = None;
+            if chcem_aac {
+                match &t.aac {
+                    Some(a) => subory.push((
+                        stiahni_format(v, &na(a, "zvuk")?, &meno("aac"), z, &h).await?,
+                        "aac",
+                    )),
+                    None => {
+                        // YouTube ponúka len Opus → AAC prevodom (Opus ostane, len ak ho chceš)
+                        let zdroj = t.opus.clone().unwrap_or_else(|| t.najlepsi.clone());
+                        let o =
+                            stiahni_format(v, &na(&zdroj, "zvuk")?, &meno("opus"), z, &h).await?;
+                        match na_aac(v, &o, &meno("aac").with_extension("m4a")).await {
+                            Some(a) => {
+                                v.jazyky.zapis(format!(
+                                    "↻ {} prevedené do AAC (zdroj ho neponúka)",
+                                    t.nazov
+                                ));
+                                subory.push((a, "aac"));
+                            }
+                            None => {
+                                v.jazyky.zapis(format!(
+                                    "ℹ {}: zdroj nemá AAC a bez FFmpeg ostane Opus",
+                                    t.nazov
+                                ));
+                                if !chcem_opus {
+                                    subory.push((o.clone(), "opus"));
+                                }
+                            }
                         }
-                        None => {
-                            v.jazyky.zapis(format!(
-                                "ℹ {}: zdroj nemá AAC a bez FFmpeg ostane Opus",
-                                t.nazov
-                            ));
-                            (o, "opus")
-                        }
+                        opus_cesta = Some(o);
                     }
                 }
-            };
-            hlavne.push((t.clone(), hlavna, kodek));
-            dalsi(&p);
-            if oboje {
-                if let Some(o) = &t.opus {
-                    if kodek == "aac" {
-                        let cesta = match opus_cesta {
+                dalsi(&p);
+            }
+            if chcem_opus {
+                match &t.opus {
+                    Some(o) => {
+                        let cesta = match opus_cesta.take() {
                             Some(c) => c,
                             None => {
                                 stiahni_format(v, &na(o, "zvuk")?, &meno("opus"), z, &h).await?
                             }
                         };
-                        druhe.push((t.clone(), cesta));
+                        subory.push((cesta, "opus"));
                     }
+                    None if !chcem_aac => {
+                        v.jazyky
+                            .zapis(format!("ℹ {}: zdroj nemá Opus – použijem AAC", t.nazov));
+                        let a = t.aac.clone().unwrap_or_else(|| t.najlepsi.clone());
+                        subory.push((
+                            stiahni_format(v, &na(&a, "zvuk")?, &meno("aac"), z, &h).await?,
+                            "aac",
+                        ));
+                    }
+                    None => v
+                        .jazyky
+                        .zapis(format!("ℹ {}: zdroj nemá Opus – ostane len AAC", t.nazov)),
                 }
                 dalsi(&p);
             }
+            if subory.is_empty() {
+                // zdroj nemá ani AAC, ani Opus (iný kodek) – stopa ostane, ako je
+                if let Some(c) = opus_cesta {
+                    subory.push((c, "opus"));
+                }
+            }
+            jazyky.push((t.clone(), subory));
         }
         if z.is_cancelled() {
             return Err(Chyba::Pauza);
         }
         krok(v, &p, "Spájam stopy do jedného súboru…".into());
         v.jazyky.zapis("⇒ Spájam stopy…");
-        let kody: Vec<String> = hlavne
+        let kody: Vec<String> = jazyky
             .iter()
-            .map(|(t, _, _)| {
+            .map(|(t, _)| {
                 if t.kod.is_empty() {
                     "orig".into()
                 } else {
@@ -882,32 +930,25 @@ async fn prace(v: &Arc<Vnutro>, u: Uloha, z: &CancellationToken) -> Vysledok<Pat
                 bezpecny_nazov(&titul, 140)
             )),
         };
-        // najprv hlavné stopy v poradí jazykov (prvá = predvolená), potom tie isté jazyky v Opus
-        for (t, cesta, kodek) in &hlavne {
-            let opus_navyse = *kodek == "opus" && oboje;
-            vstupy.push(Vstup {
-                cesta: cesta.clone(),
-                druh: "zvuk".into(),
-                jazyk: Some(t.kod.clone()).filter(|k| !k.is_empty()),
-                nazov: Some(format!(
-                    "{}{}{}",
-                    t.nazov,
-                    if t.original { " – originál" } else { "" },
-                    if opus_navyse { " – Opus" } else { "" }
-                )),
-            });
-        }
-        for (t, cesta) in &druhe {
-            vstupy.push(Vstup {
-                cesta: cesta.clone(),
-                druh: "zvuk".into(),
-                jazyk: Some(t.kod.clone()).filter(|k| !k.is_empty()),
-                nazov: Some(format!(
-                    "{}{} – Opus (vyššia kvalita)",
-                    t.nazov,
-                    if t.original { " – originál" } else { "" }
-                )),
-            });
+        // poradie stôp: CZ (AAC), CZ (Opus), SK (AAC), SK (Opus)… – prvá je predvolená
+        for (t, subory) in &jazyky {
+            for (cesta, kodek) in subory {
+                let kodek_v_nazve = match (subory.len() > 1, *kodek) {
+                    (false, _) => "",
+                    (true, "aac") => " – AAC",
+                    (true, _) => " – Opus",
+                };
+                vstupy.push(Vstup {
+                    cesta: cesta.clone(),
+                    druh: "zvuk".into(),
+                    jazyk: Some(t.kod.clone()).filter(|k| !k.is_empty()),
+                    nazov: Some(format!(
+                        "{}{}{kodek_v_nazve}",
+                        t.nazov,
+                        if t.original { " – originál" } else { "" }
+                    )),
+                });
+            }
         }
         if let ("existing", Some(e)) = (&u.rezim[..], &u.existujuce) {
             // pôvodný zvuk vlastného videa na koniec; pomenovať len stopu bez názvu
@@ -946,7 +987,10 @@ async fn prace(v: &Arc<Vnutro>, u: Uloha, z: &CancellationToken) -> Vysledok<Pat
         let ciel = jedinecna(ciel);
         let out = spajanie::spoj(&vstupy, &ciel, &titul).await?;
         if u.samostatne {
-            for (t, cesta, kodek) in &hlavne {
+            for (t, cesta, kodek) in jazyky
+                .iter()
+                .filter_map(|(t, s)| s.first().map(|(c, k)| (t, c, k)))
+            {
                 let p = if *kodek == "aac" { "m4a" } else { "mka" };
                 let c = jedinecna(u.priecinok.join(format!(
                     "{} [{}].{p}",

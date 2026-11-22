@@ -417,7 +417,7 @@ class LanguagesTab:
         self._set_go_state()
 
     def selected_tracks(self) -> list[dict]:
-        """Zaškrtnuté stopy – v poradí obľúbených jazykov (cs, sk, en, en-US, pl, hu), originál na konci."""
+        """Zaškrtnuté stopy – v poradí obľúbených jazykov (cs, sk, en, pl, hu, ru), originál na konci."""
         pref = [c.lower() for c in (self.cfg.get("langs") or DEFAULT_LANGS)]
         sel = [(i, t) for i, (t, v) in enumerate(zip(self.tracks, self.track_vars)) if v.get()]
 
