@@ -1,11 +1,14 @@
-// Spojenie s jadrom. V okne aplikácie (pywebview) cez window.pywebview.api, v okne prehliadača cez lokálny
-// server s tajným kľúčom v adrese (#t=…). Neskôr v Tauri cez invoke() – zvyšok rozhrania sa nemení.
+// Spojenie s jadrom – rovnaké rozhranie pre tri okná:
+//  • aplikácia Tauri (jadro v Ruste) cez invoke('volaj'),
+//  • okno pywebview (Kometa pre Python) cez window.pywebview.api,
+//  • okno prehliadača cez lokálny server s tajným kľúčom v adrese (#t=…) – Python aj `kometa okno`.
 
 type Odpoved<T> = { ok: true; data: T } | { ok: false; chyba: string; podrobnosti?: string }
 
 declare global {
   interface Window {
     pywebview?: { api: Record<string, (...args: unknown[]) => Promise<unknown>> }
+    __TAURI_INTERNALS__?: { invoke: (prikaz: string, args?: Record<string, unknown>) => Promise<unknown> }
   }
 }
 
@@ -14,11 +17,15 @@ export class ChybaJadra extends Error {
 }
 
 const kluc = new URLSearchParams(location.hash.slice(1)).get('t') ?? ''
-let cesta: 'okno' | 'server' = 'server'
+let cesta: 'tauri' | 'okno' | 'server' = 'server'
 
 /** Počká, kým je jadro pripravené (pywebview vkladá svoje API až po načítaní stránky). */
 export function pripojit(): Promise<void> {
   return new Promise((ok) => {
+    if (window.__TAURI_INTERNALS__) {
+      cesta = 'tauri'
+      return ok()
+    }
     if (window.pywebview?.api?.init) {
       cesta = 'okno'
       return ok()
@@ -38,7 +45,9 @@ export function pripojit(): Promise<void> {
 
 export async function volaj<T>(metoda: string, ...args: unknown[]): Promise<T> {
   let odp: Odpoved<T>
-  if (cesta === 'okno') {
+  if (cesta === 'tauri') {
+    odp = (await window.__TAURI_INTERNALS__!.invoke('volaj', { metoda, args })) as Odpoved<T>
+  } else if (cesta === 'okno') {
     odp = (await window.pywebview!.api[metoda](...args)) as Odpoved<T>
   } else {
     let r: Response

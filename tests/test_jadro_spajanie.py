@@ -23,7 +23,7 @@ import tempfile
 from pathlib import Path
 
 KOREN = Path(__file__).resolve().parents[1]
-EXE = KOREN / "jadro" / "target" / "release" / ("kometa.exe" if os.name == "nt" else "kometa")
+EXE = KOREN / "target" / "release" / ("kometa.exe" if os.name == "nt" else "kometa")
 FF = shutil.which("ffmpeg")
 FP = shutil.which("ffprobe")
 D = Path(tempfile.mkdtemp(prefix="kometa_spajanie_"))

@@ -9,6 +9,7 @@
   import Playlist from './dialogy/Playlist.svelte'
   import Skener from './dialogy/Skener.svelte'
   import Jazyky from './stranky/Jazyky.svelte'
+  import Pribudne from './stranky/Pribudne.svelte'
   import Nastavenia from './stranky/Nastavenia.svelte'
   import Stahovanie from './stranky/Stahovanie.svelte'
   import Ucty from './stranky/Ucty.svelte'
@@ -93,7 +94,14 @@
       {#if app.stranka === 'stahovanie'}
         <Stahovanie />
       {:else if app.stranka === 'jazyky'}
-        <Jazyky />
+        {#if app.init?.funkcie && !app.init.funkcie.jazyky}
+          <Pribudne
+            nadpis="Jazykové stopy"
+            text="Spájanie zvukových stôp z YouTube (CZ → SK → ďalšie) zatiaľ robí Kometa pre Python. Všetko ostatné – stránky, Vimeo, streamy, súbory, Webshare a Fastshare – už vie aj táto aplikácia."
+          />
+        {:else}
+          <Jazyky />
+        {/if}
       {:else if app.stranka === 'ucty'}
         <Ucty />
       {:else}

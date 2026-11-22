@@ -5,4 +5,5 @@ __pycache__/
 *.tmp
 .venv/
 node_modules/
+/target/
 jadro/target/

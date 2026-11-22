@@ -30,6 +30,8 @@ pub enum Ciel {
 #[derive(Clone, Debug, Serialize)]
 pub struct Riesenie {
     pub ciel: Ciel,
+    /// nález zo stránky, z ktorého je cieľ (pri priamom odkaze `None`)
+    pub nalez: Option<Nalez>,
     /// ďalšie odporúčané nálezy na stránke (stiahne sa len prvý)
     pub dalsie: Vec<Nalez>,
 }
@@ -125,6 +127,7 @@ pub async fn vyries(
         let ciel = prehravac(k, &p, referer).await?;
         return Ok(Riesenie {
             ciel,
+            nalez: None,
             dalsie: vec![],
         });
     }
@@ -156,6 +159,7 @@ pub async fn vyries(
             };
             return Ok(Riesenie {
                 ciel,
+                nalez: None,
                 dalsie: vec![],
             });
         }
@@ -191,5 +195,9 @@ pub async fn vyries(
         }
         _ => z_nalezu(n).ok_or_else(|| Chyba::Format("nález sa nedá stiahnuť".into()))?,
     };
-    Ok(Riesenie { ciel, dalsie })
+    Ok(Riesenie {
+        ciel,
+        nalez: Some(n.clone()),
+        dalsie,
+    })
 }

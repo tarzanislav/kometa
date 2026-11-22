@@ -15,6 +15,11 @@ Kód Komety je vlastný a pôvodný. Tieto cudzie súčasti používa – každ�
 | [Atkinson Hyperlegible Next](https://www.brailleinstitute.org/freefont/) | SIL OFL 1.1 | rozhranie | písmo textu |
 | [Bricolage Grotesque](https://github.com/ateliertriay/bricolage) | SIL OFL 1.1 | rozhranie | písmo nadpisov |
 | Rust: tokio, reqwest, rustls, roxmltree, serde, clap, thiserror | MIT / Apache-2.0 | jadro v Ruste | asynchrónny beh, HTTP, XML, CLI |
+| Rust: sha2, md-5, sha1 (RustCrypto), getrandom | MIT / Apache-2.0 | jadro v Ruste | kontrola yt-dlp (SHA-256), heslo Webshare, tajný kľúč okna |
+| Rust: [keyring](https://github.com/hwchen/keyring-rs) | MIT / Apache-2.0 | jadro (Windows, macOS) | heslá v Správcovi poverení / Kľúčenke |
+| [Tauri](https://tauri.app) 2 + pluginy dialog, clipboard-manager, single-instance | MIT / Apache-2.0 | aplikácia | natívne okno, dialógy, schránka, jedno spustenie |
+| WebView2 (Windows), WebKit (macOS), WebKitGTK (Linux) | súčasť systému | aplikácia | zobrazenie rozhrania |
+| yt-dlp (vydania na GitHube) | Unlicense | aplikácia ho na požiadanie stiahne do `~/.kometa/nastroje` | YouTube a ďalšie služby; overuje sa SHA-256 z vydania |
 
 Pravidlá pre nové súčasti: len slobodné licencie, ktoré dovoľujú použitie v projekte pod MIT;
 súčasť musí byť nahraditeľná a zapísaná v tejto tabuľke. Modely a dátové sady pre AI (titulky,

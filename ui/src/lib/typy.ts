@@ -1,4 +1,4 @@
-// Tvary dát, ktoré posiela jadro (kometa/webapp.py). Rovnaké tvary bude posielať aj jadro v Ruste.
+// Tvary dát, ktoré posiela jadro: kometa/webapp.py (Python) aj jadro/src/sluzba (Rust).
 
 export type StavPolozky = 'caka' | 'stahuje' | 'pauza' | 'hotovo' | 'chyba' | 'rozbalene'
 
@@ -44,6 +44,7 @@ export interface Stav {
   graf: number[]
   jazyky: StavJazykov
   ucty: Record<'webshare' | 'fastshare', StavUctu>
+  nastroje?: StavNastrojov
 }
 
 export interface Nastavenia {
@@ -73,6 +74,28 @@ export interface Init {
   zvuk: Record<string, string>
   chyba_ffmpeg: boolean
   chyba_ytdlp: boolean
+  /** jadro v Ruste (aplikácia alebo `kometa okno`); v Pythone chýba */
+  jadro?: 'rust'
+  okno?: 'aplikacia' | 'prehliadac'
+  funkcie?: Funkcie
+}
+
+/** Čo vie toto jadro (v Pythone všetko). */
+export interface Funkcie {
+  jazyky: boolean
+  ucty: boolean
+  kolekcie: boolean
+  doinstalovat_ytdlp: boolean
+  /** vlastné spájanie stôp – FFmpeg treba len na MP3 a zriedkavé formáty */
+  ffmpeg_volitelny: boolean
+}
+
+export interface StavNastrojov {
+  ytdlp: boolean
+  ffmpeg: boolean
+  instaluje: boolean
+  text: string
+  podiel: number
 }
 
 export interface Rozpoznany {

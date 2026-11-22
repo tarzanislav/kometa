@@ -12,6 +12,7 @@ pub mod http;
 pub mod klient;
 pub mod kusky;
 pub mod media;
+pub mod sluzba;
 pub mod spajanie;
 pub mod stream;
 pub mod udalosti;

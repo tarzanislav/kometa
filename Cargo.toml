@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = ["jadro", "aplikacia"]
+# bežné `cargo build` zostaví len jadro (aplikácia potrebuje WebView – WebKitGTK na Linuxe)
+default-members = ["jadro"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+opt-level = 3

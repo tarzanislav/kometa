@@ -30,6 +30,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Prikaz {
+    /// Otvorí okno Komety (rozhranie v okne prehliadača Edge/Chrome, bez inštalácie)
+    Okno {
+        /// Port lokálneho servera (0 = voľný)
+        #[arg(long, default_value_t = 0)]
+        port: u16,
+        /// Neotvárať okno – len vypísať adresu (pre skúšky a vzdialený prístup cez tunel)
+        #[arg(long)]
+        bez_okna: bool,
+    },
     /// Prehľadá stránku (aj vnorené rámčeky) a vypíše nájdené videá, prehrávače a súbory
     Skenuj {
         url: String,
@@ -187,6 +196,88 @@ async fn ciel_adresy(
     Ok((r.ciel, r.dalsie))
 }
 
+/// Okno Komety nad vlastnou službou – rovnaké rozhranie ako aplikácia, v okne prehliadača.
+async fn okno(port: u16, bez_okna: bool, zrusenie: CancellationToken) -> Vysledok<()> {
+    use kometa_jadro::sluzba::{nastavenia, prostredie::Systemove, server, Sluzba};
+    if !server::ma_rozhranie() {
+        return Err(Chyba::Ine(
+            "Program bol zostavený bez rozhrania (chýba kometa/webui).".into(),
+        ));
+    }
+    let sluzba = Sluzba::new(
+        Box::new(Systemove),
+        tokio::runtime::Handle::current(),
+        "prehliadac",
+        env!("CARGO_PKG_VERSION"),
+    );
+    let (adresa, kluc) = server::spusti(sluzba.clone(), port).await?;
+    let url = format!("http://127.0.0.1:{}/#t={kluc}", adresa.port());
+    println!("Kometa beží na http://127.0.0.1:{}/", adresa.port());
+    let mut proces = None;
+    if bez_okna {
+        println!("KOMETA_ADRESA {url}");
+    } else {
+        if let Some(exe) = server::prehliadac_pre_okno() {
+            let profil = nastavenia::priecinok_nastaveni().join("okno-jadro");
+            proces = std::process::Command::new(exe)
+                .arg(format!("--app={url}"))
+                .arg(format!("--user-data-dir={}", profil.display()))
+                .args([
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    "--window-size=1240,820",
+                ])
+                .spawn()
+                .ok()
+                .map(|p| (p, std::time::Instant::now()));
+        }
+        if proces.is_none() {
+            otvor_v_prehliadaci(&url);
+        }
+    }
+    use std::io::Write as _;
+    let _ = std::io::stdout().flush();
+    loop {
+        tokio::select! {
+            _ = zrusenie.cancelled() => break,
+            _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {}
+        }
+        match proces.as_mut() {
+            Some((p, zaciatok)) => {
+                if let Ok(Some(_)) = p.try_wait() {
+                    // okno odovzdané už bežiacemu prehliadaču → ďalej podľa toho, či sa rozhranie ozýva
+                    if zaciatok.elapsed().as_secs() < 5 {
+                        proces = None;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            None if !bez_okna && sluzba.ticho_sekund() > 45.0 => break,
+            None => {}
+        }
+    }
+    sluzba.zatvor().await;
+    Ok(())
+}
+
+fn otvor_v_prehliadaci(url: &str) {
+    let mut c = if cfg!(windows) {
+        let mut c = std::process::Command::new("cmd");
+        c.args(["/C", "start", "", url]);
+        c
+    } else if cfg!(target_os = "macos") {
+        let mut c = std::process::Command::new("open");
+        c.arg(url);
+        c
+    } else {
+        let mut c = std::process::Command::new("xdg-open");
+        c.arg(url);
+        c
+    };
+    let _ = c.spawn();
+}
+
 async fn spusti(cli: Cli, zrusenie: CancellationToken) -> Vysledok<()> {
     match cli.prikaz {
         Prikaz::Spoj {
@@ -232,6 +323,7 @@ async fn spusti(cli: Cli, zrusenie: CancellationToken) -> Vysledok<()> {
             );
             Ok(())
         }
+        Prikaz::Okno { port, bez_okna } => okno(port, bez_okna, zrusenie).await,
         Prikaz::Skenuj { url, json, volby } => {
             let n = volby.nastavenia();
             let k = klient::klient(&n)?;

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Kometa",
+  "identifier": "io.github.tarzanislav.kometa",
+  "build": {
+    "frontendDist": "../kometa/webui"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Kometa",
+        "width": 1240,
+        "height": 820,
+        "minWidth": 900,
+        "minHeight": 600,
+        "center": true,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Utility",
+    "shortDescription": "Sťahovanie videí a súborov",
+    "longDescription": "Kometa sťahuje videá zo stránok, Vimeo, streamy HLS a DASH, súbory, Webshare a Fastshare. Vlastné jadro v Ruste spája obraz a zvuk bez FFmpeg.",
+    "copyright": "© tarzanislav, licencia MIT",
+    "license": "MIT",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"]
+  }
+}

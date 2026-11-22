@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Okno Komety smie volať len jadro (príkaz volaj) – nič iné zo systému.",
+  "windows": ["main"],
+  "permissions": ["allow-volaj"]
+}

@@ -16,6 +16,13 @@
     nastav({ [kluc]: Math.max(min, Math.min(max, v)) })
   }
 
+  const nastroje = $derived(app.stav?.nastroje)
+  const jadroRust = $derived(app.init?.jadro === 'rust')
+
+  async function doinstalovat() {
+    await skus('doinstalovat_ytdlp')
+  }
+
   async function zmenitPriecinok() {
     const p = await skus<string>('vybrat_priecinok')
     if (p && app.nastavenia) app.nastavenia.outdir = p
@@ -120,12 +127,49 @@
     </div>
   </section>
 
+  {#if jadroRust}
+    <section class="plocha blok" aria-labelledby="h-pomocnici">
+      <h2 id="h-pomocnici">Pomocníci</h2>
+      <div class="pomocnik">
+        <div>
+          <p class="pomocnik-nazov">yt-dlp</p>
+          <p class="male tlmene">YouTube, Instagram, TikTok, Facebook, playlisty a stovky ďalších stránok. Stránky, prehrávače, streamy a súbory zvláda Kometa aj bez neho.</p>
+          {#if nastroje?.instaluje}
+            <div class="lista" role="progressbar" aria-label="Sťahovanie yt-dlp" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round((nastroje.podiel ?? 0) * 100)}>
+              <span style:width="{Math.round((nastroje.podiel ?? 0) * 100)}%"></span>
+            </div>
+          {:else if nastroje?.text}
+            <p class="male tlmene">{nastroje.text}</p>
+          {/if}
+        </div>
+        {#if nastroje?.ytdlp}
+          <span class="stav-ok"><Ikona meno="fajka" velkost={16} /> Pripravený</span>
+        {:else}
+          <button class="tl" onclick={doinstalovat} disabled={nastroje?.instaluje}>
+            {nastroje?.instaluje ? 'Sťahujem…' : 'Doinštalovať yt-dlp'}
+          </button>
+        {/if}
+      </div>
+      <div class="pomocnik">
+        <div>
+          <p class="pomocnik-nazov">FFmpeg</p>
+          <p class="male tlmene">Kometa spája obraz a zvuk sama. FFmpeg treba len na prevod do MP3, zvuk Opus z YouTube a zriedkavé formáty.</p>
+        </div>
+        {#if nastroje?.ffmpeg}
+          <span class="stav-ok"><Ikona meno="fajka" velkost={16} /> Nájdený</span>
+        {:else}
+          <span class="male tlmene">Nenájdený</span>
+        {/if}
+      </div>
+    </section>
+  {/if}
+
   <section class="o-programe" aria-label="O programe">
     <p class="male tlmene">
       Kometa {app.init?.verzia} – otvorený zdrojový kód pod licenciou MIT.
       <a href="https://github.com/tarzanislav/kometa" target="_blank" rel="noreferrer">github.com/tarzanislav/kometa</a>
     </p>
-    {#if app.init?.chyba_ffmpeg}
+    {#if app.init?.chyba_ffmpeg && !app.init?.funkcie?.ffmpeg_volitelny}
       <p class="male pozor"><Ikona meno="pozor" velkost={16} /> Chýba FFmpeg – spájanie stôp nebude fungovať. Spusti Instalacia.bat.</p>
     {/if}
   </section>
@@ -261,6 +305,44 @@
     display: flex;
     flex-direction: column;
     gap: var(--s2);
+  }
+  .pomocnik {
+    display: flex;
+    gap: var(--s5);
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--s3) 0;
+  }
+  .pomocnik + .pomocnik {
+    border-top: 1px solid var(--line);
+  }
+  .pomocnik > div {
+    max-width: 60ch;
+  }
+  .pomocnik-nazov {
+    font-weight: 650;
+    margin-bottom: var(--s1);
+  }
+  .stav-ok {
+    display: inline-flex;
+    gap: var(--s2);
+    align-items: center;
+    color: var(--ok);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .lista {
+    height: 6px;
+    margin-top: var(--s3);
+    border-radius: 3px;
+    background: var(--line);
+    overflow: hidden;
+  }
+  .lista span {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.3s ease;
   }
   .pozor {
     display: flex;
