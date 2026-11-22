@@ -12,7 +12,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from tkinter import font as tkfont
 
-from . import media
+from . import media, skener
 from .common import (ANSI, APP_NAME, CONFIG_DIR, DEFAULT_LANGS, Cancelled, apply_settings, check_dependencies,
                      clean_error, default_outdir, delete_password, format_duration, get_password, human_eta,
                      human_size, human_speed, load_config, open_folder, save_config, set_password)
@@ -696,7 +696,7 @@ class DownloadsTab:
         row.pack(fill="x")
         box = tk.Frame(row, bg="white", highlightthickness=1, highlightbackground="#cfd4db", highlightcolor=ACCENT)
         box.pack(side="left", fill="both", expand=True)
-        self.links = tk.Text(box, height=4, width=40, relief="flat", bd=0, bg="white", fg=TEXT, wrap="none",
+        self.links = tk.Text(box, height=5, width=40, relief="flat", bd=0, bg="white", fg=TEXT, wrap="none",
                              font=self.t.f_sub, padx=8, pady=6, insertbackground=TEXT, undo=True)
         self.links.pack(fill="both", expand=True)
         self.links.tag_configure("hint", foreground="#9aa1ab")
@@ -707,7 +707,9 @@ class DownloadsTab:
         side = ttk.Frame(row, style="Card.TFrame")
         side.pack(side="left", fill="y", padx=(10, 0))
         ttk.Button(side, text="Vložiť zo schránky", command=self.paste).pack(fill="x")
-        ttk.Button(side, text="Stiahnuť", style="Accent.TButton", command=self.add).pack(fill="x", pady=(8, 0))
+        ttk.Button(side, text="Prehľadať stránku…", style="Soft.TButton", command=self.scan_page).pack(
+            fill="x", pady=(6, 0))
+        ttk.Button(side, text="Stiahnuť", style="Accent.TButton", command=self.add).pack(fill="x", pady=(6, 0))
 
         opts = ttk.Frame(b1, style="Card.TFrame")
         opts.pack(fill="x", pady=(10, 0))
@@ -725,7 +727,9 @@ class DownloadsTab:
         ttk.Label(b1, style="Muted.Card.TLabel",
                   text="YouTube · Facebook · Instagram · TikTok (bez vodoznaku) · Webshare · Fastshare · "
                        "ďalšie stránky s videom aj priame odkazy na súbory. Prerušené sťahovanie pokračuje "
-                       "tam, kde skončilo.", wraplength=860, justify="left").pack(anchor="w", pady=(8, 0))
+                       "tam, kde skončilo. Na iných stránkach (kurzy, články, Vimeo vo vložených prehrávačoch) "
+                  "nájde video skener – automaticky alebo cez „Prehľadať stránku…“.", wraplength=860,
+                  justify="left").pack(anchor="w", pady=(8, 0))
 
         foot = ttk.Frame(wrap)
         foot.pack(side="bottom", fill="x", pady=(8, 0))
@@ -750,6 +754,7 @@ class DownloadsTab:
         self.tv.tag_configure("chyba", foreground=ACCENT_DARK)
         self.tv.tag_configure("pauza", foreground=MUTED)
         self.tv.tag_configure("caka", foreground=MUTED)
+        self.tv.tag_configure("rozbalene", foreground=MUTED)
         self.tv.bind("<Double-1>", self._on_double)
         self.tv.bind("<Delete>", lambda e: self.remove())
         self.tv.bind("<Button-3>", self._context)
@@ -829,6 +834,10 @@ class DownloadsTab:
         self._show_hint()
         skipped = len(urls) - len(new)
         self.win.set_status(f"Pridané do frontu: {len(new)}" + (f" (už vo fronte: {skipped})" if skipped else ""))
+
+    def scan_page(self):
+        urls = self._get_links()
+        ScanDialog(self.win, urls[0] if urls else "")
 
     def _selected(self) -> list[str]:
         return list(self.tv.selection())
@@ -948,6 +957,137 @@ class DownloadsTab:
         self._update_summary()
 
 
+class ScanDialog:
+    """Okno „Prehľadať stránku“ – ukáže všetky videá, streamy a súbory nájdené na stránke."""
+
+    COLS = (("kind", "Typ", 90, "w"), ("provider", "Zdroj", 110, "w"), ("title", "Názov", 260, "w"),
+            ("url", "Adresa", 330, "w"))
+
+    def __init__(self, win, url: str = ""):
+        self.win, self.root, self.t = win, win.root, win.theme
+        self.found: list = []
+        self.q: queue.Queue = queue.Queue()
+        top = self.top = tk.Toplevel(self.root)
+        top.title("Prehľadať stránku – Kometa")
+        top.configure(bg=BG)
+        top.transient(self.root)
+        top.minsize(760, 480)
+        wrap = ttk.Frame(top, padding=(18, 14, 18, 14))
+        wrap.pack(fill="both", expand=True)
+        ttk.Label(wrap, text="Nájdi video na akejkoľvek stránke", font=self.t.f_head).pack(anchor="w")
+        ttk.Label(wrap, style="Muted.TLabel", wraplength=820, justify="left",
+                  text="Vlož adresu stránky (kurz, článok, stránka s vloženým prehrávačom Vimeo, YouTube, Wistia…). "
+                       "Kometa prejde stránku aj vnorené rámčeky a ukáže, čo našla. Pri stránkach po prihlásení "
+                       "nastav prehliadač v karte „Účty a nastavenia“.").pack(anchor="w", pady=(2, 10))
+        row = ttk.Frame(wrap)
+        row.pack(fill="x")
+        self.url_var = tk.StringVar(value=url)
+        e = ttk.Entry(row, textvariable=self.url_var)
+        e.pack(side="left", fill="x", expand=True)
+        e.bind("<Return>", lambda ev: self.scan())
+        self.scan_btn = ttk.Button(row, text="Prehľadať", style="Soft.TButton", command=self.scan)
+        self.scan_btn.pack(side="left", padx=(8, 0))
+        self.status = tk.StringVar(value="")
+        ttk.Label(wrap, textvariable=self.status, style="Muted.TLabel").pack(anchor="w", pady=(8, 4))
+
+        ttk.Label(wrap, style="Muted.TLabel", text="Ctrl/Shift + klik = výber viacerých. Odporúčané sú vybrané "
+                                                   "vopred, sivé sú menej pravdepodobné (odkazy, reklamy, súbory)."
+                  ).pack(side="bottom", anchor="w", pady=(6, 0))
+        bottom = ttk.Frame(wrap)
+        bottom.pack(side="bottom", fill="x", pady=(10, 0))
+        box = tk.Frame(wrap, bg=CARD, highlightthickness=1, highlightbackground=BORDER)
+        box.pack(fill="both", expand=True)
+        self.tv = ttk.Treeview(box, columns=[c[0] for c in self.COLS], show="headings", selectmode="extended")
+        for key, text, width, anchor in self.COLS:
+            self.tv.heading(key, text=text, anchor=anchor)
+            self.tv.column(key, width=width, anchor=anchor, stretch=key in ("title", "url"))
+        sb = ttk.Scrollbar(box, orient="vertical", command=self.tv.yview)
+        self.tv.configure(yscrollcommand=sb.set)
+        self.tv.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+        self.tv.tag_configure("low", foreground=MUTED)
+        self.tv.bind("<<TreeviewSelect>>", lambda ev: self._update_btn())
+
+        ttk.Label(bottom, text="Heslo k videu (ak je chránené):").pack(side="left")
+        self.pw_var = tk.StringVar()
+        ttk.Entry(bottom, textvariable=self.pw_var, show="•", width=18).pack(side="left", padx=(8, 0))
+        ttk.Button(bottom, text="Zavrieť", command=top.destroy).pack(side="right")
+        self.go = ttk.Button(bottom, text="Stiahnuť vybrané", style="Accent.TButton", command=self.download,
+                             state="disabled")
+        self.go.pack(side="right", padx=(0, 8))
+        w, h = 900, 600
+        x = self.root.winfo_rootx() + max((self.root.winfo_width() - w) // 2, 0)
+        y = self.root.winfo_rooty() + 60
+        top.geometry(f"{w}x{h}+{x}+{y}")
+        e.focus_set()
+        if url:
+            top.after(150, self.scan)
+
+    def scan(self):
+        url = self.url_var.get().strip()
+        if not re.match(r"^https?://", url):
+            self.status.set("Zadaj adresu stránky (začína na http:// alebo https://).")
+            return
+        self.scan_btn.configure(state="disabled")
+        self.status.set("Prehľadávam stránku… (môže to trvať pár sekúnd)")
+        for i in self.tv.get_children():
+            self.tv.delete(i)
+
+        def work():
+            try:
+                self.q.put(("ok", skener.Skener(log=lambda m: None).scan(url)))
+            except Exception as e:  # noqa: BLE001
+                self.q.put(("err", clean_error(e)))
+
+        threading.Thread(target=work, daemon=True).start()
+        self.top.after(150, self._poll)
+
+    def _poll(self):
+        try:
+            kind, data = self.q.get_nowait()
+        except queue.Empty:
+            if self.top.winfo_exists():
+                self.top.after(150, self._poll)
+            return
+        self.scan_btn.configure(state="normal")
+        if kind == "err":
+            self.status.set("✖ " + data)
+            return
+        self.found = [n for n in data if n.kind != "stranka"]
+        best = {id(n) for n in skener.best_candidates(self.found)}
+        for idx, n in enumerate(self.found):
+            tags = () if n.score >= 50 else ("low",)
+            title = n.title or "—"
+            if n.note:
+                title += f"  ({n.note})"
+            self.tv.insert("", "end", iid=str(idx), tags=tags,
+                           values=(skener.KIND_TEXT.get(n.kind, n.kind), n.provider, title, n.url))
+            if id(n) in best:
+                self.tv.selection_add(str(idx))
+        self.status.set(f"Nájdené: {len(self.found)} · odporúčané: {len(best)}" if self.found
+                        else "Na stránke sa nič nenašlo. Ak je obsah len po prihlásení, nastav prehliadač "
+                             "v karte „Účty a nastavenia“.")
+        self._update_btn()
+
+    def _update_btn(self):
+        n = len(self.tv.selection())
+        self.go.configure(state="normal" if n else "disabled", text=f"Stiahnuť vybrané ({n})" if n
+                          else "Stiahnuť vybrané")
+
+    def download(self):
+        picks = [self.found[int(i)] for i in self.tv.selection()]
+        if not picks:
+            return
+        d = self.win.downloads
+        outdir = self.win.outdir_var.get().strip() or str(default_outdir())
+        for n in picks:
+            self.win.dq.add([n.url], d._preset(), outdir, referer=n.referer, password=self.pw_var.get() or None,
+                            titles=[n.title], providers=[n.provider], from_scan=True)
+        self.win.set_status(f"Pridané do frontu: {len(picks)}")
+        self.win.nb.select(0)
+        self.top.destroy()
+
+
 class AccountsTab:
     """Karta „Účty a nastavenia“ – Webshare, Fastshare, súbežné sťahovanie, cookies."""
 
@@ -1001,6 +1141,12 @@ class AccountsTab:
         sp.pack(side="left", padx=(8, 4))
         sp.bind("<FocusOut>", lambda e: self._save_settings())
         ttk.Label(r, text="súbory naraz", style="Muted.Card.TLabel").pack(side="left")
+        ttk.Label(r, text="Spojenia na jeden súbor:", style="Card.TLabel").pack(side="left", padx=(28, 0))
+        self.conn_var = tk.IntVar(value=int(self.cfg.get("connections") or 4))
+        sp2 = ttk.Spinbox(r, from_=1, to=16, textvariable=self.conn_var, width=4, command=self._save_settings)
+        sp2.pack(side="left", padx=(8, 4))
+        sp2.bind("<FocusOut>", lambda e: self._save_settings())
+        ttk.Label(r, text="(rýchlejšie veľké súbory a streamy)", style="Muted.Card.TLabel").pack(side="left")
 
         self.auto_var = tk.BooleanVar(value=bool(self.cfg.get("autoresume", True)))
         ttk.Checkbutton(body, text="Po spustení programu automaticky pokračovať v nedokončených sťahovaniach",
@@ -1008,16 +1154,17 @@ class AccountsTab:
 
         r2 = ttk.Frame(body, style="Card.TFrame")
         r2.pack(fill="x", pady=(8, 0))
-        ttk.Label(r2, text="Instagram / Facebook – prihlásenie z prehliadača:", style="Card.TLabel").pack(side="left")
+        ttk.Label(r2, text="Stránky po prihlásení – použiť prihlásenie z prehliadača:", style="Card.TLabel").pack(
+            side="left")
         cur = (self.cfg.get("cookies_browser") or "").capitalize() or "Nepoužívať"
         self.browser_var = tk.StringVar(value=cur if cur in self.BROWSERS else "Nepoužívať")
         bc = ttk.Combobox(r2, textvariable=self.browser_var, values=self.BROWSERS, state="readonly", width=14)
         bc.pack(side="left", padx=(8, 0))
         bc.bind("<<ComboboxSelected>>", lambda e: self._save_settings())
         ttk.Label(body, style="Muted.Card.TLabel",
-                  text="Na súkromné alebo „len pre prihlásených“ príspevky: prihlás sa na Instagram/Facebook "
-                       "v prehliadači a vyber ho tu. Najspoľahlivejší je Firefox; Chrome a Edge treba pri "
-                       "sťahovaní zavrieť.", wraplength=780, justify="left").pack(anchor="w", pady=(6, 0))
+                  text="Pre Instagram, Facebook, platené kurzy či súkromné Vimeo: prihlás sa na stránke "
+                       "v prehliadači a vyber ho tu – Kometa použije jeho prihlásenie (cookies). Najspoľahlivejší "
+                       "je Firefox; Chrome a Edge treba pri sťahovaní zavrieť.", wraplength=820, justify="left").pack(anchor="w", pady=(6, 0))
 
         r3 = ttk.Frame(body, style="Card.TFrame")
         r3.pack(fill="x", pady=(10, 0))
@@ -1036,8 +1183,12 @@ class AccountsTab:
             par = max(1, min(6, int(self.par_var.get())))
         except (tk.TclError, ValueError):
             par = 2
+        try:
+            conns = max(1, min(16, int(self.conn_var.get())))
+        except (tk.TclError, ValueError):
+            conns = 4
         b = self.browser_var.get()
-        self.cfg.update(parallel=par, autoresume=bool(self.auto_var.get()),
+        self.cfg.update(parallel=par, connections=conns, autoresume=bool(self.auto_var.get()),
                         cookies_browser="" if b == "Nepoužívať" else b.lower())
         save_config(self.cfg)
         apply_settings(self.cfg)

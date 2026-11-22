@@ -221,6 +221,7 @@ DEFAULT_CONFIG = {
     # karta Sťahovanie
     "dl_preset": "video",
     "parallel": 2,
+    "connections": 4,
     "autoresume": True,
     "cookies_browser": "",
     # účty (heslá sú v Správcovi poverení Windows, nie tu)
@@ -257,6 +258,8 @@ def save_config(cfg: dict) -> None:
 def apply_settings(cfg: dict) -> None:
     """Premietne nastavenia do yt-dlp (cookies z prehliadača pre Instagram/Facebook)."""
     EXTRA_YDL_OPTS.pop("cookiesfrombrowser", None)
+    # HLS/DASH: viac kúskov naraz (rovnaké nastavenie ako „spojenia na súbor“)
+    EXTRA_YDL_OPTS["concurrent_fragment_downloads"] = max(1, min(16, int(cfg.get("connections") or 4)))
     browser = (cfg.get("cookies_browser") or "").strip().lower()
     if browser:
         EXTRA_YDL_OPTS["cookiesfrombrowser"] = (browser,)

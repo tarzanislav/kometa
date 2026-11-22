@@ -15,15 +15,15 @@ import uuid
 from pathlib import Path
 
 from .common import QUEUE_PATH, Paused, clean_error, safe_name, unique_path
-from . import httpdl, media
+from . import httpdl, media, skener
 from .hosts import WEBSHARE_RE, Accounts, HostError, detect_host
 
 _FRIENDLY = [
-    (r"HTTP Error 404|404: Not Found", "Stránka alebo súbor neexistuje (chyba 404)."),
+    (r"HTTP Error 404|404: Not Found|404 Client Error", "Stránka alebo súbor neexistuje (chyba 404)."),
     (r"Private video|video is private", "Video je súkromné."),
     (r"not a bot|[Ll]ogin required|[Ss]ign in|log in|logged.in|rate.limit|cookies",
      "Obsah vyžaduje prihlásenie – v karte „Účty a nastavenia“ vyber prehliadač, v ktorom si prihlásený."),
-    (r"HTTP Error 403|Forbidden", "Prístup zamietnutý (403) – obsah môže vyžadovať prihlásenie."),
+    (r"HTTP Error 403|403 Client Error|Forbidden", "Prístup zamietnutý (403) – obsah môže vyžadovať prihlásenie."),
     (r"Video unavailable|has been removed|no longer available|does not exist", "Video už nie je dostupné."),
     (r"not available in your country|geo.?restrict", "Video nie je dostupné v tvojej krajine."),
     (r"Requested format is not available|No video formats found",
@@ -43,7 +43,8 @@ def friendly_error(msg: str) -> str:
 
 
 STATUS_TEXT = {"caka": "Čaká", "stahuje": "Sťahuje", "pauza": "Pozastavené", "hotovo": "Hotovo ✓",
-               "chyba": "Chyba"}
+               "chyba": "Chyba", "rozbalene": "Rozbalené ↓"}
+MEDIA_FILE_RE = re.compile(r"\.(mp4|m4v|webm|mov|mkv|avi|flv|mp3|m4a|aac|ogg|opus|flac|wav|zip|rar|7z|pdf|iso)$", re.I)
 
 
 class DownloadQueue:
@@ -116,20 +117,26 @@ class DownloadQueue:
             return c
 
     # ---------- ovládanie ----------
-    def add(self, urls: list[str], preset: str, outdir: str) -> list[str]:
+    def add(self, urls: list[str], preset: str, outdir: str, *, referer: str | None = None,
+            password: str | None = None, titles: list[str] | None = None, providers: list[str] | None = None,
+            from_scan: bool = False) -> list[str]:
         new = []
         with self._lock:
             known = {self.items[i]["url"] for i in self.order if self.items[i]["status"] != "hotovo"}
-            for url in urls:
+            for n, url in enumerate(urls):
                 url = url.strip()
                 if not url or url in known:
                     continue
                 known.add(url)
                 iid = uuid.uuid4().hex[:10]
-                self.items[iid] = {"id": iid, "url": url, "source": media.source_name(url), "preset": preset,
-                                   "outdir": outdir, "title": "", "status": "caka", "done": 0, "total": None,
-                                   "speed": 0, "file": "", "dest": "", "tmp": [], "error": "",
-                                   "added": time.time()}
+                source = media.source_name(url)
+                if providers and providers[n] and source == "Web":
+                    source = providers[n]
+                self.items[iid] = {"id": iid, "url": url, "source": source, "preset": preset,
+                                   "outdir": outdir, "title": (titles[n] if titles else "") or "", "status": "caka",
+                                   "done": 0, "total": None, "speed": 0, "file": "", "dest": "", "tmp": [],
+                                   "error": "", "added": time.time(), "referer": referer or "",
+                                   "password": password or "", "from_scan": from_scan}
                 self.order.append(iid)
                 new.append(iid)
         self.save()
@@ -255,6 +262,9 @@ class DownloadQueue:
             return
         try:
             path = self._process(iid, it, stop)
+            if path is None:          # stránka sa rozbalila na viac položiek
+                self._update(iid, status="rozbalene", speed=0)
+                return
             with self._lock:
                 cur = self.items.get(iid)
                 if cur:
@@ -276,8 +286,10 @@ class DownloadQueue:
             self.schedule()
 
     # ---------- samotné sťahovanie ----------
-    def _process(self, iid: str, it: dict, stop: threading.Event) -> Path:
+    def _process(self, iid: str, it: dict, stop: threading.Event) -> Path | None:
         url, outdir = it["url"], Path(it["outdir"])
+        conns = max(1, int(self.cfg.get("connections") or 4))
+        referer = it.get("referer") or None
 
         def progress(done, total, speed):
             self._update(iid, done=done, total=total, speed=speed or 0)
@@ -291,8 +303,9 @@ class DownloadQueue:
             dest = self._dest(iid, it, outdir, info["name"])
             self._update(iid, title=info["name"], total=info["size"])
             self.log(f"⬇ Webshare: {info['name']}")
-            return httpdl.download(lambda refresh: self._ws_link(ident, refresh), dest, client.session,
-                                   on_progress=progress, stop=stop, expected_size=info["size"], log=self.log)
+            return httpdl.download_auto(lambda refresh: self._ws_link(ident, refresh), dest, client.session,
+                                        connections=conns, on_progress=progress, stop=stop,
+                                        expected_size=info["size"], log=self.log)
 
         if host == "fastshare":
             client = self.accounts.fastshare()
@@ -305,33 +318,80 @@ class DownloadQueue:
             def link(refresh):
                 return self.accounts.fastshare().resolve(url)["link"] if refresh else res["link"]
 
-            return httpdl.download(link, dest, client.session, on_progress=progress, stop=stop, log=self.log)
+            return httpdl.download_auto(link, dest, client.session, connections=conns, on_progress=progress,
+                                        stop=stop, log=self.log)
 
-        # neznáma stránka: najprv over, či to nie je priamy odkaz na súbor (zip, pdf, mkv…)
-        meta = None
-        if it["source"] == "Web":
+        known_site = media.source_name(url) not in ("Web",) and it["source"] not in ("HLS", "DASH", "MP4")
+        if not known_site:
+            # neznáma stránka alebo nález zo skenera: najprv over, či to nie je priamy odkaz na súbor
+            path_part = re.sub(r"[?#].*$", "", url)
+            meta = None
             try:
-                meta = httpdl.probe(url)
-            except Exception:  # noqa: BLE001 – niektoré stránky nepovolia Range; skúsi sa yt-dlp
+                meta = httpdl.probe(url, self._session(referer))
+            except Exception:  # noqa: BLE001 – niektoré servery nepovolia Range; skúsi sa yt-dlp
                 meta = None
-            if meta and not meta["html"]:
+            if meta and not meta["html"] and not path_part.lower().endswith((".m3u8", ".mpd", ".ism")):
                 name = meta["name"] or "subor"
+                if not MEDIA_FILE_RE.search(name) and it.get("title") and MEDIA_FILE_RE.search(path_part):
+                    name = it["title"] + Path(path_part).suffix
                 dest = self._dest(iid, it, outdir, name)
-                self._update(iid, title=name, total=meta["size"])
+                self._update(iid, title=it.get("title") or name, total=meta["size"])
                 self.log(f"⬇ Súbor: {name}")
-                return httpdl.download(lambda refresh: url, dest, on_progress=progress, stop=stop,
-                                       expected_size=meta["size"], log=self.log)
+                return httpdl.download_auto(lambda refresh: url, dest, self._session(referer), connections=conns,
+                                            on_progress=progress, stop=stop, expected_size=meta["size"],
+                                            log=self.log)
 
-        # stránky s videom (YouTube, Facebook, Instagram, TikTok a ďalšie, ktoré pozná yt-dlp)
+        # stránky s videom (YouTube, Facebook, Instagram, TikTok, Vimeo, streamy HLS/DASH a ďalšie)
         tmp: set = set(it.get("tmp") or [])
         try:
             self.log(f"⬇ {it['source']}: {url}")
             return media.download_media(
                 url, outdir, it.get("preset") or "video", stop=stop, log=self.log, tmp_files=tmp,
+                referer=referer, password=it.get("password") or None,
                 on_progress=lambda d, t, s: (self._update(iid, tmp=sorted(tmp)), progress(d, t, s)),
                 on_title=lambda title: self._update(iid, title=title))
         except media.Unsupported:
-            raise HostError("Na tejto stránke sa nenašlo video ani súbor na stiahnutie.") from None
+            if it.get("from_scan") or known_site:
+                raise HostError("Na tejto stránke sa nenašlo video ani súbor na stiahnutie.") from None
+        except Paused:
+            raise
+        except Exception as e:  # noqa: BLE001 – yt-dlp stránku nezvládol → skúsi to vlastný skener
+            if known_site or it.get("from_scan") or stop.is_set():
+                raise
+            self.log(f"⚠ yt-dlp: {clean_error(e).splitlines()[0][:160]} – skúšam vlastný skener stránky")
+        return self._from_page(iid, it, stop)
+
+    def _from_page(self, iid: str, it: dict, stop: threading.Event) -> Path | None:
+        """Prehľadá stránku vlastným skenerom; jedno video stiahne, viac ich pridá do frontu."""
+        self._update(iid, title="Prehľadávam stránku…")
+        sk = skener.Skener(log=self.log)
+        found = sk.scan(it["url"])
+        picks = skener.best_candidates(found)
+        if not picks:
+            if sk.page_error:
+                raise HostError(sk.page_error)
+            raise HostError("Na stránke sa nenašlo žiadne video ani súbor.")
+        if len(picks) == 1:
+            p = picks[0]
+            sub = dict(it, url=p.url, referer=p.referer, source=p.provider, from_scan=True, title=p.title)
+            self._update(iid, title=p.title or p.url, source=p.provider)
+            self.log(f"✔ Na stránke som našiel: {p.provider} {p.url}")
+            return self._process(iid, sub, stop)
+        page = it.get("title") if it.get("title") and it["title"] != "Prehľadávam stránku…" else picks[0].title
+        for n, p in enumerate(picks, 1):
+            self.add([p.url], it.get("preset") or "video", it["outdir"], referer=p.referer,
+                     password=it.get("password") or None, titles=[f"{p.title or page or 'Video'} ({n})"],
+                     providers=[p.provider], from_scan=True)
+        self._update(iid, title=f"{page or it['url']} – nájdené videá: {len(picks)}")
+        self.log(f"✔ Na stránke je {len(picks)} videí – pridané do frontu.")
+        return None
+
+    def _session(self, referer: str | None):
+        import requests
+        s = requests.Session()
+        if referer:
+            s.headers["Referer"] = referer
+        return s
 
     def _ws_link(self, ident: str, refresh: bool) -> str:
         if refresh:

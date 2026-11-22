@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 import threading
 from pathlib import Path
+from urllib.parse import urlparse
 
 from .common import Paused, ydl_opts
 
@@ -57,7 +58,8 @@ class Unsupported(Exception):
 
 
 def download_media(url: str, outdir: Path, preset: str = "video", *, on_progress=None, on_title=None,
-                   stop: threading.Event | None = None, log=print, tmp_files: set | None = None) -> Path:
+                   stop: threading.Event | None = None, log=print, tmp_files: set | None = None,
+                   referer: str | None = None, password: str | None = None) -> Path:
     """Stiahne video/zvuk a vráti cestu k výslednému súboru."""
     from yt_dlp import YoutubeDL
     from yt_dlp.utils import DownloadError, UnsupportedError
@@ -96,8 +98,13 @@ def download_media(url: str, outdir: Path, preset: str = "video", *, on_progress
         elif d.get("status") == "finished":
             state["done"] += d.get("total_bytes") or d.get("downloaded_bytes") or 0
 
+    extra = dict(preset_opts)
+    if referer:   # vložené prehrávače (Vimeo s obmedzením na doménu) chcú adresu stránky, kde sú vložené
+        extra["http_headers"] = {"Referer": referer, "Origin": "{0.scheme}://{0.netloc}".format(urlparse(referer))}
+    if password:
+        extra["videopassword"] = password
     opts = ydl_opts(log, outtmpl={"default": str(outdir / "%(title).120B [%(id)s].%(ext)s")},
-                    progress_hooks=[hook], **preset_opts)
+                    progress_hooks=[hook], **extra)
     try:
         with YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -114,7 +121,7 @@ def download_media(url: str, outdir: Path, preset: str = "video", *, on_progress
     except DownloadError as e:
         if stop.is_set():
             raise Paused() from e
-        if "Unsupported URL" in str(e):
+        if "Unsupported URL" in str(e) or "No video formats found" in str(e):
             raise Unsupported(str(e)) from e
         raise
     return Path(path)
