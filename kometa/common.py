@@ -23,6 +23,7 @@ USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 
 # Ďalšie voľby pre yt-dlp (napr. cookies z prehliadača); nastavuje ich apply_settings().
 EXTRA_YDL_OPTS: dict = {}
+AUDIO_MODE = "oboje"   # zvuk vo videách: „oboje“ (AAC + Opus), „aac“, „opus“ – nastavuje apply_settings()
 
 
 class Cancelled(Exception):
@@ -216,6 +217,7 @@ DEFAULT_CONFIG = {
     "langs": DEFAULT_LANGS,
     "mode": "video",
     "include_original": True,
+    "audio_mode": "oboje",        # oboje = AAC (predvolená) + Opus, aac, opus
     "keep_separate": False,
     "max_height": "Najlepšia",
     # karta Sťahovanie
@@ -257,6 +259,8 @@ def save_config(cfg: dict) -> None:
 
 def apply_settings(cfg: dict) -> None:
     """Premietne nastavenia do yt-dlp (cookies z prehliadača pre Instagram/Facebook)."""
+    global AUDIO_MODE
+    AUDIO_MODE = cfg.get("audio_mode") if cfg.get("audio_mode") in ("oboje", "aac", "opus") else "oboje"
     EXTRA_YDL_OPTS.pop("cookiesfrombrowser", None)
     # HLS/DASH: viac kúskov naraz (rovnaké nastavenie ako „spojenia na súbor“)
     EXTRA_YDL_OPTS["concurrent_fragment_downloads"] = max(1, min(16, int(cfg.get("connections") or 4)))

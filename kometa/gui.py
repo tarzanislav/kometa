@@ -303,10 +303,13 @@ class LanguagesTab:
         self.sep_var = tk.BooleanVar(value=self.cfg.get("keep_separate", False))
         ttk.Checkbutton(opts, text="Uložiť aj každý jazyk ako samostatný súbor",
                         variable=self.sep_var).pack(side="left", padx=(22, 0))
+        ttk.Checkbutton(b3, text="Kompatibilný zvuk – ku každému jazyku pridať AAC (predvolené, prehrá ho každý "
+                                 "prehrávač), Opus ostane navyše", variable=self.win.compat_var,
+                        command=self._set_go_state).grid(row=5, column=0, columnspan=4, sticky="w", pady=(4, 0))
 
-        ttk.Label(b3, text="Priečinok:", style="Card.TLabel").grid(row=5, column=0, sticky="w", pady=(10, 0))
+        ttk.Label(b3, text="Priečinok:", style="Card.TLabel").grid(row=6, column=0, sticky="w", pady=(10, 0))
         dbox = ttk.Frame(b3, style="Card.TFrame")
-        dbox.grid(row=6, column=0, columnspan=4, sticky="ew", pady=(4, 0))
+        dbox.grid(row=7, column=0, columnspan=4, sticky="ew", pady=(4, 0))
         self.outdir_var = self.win.outdir_var
         self.outdir_entry = ttk.Entry(dbox, textvariable=self.outdir_var)
         self.outdir_entry.pack(side="left", fill="x", expand=True)
@@ -495,6 +498,7 @@ class LanguagesTab:
         job = {"info": self.info, "tracks": tracks, "outdir": outdir, "mode": mode,
                "existing_path": self.existing_var.get().strip(), "include_original": self.orig_var.get(),
                "keep_separate": self.sep_var.get(),
+               "audio_mode": "oboje" if self.win.compat_var.get() else "opus",
                "max_height": int(q[:-1]) if q.endswith("p") and q[:-1].isdigit() else None}
         self.cancel = threading.Event()
         self._busy(True)
@@ -550,8 +554,10 @@ class LanguagesTab:
         if self.orig_var.get() and orig and orig not in order:
             order.append(orig)
         short = lambda t: {"cs": "CZ"}.get(t["code"].lower(), (t["code"] or "orig").upper())
-        self.order_var.set("Poradie stôp vo výsledku:  " + "  →  ".join(short(t) for t in order) if order
-                           else "Nie je vybraný žiadny jazyk.")
+        text = "Poradie stôp vo výsledku:  " + "  →  ".join(short(t) for t in order)
+        if order and self.win.compat_var.get():
+            text += "   (AAC, potom to isté v Opus)"
+        self.order_var.set(text if order else "Nie je vybraný žiadny jazyk.")
 
     def _set_go_state(self):
         self._update_order()
@@ -1339,6 +1345,8 @@ class AccountsTab:
         sp2.bind("<FocusOut>", lambda e: self._save_settings())
         ttk.Label(r, text="(rýchlejšie veľké súbory a streamy)", style="Muted.Card.TLabel").pack(side="left")
 
+        ttk.Checkbutton(body, text="Kompatibilný zvuk vo videách – AAC (predvolené, prehrá každý prehrávač) + Opus "
+                                   "v jednom MKV", variable=self.win.compat_var).pack(anchor="w", pady=(8, 0))
         self.auto_var = tk.BooleanVar(value=bool(self.cfg.get("autoresume", True)))
         ttk.Checkbutton(body, text="Po spustení programu automaticky pokračovať v nedokončených sťahovaniach",
                         variable=self.auto_var, command=self._save_settings).pack(anchor="w", pady=(8, 0))
@@ -1494,6 +1502,8 @@ class MainWindow:
                                 log=lambda m: None)
         self.outdir_var = tk.StringVar(value=self.cfg.get("outdir") or str(default_outdir()))
         self.outdir_var.trace_add("write", lambda *_: self._outdir_changed())
+        self.compat_var = tk.BooleanVar(value=self.cfg.get("audio_mode", "oboje") != "opus")
+        self.compat_var.trace_add("write", lambda *_: self._compat_changed())
 
         self._build()
         self._center(960, 860)
@@ -1545,6 +1555,13 @@ class MainWindow:
     def set_status(self, text: str):
         self.status_var.set(text)
         self.root.after(6000, lambda: self.status_var.get() == text and self.status_var.set(""))
+
+    def _compat_changed(self):
+        self.cfg["audio_mode"] = "oboje" if self.compat_var.get() else "opus"
+        save_config(self.cfg)
+        apply_settings(self.cfg)
+        if hasattr(self, "languages"):
+            self.languages._update_order()
 
     def _outdir_changed(self):
         self.cfg["outdir"] = self.outdir_var.get().strip()

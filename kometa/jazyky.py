@@ -112,6 +112,14 @@ def _format_rank(f: dict):
     )
 
 
+def _is_aac(f: dict) -> bool:
+    return str(f.get("acodec", "")).startswith("mp4a") or (f.get("ext") == "m4a")
+
+
+AUDIO_MODES = {"oboje": "AAC + Opus v jednom súbore (odporúčané)", "aac": "Len AAC – prehrá každý prehrávač",
+               "opus": "Len Opus – najvyššia kvalita"}
+
+
 def _clean_display(note: str) -> str:
     first = (note or "").split(",")[0]
     first = re.sub(r"\((default|original)\)|\boriginal\b", "", first, flags=re.I)
@@ -128,6 +136,8 @@ def list_audio_tracks(info: dict) -> list[dict]:
     tracks = []
     for code, fmts in groups.items():
         best = max(fmts, key=_format_rank)
+        aac = [x for x in fmts if _is_aac(x)]
+        opus = [x for x in fmts if str(x.get("acodec", "")).startswith("opus")]
         original = any(
             x.get("language_preference") == 10 or "original" in (x.get("format_note") or "").lower()
             for x in fmts
@@ -136,6 +146,8 @@ def list_audio_tracks(info: dict) -> list[dict]:
             "code": code,
             "label": lang_label(code, _clean_display(best.get("format_note"))),
             "format": best,
+            "aac": max(aac, key=_format_rank) if aac else None,     # prehrá každý prehrávač
+            "opus": max(opus, key=_format_rank) if opus else None,  # vyššia kvalita
             "original": original,
             "_pref": max((x.get("language_preference") or -1) for x in fmts),
         })
@@ -264,6 +276,16 @@ def mux(out_path: Path, inputs: list[dict], title: str) -> None:
         raise RuntimeError("FFmpeg nedokázal spojiť stopy:\n" + (r.stderr or "").strip()[-1500:])
 
 
+def to_aac(src: Path, dest: Path, bitrate: str = "192k") -> Path:
+    """Prevedie zvuk do AAC (prehrá ho každý prehrávač) – len keď ho zdroj neponúka priamo."""
+    r = subprocess.run([_ffmpeg(), "-hide_banner", "-loglevel", "error", "-y", "-i", str(src), "-vn", "-map", "0:a:0",
+                        "-c:a", "aac", "-b:a", bitrate, str(dest)],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", **NO_WINDOW)
+    if r.returncode != 0 or not dest.exists():
+        raise RuntimeError("Prevod zvuku do AAC zlyhal:\n" + (r.stderr or "").strip()[-800:])
+    return dest
+
+
 def _export_single(src: Path, dest_stem: Path) -> Path:
     """Samostatná stopa: opus z webm prebalí do .opus (bez prekódovania), ostatné nechá."""
     if src.suffix.lower() == ".webm":
@@ -302,12 +324,15 @@ def run_job(job: dict, log=print, progress=lambda frac, text: None, cancel: thre
     if existing is not None and not existing.is_file():
         raise RuntimeError("Vybrané video na disku neexistuje.")
 
-    total_steps = len(tracks) + (1 if mode == "video" else 0) + 1
+    audio_mode = job.get("audio_mode") or "oboje"
+    if audio_mode not in AUDIO_MODES:
+        audio_mode = "oboje"
+    total_steps = len(tracks) * (2 if audio_mode == "oboje" else 1) + (1 if mode == "video" else 0) + 1
     state = {"step": 0, "text": ""}
 
     def sub(frac):
         base = state["step"] + (frac if frac is not None else 0)
-        progress(base / total_steps, state["text"])
+        progress(min(base / total_steps, 1.0), state["text"])
 
     tmp = Path(tempfile.mkdtemp(prefix=".ytj_tmp_", dir=outdir))
     try:
@@ -321,16 +346,36 @@ def run_job(job: dict, log=print, progress=lambda frac, text: None, cancel: thre
             video_path = download_format(info, fmt, tmp / "video", log, sub, cancel)
             state["step"] += 1
 
-        files = []
+        def fetch(t, fmt, n, kind):
+            stem = tmp / ("a%02d_%s_%s" % (n, re.sub(r"[^\w-]", "_", t["code"] or "orig"), kind))
+            return download_format(info, fmt["format_id"], stem, log, sub, cancel)
+
+        files = []        # hlavné stopy (AAC alebo Opus podľa režimu) – v poradí jazykov
+        extra = []        # druhé stopy (Opus pri režime „oboje“)
         for n, t in enumerate(tracks, 1):
             if cancel.is_set():
                 raise Cancelled()
             state["text"] = f"Sťahujem: {t['label']} ({n}/{len(tracks)})…"
             log(f"⬇ {t['label']}  [{t['code'] or '—'}]")
             sub(0)
-            stem = tmp / ("a%02d_%s" % (n, re.sub(r"[^\w-]", "_", t["code"] or "orig")))
-            files.append((t, download_format(info, t["format"]["format_id"], stem, log, sub, cancel)))
+            aac_fmt, opus_fmt = t.get("aac"), t.get("opus") or t["format"]
+            if audio_mode == "opus":
+                files.append((t, fetch(t, opus_fmt, n, "opus"), "opus"))
+                state["step"] += 1
+                continue
+            opus_path = None
+            if aac_fmt:
+                main = fetch(t, aac_fmt, n, "aac")
+            else:  # zdroj AAC neponúka → prevedieme z Opus
+                opus_path = fetch(t, opus_fmt, n, "opus")
+                log(f"↻ Prevádzam {t['label']} do AAC (zdroj ho neponúka)…")
+                main = to_aac(opus_path, tmp / ("a%02d_aac.m4a" % n))
+            files.append((t, main, "aac"))
             state["step"] += 1
+            if audio_mode == "oboje" and t.get("opus"):
+                sub(0)
+                extra.append((t, opus_path or fetch(t, t["opus"], n, "opus"), "opus"))
+            state["step"] += 1 if audio_mode == "oboje" else 0
 
         if cancel.is_set():
             raise Cancelled()
@@ -338,7 +383,7 @@ def run_job(job: dict, log=print, progress=lambda frac, text: None, cancel: thre
         log("⇒ Spájam stopy…")
         sub(0)
 
-        codes = [t["code"] or "orig" for t, _ in files]
+        codes = [t["code"] or "orig" for t, _, _ in files]
         tag = "+".join(codes) if len(codes) <= 8 else f"{len(codes)} jazykov"
         inputs: list[dict] = []
         if mode == "existing":
@@ -351,13 +396,15 @@ def run_job(job: dict, log=print, progress=lambda frac, text: None, cancel: thre
             out = unique_path(outdir / f"{safe_name(title)} [{tag}].mkv")
         else:
             out = unique_path(outdir / f"{safe_name(title)} [{tag}].mka")
-        for t, p in files:
+        # najprv AAC v poradí jazykov (prvá = predvolená, prehrá ju každý prehrávač), potom tie isté jazyky v Opus
+        for t, p, codec in files + extra:
+            suffix = " – Opus (vyššia kvalita)" if (codec == "opus" and audio_mode == "oboje") else ""
             inputs.append({"path": p, "kind": "audio", "lang3": iso3(t["code"]),
-                           "title": t["label"] + (" – originál" if t["original"] else "")})
+                           "title": t["label"] + (" – originál" if t["original"] else "") + suffix})
         mux(out, inputs, title)
 
         if job.get("keep_separate"):
-            for t, p in files:
+            for t, p, _ in files:
                 single = _export_single(p, outdir / f"{safe_name(title)} [{t['code'] or 'orig'}]")
                 log(f"   ↳ {single.name}")
 
@@ -393,6 +440,9 @@ def cli(argv: list[str]) -> int:
     ap.add_argument("--bez-originalu", action="store_true", help="nepridá pôvodnú stopu (inak je posledná)")
     ap.add_argument("--samostatne", action="store_true", help="uloží aj každý jazyk ako samostatný súbor")
     ap.add_argument("--max-vyska", type=int, metavar="PX", help="max. výška videa, napr. 1080")
+    ap.add_argument("--zvuk", choices=list(AUDIO_MODES), default=None,
+                    help="oboje = AAC (predvolená, prehrá každý prehrávač) + Opus; aac = len AAC; opus = len Opus "
+                         "(predvolené podľa nastavenia, inak oboje)")
     a = ap.parse_args(argv)
 
     deps = check_dependencies()
@@ -420,7 +470,8 @@ def cli(argv: list[str]) -> int:
     mode = "existing" if a.k_videu else ("audio" if a.len_zvuk else "video")
     job = {"info": info, "tracks": chosen, "outdir": a.vystup or cfg["outdir"], "mode": mode,
            "existing_path": a.k_videu, "include_original": not a.bez_originalu,
-           "keep_separate": a.samostatne, "max_height": a.max_vyska}
+           "keep_separate": a.samostatne, "max_height": a.max_vyska,
+           "audio_mode": a.zvuk or cfg.get("audio_mode", "oboje")}
 
     def progress(frac, text):
         bar = "█" * int(frac * 30)

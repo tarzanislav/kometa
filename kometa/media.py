@@ -11,6 +11,7 @@ import threading
 from pathlib import Path
 from urllib.parse import urlparse
 
+from . import common
 from .common import Paused, ydl_opts
 
 # kľúč: (popis, voľby pre yt-dlp)
@@ -69,6 +70,16 @@ def download_media(url: str, outdir: Path, preset: str = "video", *, on_progress
     outdir.mkdir(parents=True, exist_ok=True)
     _, preset_opts = PRESETS.get(preset, PRESETS["video"])
     preset_opts = dict(preset_opts)
+    if preset in ("video", "1080", "720"):
+        vsel = preset_opts["format"].split("+")[0]
+        if common.AUDIO_MODE == "oboje":
+            # AAC (prehrá každý prehrávač, prvá = predvolená) + Opus (vyššia kvalita) v jednom MKV
+            preset_opts["format"] = (f"{vsel}+ba[acodec^=mp4a]+ba[acodec^=opus]/{vsel}+ba[acodec^=mp4a]/"
+                                     + preset_opts["format"])
+            preset_opts["allow_multiple_audio_streams"] = True
+            preset_opts["merge_output_format"] = "mkv"
+        elif common.AUDIO_MODE == "aac":
+            preset_opts["format"] = f"{vsel}+ba[acodec^=mp4a]/" + preset_opts["format"]
     if source_name(url) == "TikTok":
         preset_opts["format"] = _no_watermark(preset_opts["format"])
 

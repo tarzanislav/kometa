@@ -61,10 +61,17 @@ python app.py
 ### Karta Jazykové stopy (YouTube)
 Pre videá, ktoré majú na YouTube viac zvukových stôp (preklad či dabing). Vlož odkaz, klikni na **Načítať jazyky** a zaškrtni jazyky. Pod zoznamom vidíš výsledné poradie stôp. Vznikne jedno `.mkv` video; jazyk prepneš v prehrávači (VLC: *Zvuk → Zvuková stopa*). Stopy sa dajú pridať aj k videu, ktoré už máš stiahnuté.
 
+**Kompatibilný zvuk** (prepínač, predvolene zapnutý): YouTube dáva preklady najmä vo formáte Opus, ktorý niektoré televízory, autorádiá a staršie prehrávače nevedia prehrať. So zapnutým prepínačom má každý jazyk dve stopy:
+1. **AAC** – prehrá ho každý prehrávač; tieto stopy idú prvé v poradí CZ → SK → … a prvá je predvolená. Ak YouTube AAC pre daný jazyk neponúka, Kometa ho prevedie z Opus (FFmpeg, 192 kb/s).
+2. **Opus** – tie isté jazyky v lepšej kvalite, s názvom „Opus (vyššia kvalita)“. Lepší prehrávač (VLC, mpv, Kodi) si ich vyberie v menu zvuku.
+
+Keď prepínač vypneš, vo výsledku budú len stopy Opus (menší súbor). Rovnaký prepínač je aj v karte *Účty a nastavenia* a platí pre bežné sťahovanie videí z YouTube.
+
 ### Karta Účty a nastavenia
 - **Webshare / Fastshare:** zadaj meno a heslo a klikni na **Prihlásiť**. Heslo sa uloží do *Správcu poverení Windows*, nikam inam sa neposiela. Na rýchle sťahovanie treba **VIP (Webshare)** alebo **kredit (Fastshare)**. Kometa neobchádza obmedzenia bezplatných účtov.
 - **Stránky po prihlásení** (Instagram, Facebook, platené kurzy, súkromné Vimeo): prihlás sa v prehliadači a tu ho vyber – Kometa použije jeho prihlásenie (cookies) pri sťahovaní aj pri prehľadávaní stránok. Najspoľahlivejší je **Firefox**; Chrome a Edge treba pri sťahovaní zavrieť.
 - **Súčasne sťahovať** (počet súborov naraz) a **Spojenia na jeden súbor** (1–16, predvolene 4).
+- **Kompatibilný zvuk vo videách:** AAC (predvolená stopa) + Opus v jednom `.mkv`. Dá sa vypnúť.
 - Automatické pokračovanie nedokončených sťahovaní po spustení.
 
 ## Ako funguje pokračovanie sťahovania
@@ -78,6 +85,7 @@ py app.py ODKAZ [ODKAZ …] [-f video|mp4|1080|720|mp3|audio] [-o PRIEČINOK]
 py app.py jazyky ODKAZ                         # video + CZ, SK, EN, EN-US, PL, HU → .mkv
 py app.py jazyky ODKAZ --zoznam                # vypíše dostupné jazyky
 py app.py jazyky ODKAZ -j cs sk en -o "D:\Videa"
+py app.py jazyky ODKAZ --zvuk opus             # bez AAC stôp (oboje | aac | opus)
 py app.py jazyky ODKAZ --k-videu "moje.mp4"    # pridá stopy k stiahnutému videu
 ```
 
