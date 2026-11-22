@@ -178,6 +178,9 @@ def pick_tracks(tracks: list[dict], wanted: list[str]) -> tuple[list[dict], list
                      if x["code"].lower().split("-")[0] == base
                      and x["code"].lower() not in wanted_l
                      and not x["code"].lower().endswith("-desc")]
+            # pri angličtine bez „en“ prednostne americká (dabingy bývajú v nej), potom britská
+            pref = {"en-us": 0, "en-gb": 1}
+            cands.sort(key=lambda x: pref.get(x["code"].lower(), 2))
             t = cands[0] if cands else None
         if t is None:
             missing.append(w)

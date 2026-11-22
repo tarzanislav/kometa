@@ -269,6 +269,16 @@ pub fn stopy(info: &Value) -> Vec<Stopa> {
     v
 }
 
+/// Poradie variantov jazyka, keď chýba jazyk bez krajiny: pri angličtine USA, potom Británia,
+/// ostatné v pôvodnom poradí (min_by_key vráti prvý z rovnakých).
+fn uprednostneny_variant(kod: &str) -> u8 {
+    match kod.to_lowercase().as_str() {
+        "en-us" => 0,
+        "en-gb" => 1,
+        _ => 2,
+    }
+}
+
 /// Stopy podľa želaných kódov v zadanom poradí („cs“ nájde aj „cs-CZ“). Vráti (vybrané, nenájdené).
 pub fn vyber(stopy: &[Stopa], chcene: &[String]) -> (Vec<Stopa>, Vec<String>) {
     let chcene: Vec<String> = chcene
@@ -279,12 +289,14 @@ pub fn vyber(stopy: &[Stopa], chcene: &[String]) -> (Vec<Stopa>, Vec<String>) {
     let (mut vybrane, mut chyba): (Vec<Stopa>, Vec<String>) = (vec![], vec![]);
     for w in &chcene {
         let presna = stopy.iter().find(|s| s.kod.to_lowercase() == *w);
+        // „cs“ nájde aj „cs-CZ“; pri angličtine bez „en“ prednostne americká (dabingy bývajú v nej)
         let t = presna.or_else(|| {
             let zaklad = w.split('-').next().unwrap_or("");
-            stopy.iter().find(|s| {
+            let kandidati = stopy.iter().filter(|s| {
                 let k = s.kod.to_lowercase();
                 k.split('-').next() == Some(zaklad) && !chcene.contains(&k) && !k.ends_with("-desc")
-            })
+            });
+            kandidati.min_by_key(|s| uprednostneny_variant(&s.kod))
         });
         match t {
             None => chyba.push(w.clone()),
@@ -1063,6 +1075,26 @@ mod testy {
             "137"
         );
         assert_eq!(s(&obraz(&info, None, true).unwrap(), "format_id"), "137");
+    }
+
+    #[test]
+    fn anglictina_bez_en_prednostne_usa() {
+        let info = json!({"formats": [
+            f("a", "en-GB", "opus", 128.0, "English (United Kingdom)", -1),
+            f("b", "en-US", "opus", 128.0, "English (United States)", -1),
+            f("c", "en-desc", "opus", 128.0, "English descriptive", -1),
+            f("d", "cs", "opus", 128.0, "Czech, original", 10),
+        ]});
+        let st = stopy(&info);
+        let (v, _) = vyber(&st, &["cs".into(), "en".into()]);
+        assert_eq!(
+            v.iter().map(|x| x.kod.as_str()).collect::<Vec<_>>(),
+            vec!["cs", "en-US"]
+        );
+        // keď je „en“, vyberie sa ono
+        let info2 = json!({"formats": [f("a", "en-GB", "opus", 128.0, "", -1), f("b", "en", "opus", 128.0, "", -1)]});
+        let (v2, _) = vyber(&stopy(&info2), &["en".into()]);
+        assert_eq!(v2[0].kod, "en");
     }
 
     #[test]

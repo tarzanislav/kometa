@@ -101,7 +101,7 @@ Pre videá, ktoré majú na YouTube viac zvukových stôp (preklad či dabing). 
 - **Len AAC** – bez stôp Opus. Ak YouTube jazyk v AAC ponúka, len sa prebalí („AAC zo zdroja“); ak má len Opus, prevedie sa do AAC („AAC prevodom“, 192 kb/s) a Opus sa vynechá;
 - **Len Opus** – menší súbor v pôvodnej kvalite.
 
-Voľba **Zvuk pre všetky jazyky** nastaví všetky jazyky naraz a **pri každom jazyku** ju môžeš zmeniť zvlášť (napr. čeština AAC + Opus, slovenčina len AAC). Stopy idú vo výsledku po jazykoch: **CZ (AAC) → CZ (Opus) → SK (AAC) → SK (Opus) → EN (AAC) → EN (Opus)…** a prvá je predvolená. Predvolené poradie jazykov je **CZ, SK, EN, PL, HU, RU**; ďalšie jazyky, ktoré pridáš, idú za nimi.
+Voľba **Zvuk pre všetky jazyky** nastaví všetky jazyky naraz a **pri každom jazyku** ju môžeš zmeniť zvlášť (napr. čeština AAC + Opus, slovenčina len AAC). Stopy idú vo výsledku po jazykoch: **CZ (AAC) → CZ (Opus) → SK (AAC) → SK (Opus) → EN (AAC) → EN (Opus)…** a prvá je predvolená. Predvolené poradie jazykov je **CZ, SK, EN, PL, HU, RU**; ďalšie jazyky, ktoré pridáš, idú za nimi. Ak video nemá stopu „EN“, ale má viac variantov angličtiny, vyberie sa americká (EN-US), inak britská.
 
 Prevod do AAC potrebuje FFmpeg (Kometa pre Python ho má vždy; aplikácia bez neho nechá Opus a povie to). Rovnaká voľba zvuku je v Nastaveniach a platí aj pre bežné sťahovanie videí z YouTube.
 
