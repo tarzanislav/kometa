@@ -302,6 +302,7 @@ fn info_stopy(stsd: &[u8], tkhd: &[u8]) -> Vysledok<Option<InfoStopy>> {
         frekvencia,
         kanaly,
         jazyk: None,
+        nazov: None,
     }))
 }
 

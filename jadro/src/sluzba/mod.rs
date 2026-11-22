@@ -4,6 +4,7 @@
 //! Každé volanie vráti `{"ok": true, "data": …}` alebo `{"ok": false, "chyba": "…", "podrobnosti": "…"}`.
 
 pub mod fronta;
+pub mod jazyky;
 pub mod nastavenia;
 pub mod nastroje;
 pub mod prostredie;
@@ -79,6 +80,7 @@ pub struct Vnutro {
     pub prostredie: Box<dyn Prostredie>,
     pub nastroje: Nastroje,
     pub ucty: ucty::Ucty,
+    pub jazyky: jazyky::Jazyky,
     zaznam: Mutex<VecDeque<String>>,
     graf: Mutex<Graf>,
     posledne_volanie: Mutex<Instant>,
@@ -172,6 +174,7 @@ impl Sluzba {
             fronta: Mutex::new(Fronta::nacitaj(&priecinok, pokracovat)),
             nastroje: Nastroje::new(&priecinok),
             ucty: ucty::Ucty::new(),
+            jazyky: jazyky::Jazyky::default(),
             nastavenia: Mutex::new(n),
             priecinok,
             prostredie,
@@ -344,8 +347,14 @@ impl Sluzba {
                 Value::Null
             }
             "schranka" => json!(self.blokujuco(|v| v.prostredie.schranka()).await),
-            "jazyky_nacitat" | "jazyky_stiahnut" | "jazyky_zrusit" => {
-                return Err(chyba("Jazykové stopy z YouTube zatiaľ robí len Kometa pre Python – do aplikácie pribudnú v ďalšej verzii."))
+            "jazyky_nacitat" => jazyky::nacitaj(v, &arg::<String>(a, 0)?).await?,
+            "jazyky_stiahnut" => {
+                jazyky::stiahni(v, &arg::<Map<String, Value>>(a, 0)?)?;
+                Value::Null
+            }
+            "jazyky_zrusit" => {
+                v.jazyky.zrus();
+                Value::Null
             }
             "vybrat_priecinok" => {
                 let start = v.priecinok_vystupu();
@@ -411,7 +420,7 @@ impl Sluzba {
             "jadro": "rust",
             "okno": self.v.okno,
             "funkcie": {
-                "jazyky": false,
+                "jazyky": true,
                 "ucty": true,
                 "kolekcie": ytdlp,
                 "doinstalovat_ytdlp": true,
@@ -444,7 +453,7 @@ impl Sluzba {
             "polozky": polozky,
             "rychlost": rychlost,
             "graf": graf,
-            "jazyky": {"busy": false, "frac": 0.0, "text": "", "log": [], "file": "", "error": "", "rev": 0},
+            "jazyky": self.v.jazyky.stav(),
             "ucty": self.v.ucty.stav(),
             "nastroje": {
                 "ytdlp": self.v.nastroje.ytdlp().is_some(),

@@ -275,6 +275,7 @@ impl CitacTs {
                 frekvencia: 0,
                 kanaly: 0,
                 jazyk,
+                nazov: None,
             });
             self.pidy.insert(pid, self.prudy.len());
             self.prudy.push(Prud {

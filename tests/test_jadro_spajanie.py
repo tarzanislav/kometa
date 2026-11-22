@@ -189,6 +189,16 @@ def main() -> int:
         # D) bežné MP4: moov na konci a moov na začiatku
         ff(*obraz, *ton(800), "-t", "5", *x264, "-c:a", "aac", "p_koniec.mp4")
         ff(*obraz, *ton(800), "-t", "5", *x264, "-c:a", "aac", "-movflags", "+faststart", "p_zaciatok.mp4")
+        # F) Matroska a WebM ako vstup (YouTube: obraz VP9/AV1 a zvuk Opus vo WebM; vlastné stiahnuté MKV)
+        vp9 = ["-c:v", "libvpx-vp9", "-deadline", "realtime", "-cpu-used", "8", "-pix_fmt", "yuv420p", "-g", "50"]
+        ff(*obraz, "-t", "5", *vp9, "-an", "yt_vp9.webm")
+        ff(*obraz, "-t", "5", "-c:v", "libsvtav1", "-preset", "12", "-pix_fmt", "yuv420p", "-an", "yt_av1.webm")
+        ff(*ton(300), "-t", "5", "-c:a", "libopus", "-b:a", "96k", "-vn", "yt_cs.webm")
+        ff(*ton(350), "-t", "5", "-c:a", "aac", "-vn", "yt_sk.m4a")
+        ff(*obraz, *ton(900), "-t", "5", *x264, "-c:a", "aac", "-metadata:s:a:0", "language=eng",
+           "-metadata:s:a:0", "title=Pôvodný zvuk", "moje.mkv")
+        ff(*ton(250), "-t", "4", "-c:a", "libopus", "-f", "matroska", "zive.mka")
+
         # E) HEVC v TS – zatiaľ nepodporované
         ff(*obraz, "-t", "2", *kodeky["hevc"], "-f", "mpegts", "hevc.ts")
 
@@ -221,6 +231,38 @@ def main() -> int:
                 r = spoj(vys / f"{zdroj}.{prip}", str(D / zdroj))
                 assert r.returncode == 0, r.stderr
                 over(f"bežné MP4 ({zdroj})", vys / f"{zdroj}.{prip}", [(D / zdroj, "video"), (D / zdroj, "audio")])
+
+            for meno in ("yt_vp9.webm", "yt_av1.webm"):
+                r = spoj(vys / f"{meno}.{prip}", f"{D / meno}#video", f"{D / 'yt_sk.m4a'}#zvuk#sk#Slovenčina",
+                         f"{D / 'yt_cs.webm'}#zvuk#cs#Čeština – Opus")
+                if r.returncode != 0:
+                    CHYBY.append(f"WebM {meno}: {r.stderr.strip()[-300:]}")
+                    print(f"  ZLYHALO  WebM {meno}: {r.stderr.strip()[-300:]}")
+                    continue
+                over(f"WebM ako z YouTube: {meno[3:6].upper()} + AAC + Opus", vys / f"{meno}.{prip}",
+                     [(D / meno, "video"), (D / "yt_sk.m4a", "audio"), (D / "yt_cs.webm", "audio")],
+                     ocakavane_jazyky=["slo", "cze"] if prip == "mkv" else ["slk", "ces"],
+                     ocakavane_nazvy=["Slovenčina", "Čeština – Opus"])
+            # doplnenie jazyka do vlastného MKV (H.264 so snímkami B): obraz, nový jazyk, pôvodný zvuk na koniec
+            r = spoj(vys / f"moje.{prip}", f"{D / 'moje.mkv'}#video", f"{D / 'yt_cs.webm'}#zvuk#cs#Čeština",
+                     f"{D / 'moje.mkv'}#zvuk")
+            if r.returncode != 0:
+                CHYBY.append(f"vlastné MKV: {r.stderr.strip()[-300:]}")
+                print(f"  ZLYHALO  vlastné MKV: {r.stderr.strip()[-300:]}")
+            else:
+                over("vlastné MKV (H.264 so snímkami B) + nový jazyk, pôvodný zvuk ostane", vys / f"moje.{prip}",
+                     [(D / "moje.mkv", "video"), (D / "yt_cs.webm", "audio"), (D / "moje.mkv", "audio")],
+                     ocakavane_jazyky=["cze", "eng"] if prip == "mkv" else ["ces", "eng"],
+                     ocakavane_nazvy=["Čeština", "Pôvodný zvuk"])
+            # vlastný výsledok jadra (MKV) ako vstup – časy dekódovania sa musia dopočítať
+            if prip == "mp4":
+                r = spoj(vys / "znova.mp4", str(vys / "hls.mkv"))
+                if r.returncode != 0:
+                    CHYBY.append(f"MKV jadra → MP4: {r.stderr.strip()[-300:]}")
+                    print(f"  ZLYHALO  MKV jadra → MP4: {r.stderr.strip()[-300:]}")
+                else:
+                    over("MKV z jadra znova do MP4", vys / "znova.mp4",
+                         [(D / "hv.ts", "video"), (D / "hcs.ts", "audio"), (D / "hsk.ts", "audio")])
 
             r = spoj(vys / f"hevc_ts.{prip}", str(D / "hevc.ts"))
             if r.returncode != 0 and "Nepodporovaný" in r.stderr and not (vys / f"hevc_ts.{prip}").exists():

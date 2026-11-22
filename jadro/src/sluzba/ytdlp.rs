@@ -460,7 +460,7 @@ pub struct FormatNa {
     pub hls: bool,
 }
 
-fn format_na(f: &Value, druh: &'static str) -> Option<FormatNa> {
+pub fn format_na(f: &Value, druh: &'static str) -> Option<FormatNa> {
     let s = |k: &str| f.get(k).and_then(Value::as_str).unwrap_or("").to_string();
     let protokol = s("protocol");
     let hls = protokol.starts_with("m3u8");

@@ -245,7 +245,7 @@ def zakladne(o: Okno, out: Path):
             skontroluj(f"API odmietne volanie – {nazov}", e.code == 403, e.code)
     skontroluj("neznáma akcia", o.volaj("zmaz_disk") == {"ok": False, "chyba": "Neznáma akcia."})
     i = o.data("init")
-    skontroluj("init: jadro v Ruste a čo vie", i["jadro"] == "rust" and i["funkcie"]["jazyky"] is False
+    skontroluj("init: jadro v Ruste a čo vie", i["jadro"] == "rust" and i["funkcie"]["jazyky"] is True
                and i["funkcie"]["ucty"] and len(i["formaty"]) == 6 and i["nastavenia"]["tema"] == "les", i)
     n = o.data("ulozit_nastavenia", {"outdir": str(out), "parallel": 99, "connections": "3", "heslo": "x"})
     ulozene = json.loads((o.priecinok / "nastavenia.json").read_text(encoding="utf-8"))
@@ -420,6 +420,109 @@ def priecinky():
         o.zatvor()
 
 
+def prud(p: Path):
+    """[(typ, kodek, jazyk, názov, predvolená)] zo ffprobe."""
+    r = subprocess.run([FP, "-v", "error", "-show_entries",
+                        "stream=codec_type,codec_name:stream_tags=language,title,handler_name:stream_disposition=default",
+                        "-of", "json", str(p)], capture_output=True, text=True)
+    out = []
+    for x in json.loads(r.stdout or "{}").get("streams", []):
+        t = x.get("tags", {})
+        out.append((x["codec_type"], x["codec_name"], t.get("language", ""), t.get("title") or t.get("handler_name", ""),
+                    x.get("disposition", {}).get("default", 0)))
+    return out
+
+
+def jazyky(out: Path):
+    print("Jazykové stopy z YouTube (simulovaný yt-dlp, sťahuje a spája jadro)")
+    m = D / "web" / "media" / "yt"
+    m.mkdir()
+    ff = lambda *a: subprocess.run([FF, "-hide_banner", "-loglevel", "error", "-y", *a], cwd=m, check=True)  # noqa: E731
+    obraz = ["-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25", "-t", "3", "-an"]
+    ff(*obraz, "-c:v", "libvpx-vp9", "-deadline", "realtime", "-cpu-used", "8", "v.webm")
+    ff(*obraz, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "v.mp4")
+    for jazyk, hz in (("en", 300), ("cs", 400), ("sk", 500)):
+        ton = ["-f", "lavfi", "-i", f"sine=frequency={hz}:sample_rate=48000", "-t", "3", "-vn"]
+        ff(*ton, "-c:a", "libopus", "-b:a", "64k", f"{jazyk}.webm")
+        if jazyk != "sk":  # slovenčina len v Opus – AAC treba dorobiť (alebo ostane Opus)
+            ff(*ton, "-c:a", "aac", f"{jazyk}.m4a")
+    ff("-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25", "-f", "lavfi", "-i", "sine=frequency=900", "-t", "3",
+       "-c:v", "libx264", "-bf", "2", "-pix_fmt", "yuv420p", "-c:a", "aac", "-metadata:s:a:0", "language=eng",
+       "-metadata:s:a:0", "title=Pôvodný zvuk", str(D / "moje.mkv"))
+    u = lambda n: f"{BASE}/media/yt/{n}"  # noqa: E731
+    zvuk = lambda i, jazyk, kodek, n, poznamka, pref: {  # noqa: E731
+        "format_id": i, "ext": n.rsplit(".", 1)[1], "vcodec": "none", "acodec": kodek, "abr": 64, "language": jazyk,
+        "language_preference": pref, "format_note": poznamka, "protocol": "http", "url": u(n)}
+    info = {"id": "dQw4w9WgXcQ", "title": "Jazyková skúška", "uploader": "Kanál", "duration": 3, "formats": [
+        {"format_id": "248", "ext": "webm", "vcodec": "vp9", "acodec": "none", "height": 240, "tbr": 300,
+         "protocol": "http", "url": u("v.webm")},
+        {"format_id": "137", "ext": "mp4", "vcodec": "avc1.4d400d", "acodec": "none", "height": 240, "tbr": 200,
+         "protocol": "http", "url": u("v.mp4")},
+        zvuk("140-0", "en", "mp4a.40.2", "en.m4a", "English original (default), medium", 10),
+        zvuk("251-0", "en", "opus", "en.webm", "English original (default), medium", 10),
+        zvuk("140-1", "cs", "mp4a.40.2", "cs.m4a", "Czech, medium", -1),
+        zvuk("251-1", "cs", "opus", "cs.webm", "Czech, medium", -1),
+        zvuk("251-2", "sk", "opus", "sk.webm", "Slovak, medium", -1)]}
+    (D / "info.json").write_text(json.dumps(info), encoding="utf-8")
+    nastroj = D / "falosny-yt-dlp"
+    nastroj.write_text(f"#!/bin/sh\ncat '{D / 'info.json'}'\n", encoding="utf-8")
+    nastroj.chmod(0o755)
+    url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+
+    def uloha(o: Okno, volby: dict):
+        o.data("jazyky_nacitat", url)
+        o.data("jazyky_stiahnut", volby)
+        s = o.cakaj(lambda s: not s["jazyky"]["busy"], 90)["jazyky"]
+        return s, Path(s["file"]) if s["file"] else None
+
+    o = Okno(D / "cfg-jz", KOMETA_YTDLP=str(nastroj))
+    try:
+        o.data("ulozit_nastavenia", {"outdir": str(out / "jz")})
+        n = o.data("jazyky_nacitat", url)
+        skontroluj("načítanie jazykov: originál prvý, výber CZ → SK podľa nastavení",
+                   [(x["kod"], x["nazov"], x["original"], x["aac"]) for x in n["stopy"]]
+                   == [("en", "Angličtina", True, True), ("cs", "Čeština", False, True), ("sk", "Slovenčina", False, False)]
+                   and n["vybrane"] == ["cs", "sk"] and n["original"] == "Angličtina" and n["nazov"] == "Jazyková skúška", n)
+        s, f = uloha(o, {"poradie": ["cs", "sk"], "rezim": "video", "original": True, "kvalita": "Najlepšia",
+                         "zvuk": "oboje", "kontajner": "mkv"})
+        p = prud(f) if f else []
+        cakane = [("video", "vp9", "", "", 1),
+                  ("audio", "aac", "cze", "Čeština", 1), ("audio", "aac", "slo", "Slovenčina", 0),
+                  ("audio", "aac", "eng", "Angličtina – originál", 0),
+                  ("audio", "opus", "cze", "Čeština – Opus (vyššia kvalita)", 0),
+                  ("audio", "opus", "slo", "Slovenčina – Opus (vyššia kvalita)", 0),
+                  ("audio", "opus", "eng", "Angličtina – originál – Opus (vyššia kvalita)", 0)]
+        skontroluj("MKV: obraz VP9, AAC v poradí CZ → SK → originál, potom tie isté v Opus",
+                   s["text"] == "Hotovo" and f.name == "Jazyková skúška [cs+sk+en].mkv" and p == cakane, (s, p))
+        s, f = uloha(o, {"poradie": ["cs", "sk"], "rezim": "video", "original": False, "zvuk": "oboje", "kontajner": "mp4"})
+        p = prud(f) if f else []
+        skontroluj("MP4: obraz H.264 a len AAC", s["text"] == "Hotovo" and [x[:3] for x in p]
+                   == [("video", "h264", "und"), ("audio", "aac", "ces"), ("audio", "aac", "slk")], (s, p))
+        s, f = uloha(o, {"poradie": ["cs"], "rezim": "existing", "subor": str(D / "moje.mkv"), "zvuk": "aac",
+                         "kontajner": "mkv"})
+        p = prud(f) if f else []
+        skontroluj("doplnenie do vlastného videa: nový jazyk prvý, pôvodný zvuk ostane s názvom",
+                   s["text"] == "Hotovo" and f.name == "moje [cs].mkv"
+                   and [x[:4] for x in p] == [("video", "h264", "", ""), ("audio", "aac", "cze", "Čeština"),
+                                               ("audio", "aac", "eng", "Pôvodný zvuk")], (s, p))
+        s, f = uloha(o, {"poradie": ["sk"], "rezim": "audio", "zvuk": "opus", "kontajner": "mkv"})
+        p = prud(f) if f else []
+        skontroluj("len zvuk: Slovenčina v Opus do MKA", s["text"] == "Hotovo" and f.suffix == ".mka"
+                   and p == [("audio", "opus", "slo", "Slovenčina", 1)], (s, p))
+    finally:
+        o.zatvor()
+    o = Okno(D / "cfg-jz2", KOMETA_YTDLP=str(nastroj), KOMETA_FFMPEG="nie")
+    try:
+        o.data("ulozit_nastavenia", {"outdir": str(out / "jz2")})
+        s, f = uloha(o, {"poradie": ["sk"], "rezim": "audio", "zvuk": "aac", "kontajner": "mkv"})
+        p = prud(f) if f else []
+        skontroluj("bez FFmpeg: jazyk bez AAC ostane v Opus a okno to povie", s["text"] == "Hotovo"
+                   and p == [("audio", "opus", "slo", "Slovenčina", 1)]
+                   and any("bez FFmpeg ostane Opus" in r for r in s["log"]), (s, p))
+    finally:
+        o.zatvor()
+
+
 def restart(out: Path):
     print("Zatvorenie počas sťahovania a pokračovanie po spustení")
     cfg = D / "cfg-restart"
@@ -466,8 +569,9 @@ def rozhranie(o: Okno, out: Path):
         s.get_by_role("heading", name="Pomocníci").wait_for(timeout=10000)
         skontroluj("rozhranie: Nastavenia ukazujú pomocníkov yt-dlp a FFmpeg", s.get_by_text("yt-dlp", exact=True).count() >= 1)
         s.get_by_role("button", name="Jazykové stopy").first.click()
-        skontroluj("rozhranie: Jazykové stopy oznámia, že pribudnú",
-                   s.get_by_text("Pribudne v ďalšej verzii aplikácie").count() == 1)
+        s.get_by_role("heading", name="Jazykové stopy").first.wait_for(timeout=10000)
+        skontroluj("rozhranie: Jazykové stopy sú dostupné aj v aplikácii",
+                   s.get_by_text("Pribudne v ďalšej verzii aplikácie").count() == 0)
         skontroluj("rozhranie bez chýb JavaScriptu", not chyby_js, chyby_js)
         b.close()
 
@@ -503,6 +607,7 @@ def main() -> int:
         if sys.platform.startswith("linux"):
             doinstalovanie()
             priecinky()
+            jazyky(out)
         restart(out)
     finally:
         srv.shutdown()

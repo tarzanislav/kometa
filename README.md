@@ -44,7 +44,7 @@ Kometa je v dvoch vydaniach s tým istým rozhraním:
 | stránky, Vimeo, streamy, súbory | áno, vlastným jadrom | áno |
 | Webshare, Fastshare | áno | áno |
 | YouTube a ďalšie služby | áno, cez yt-dlp (doinštaluje sa jedným klikom) | áno |
-| jazykové stopy YouTube | zatiaľ nie | áno |
+| jazykové stopy YouTube | áno, aj bez FFmpeg | áno |
 
 ### Aplikácia
 
@@ -183,7 +183,7 @@ Rovnaké rozhranie, ale bez Pythonu: natívne okno (Tauri – WebView2 vo Window
 - **YouTube a stovky ďalších služieb cez yt-dlp** – ak chýba, doinštaluje sa jedným klikom v Nastaveniach z oficiálnych vydaní a overí sa SHA-256. S FFmpeg sťahuje a spája samotný yt-dlp (AAC aj Opus); bez FFmpeg yt-dlp len zistí formáty a obraz MP4 so zvukom M4A stiahne a spojí jadro;
 - **nastavenia sú spoločné** s Kometou pre Python (`~/.kometa/nastavenia.json`), front má vlastný súbor.
 
-Jazykové stopy z YouTube zatiaľ robí len Kometa pre Python – okno to v aplikácii povie.
+**Jazykové stopy z YouTube** robí aplikácia celé sama: yt-dlp len zistí, aké jazyky video má; obraz a zvuky stiahne jadro po úsekoch a spojí ich vlastným spájaním – aj zvuk Opus z WebM a aj do videa, ktoré už máš stiahnuté. FFmpeg treba len vtedy, keď YouTube jazyk ponúka iba v Opus a chceš ho mať aj v AAC.
 
 ```
 cargo build --release -p kometa-aplikacia     # natívna aplikácia (Linux potrebuje WebKitGTK 4.1)
@@ -199,7 +199,7 @@ V priečinku [`jadro/`](jadro) vzniká nové jadro Komety v Ruste: jeden spustit
 - **súbory** po úsekoch cez viac spojení s pokračovaním, adaptívnym počtom spojení a obnovou odkazov;
 - **HLS** (`.m3u8`) aj **DASH** (`.mpd` – šablóny s číslom aj časovou osou, zoznamy, BaseURL) – vlastné parsery, kúsky sa sťahujú súbežne a po prerušení sa pokračuje;
 - **výber kvality** (`--max-vyska`) a **jazykov zvuku v poradí** (`-j cs,sk,en`);
-- **vlastné spájanie do MKV aj MP4 – bez FFmpeg.** Číta MPEG-TS (H.264, AAC) a MP4/fragmentované MP4 (H.264, HEVC, AV1, VP9, AAC, Opus, MP3, AC-3, E-AC-3), zapisuje Matroska aj MP4 s jazykmi, názvami, predvolenou stopou a bodmi na pretáčanie. Nič sa neprekóduje, výsledok sa po zápise skontroluje. Zvláda B-snímky, edit listy aj nespojitosti časov v HLS. Pamäť ~10 MB aj pri veľkých súboroch. FFmpeg sa použije len pre formát, ktorý vlastné spájanie zatiaľ nepozná (napr. HEVC v MPEG-TS) – a nikdy potichu;
+- **vlastné spájanie do MKV aj MP4 – bez FFmpeg.** Číta MPEG-TS (H.264, AAC), MP4/fragmentované MP4 a Matroska/WebM (H.264, HEVC, AV1, VP9, AAC, Opus, MP3, AC-3, E-AC-3 – pri MKV dopočíta časy dekódovania snímok B), zapisuje Matroska aj MP4 s jazykmi, názvami, predvolenou stopou a bodmi na pretáčanie. Nič sa neprekóduje, výsledok sa po zápise skontroluje. Zvláda B-snímky, edit listy aj nespojitosti časov v HLS. Pamäť ~10 MB aj pri veľkých súboroch. FFmpeg sa použije len pre formát, ktorý vlastné spájanie zatiaľ nepozná (napr. HEVC v MPEG-TS) – a nikdy potichu;
 - **skener stránok** – vlastný čítač HTML prejde stránku aj vnorené rámčeky (2 úrovne), nájde prehrávače, streamy a súbory v značkách, atribútoch `data-*`, metaúdajoch (Open Graph, JSON-LD) aj v skriptoch, vynechá reklamy a vyberie hlavné video. Či ide o stránku, stream alebo súbor, rozhodne obsah – nie len typ, ktorý pošle server;
 - **Vimeo** – verejné, neverejné (s kľúčom `h=…`) aj obmedzené na doménu: skener sám pošle adresu stránky, kde je video vložené (Referer). Pri videu s heslom povie, čo robiť;
 - **JW Player, Wistia, Cloudflare Stream a Bunny Stream** cez ich verejné rozhrania prehrávača;
@@ -216,11 +216,11 @@ kometa stiahni ODKAZ --max-vyska 1080 --json       # udalosti ako JSON pre okno 
 kometa spoj -o film.mkv video.ts "cs.ts#zvuk#cs#Čeština" "sk.ts#zvuk#sk#Slovenčina"   # vlastné súbory → MKV/MP4
 ```
 
-Ďalej: jazykové stopy YouTube v aplikácii (vlastné čítanie WebM pre zvuk Opus), inštalačné balíky aplikácie vo vydaní a Android.
+Ďalej: titulky (aj z Vimea), zápis zvuku Opus do .opus bez FFmpeg a Android.
 
 ## Plán ďalšieho vývoja
 
-1. **Jadro v Ruste a aplikácia** – hotové: súbory, HLS, DASH, vlastné spájanie do MKV/MP4 bez FFmpeg, skener stránok, Vimeo a ďalšie prehrávače, front, účty Webshare/Fastshare, yt-dlp ako pomocník a natívne okno (Tauri). Ďalej jazykové stopy v aplikácii, inštalačné balíky a Android.
+1. **Jadro v Ruste a aplikácia** – hotové: súbory, HLS, DASH, vlastné spájanie do MKV/MP4 bez FFmpeg, skener stránok, Vimeo a ďalšie prehrávače, front, účty Webshare/Fastshare, yt-dlp ako pomocník a natívne okno (Tauri). Jazykové stopy YouTube a inštalačné balíky sú hotové. Ďalej titulky a Android.
 2. **Titulky a preklad lokálnou AI** – prepis reči, preložené titulky vložené do MKV/MP4. Bez účtu, bez internetu, bez kreditov.
 3. **AI dabing** – preklad zvuku do iného jazyka ako nová zvuková stopa: šablóny hlasov (ženské a mužské, rôzny vek), prirodzený prednes, zachovaná hudba a zvuky pozadia. Podrobný plán a pravidlá (licencie hlasov, ochrana skutočných ľudí, označovanie) sú v [docs/plan-ai.md](docs/plan-ai.md).
 

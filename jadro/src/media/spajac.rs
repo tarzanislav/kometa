@@ -71,7 +71,7 @@ fn vyber(vstupy: &[Vstup]) -> Vysledok<Vyber> {
                         None
                     },
                     nazov: if druh == Druh::Zvuk {
-                        v.nazov.clone()
+                        v.nazov.clone().or_else(|| info.nazov.clone())
                     } else {
                         None
                     },

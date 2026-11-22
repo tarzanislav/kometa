@@ -1,6 +1,6 @@
 //! Vlastné čítanie a zápis mediálnych kontajnerov – bez FFmpeg.
 //!
-//! Čítanie: MPEG-TS (HLS) a ISO BMFF (MP4, fragmentované MP4 z HLS a DASH).
+//! Čítanie: MPEG-TS (HLS), ISO BMFF (MP4, fragmentované MP4 z HLS a DASH) a Matroska/WebM.
 //! Zápis: Matroska (MKV/MKA) a MP4. Nič sa neprekóduje – vzorky sa len prebalia.
 //!
 //! Všetky časy sú v nanosekundách (`i64`). Kodek, ktorý čítač nepozná, vráti
@@ -10,6 +10,7 @@ pub mod aac;
 pub mod bity;
 pub mod h264;
 pub mod mkv;
+pub mod mkvcit;
 pub mod mp4;
 pub mod mp4zapis;
 pub mod spajac;
@@ -60,6 +61,8 @@ pub struct InfoStopy {
     pub kanaly: u16,
     /// Jazyk zo zdroja (ISO 639-2), ak ho zdroj uvádza.
     pub jazyk: Option<String>,
+    /// Názov stopy zo zdroja (Matroska Name), ak ho zdroj uvádza.
+    pub nazov: Option<String>,
 }
 
 impl InfoStopy {
@@ -110,6 +113,9 @@ pub fn otvor(cesta: &std::path::Path) -> Vysledok<Box<dyn Citac>> {
     let mut f = std::fs::File::open(cesta)?;
     let n = f.read(&mut hlava)?;
     drop(f);
+    if n >= 4 && hlava[..4] == [0x1A, 0x45, 0xDF, 0xA3] {
+        return Ok(Box::new(mkvcit::CitacMkv::otvor(cesta)?));
+    }
     if n >= 1 && hlava[0] == 0x47 {
         return Ok(Box::new(ts::CitacTs::otvor(cesta)?));
     }
