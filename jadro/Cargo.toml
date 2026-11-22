@@ -1,0 +1,34 @@
+[package]
+name = "kometa-jadro"
+version = "0.1.0"
+edition = "2021"
+description = "Kometa – vlastné jadro na sťahovanie: HTTP po úsekoch s pokračovaním, HLS, DASH"
+license = "MIT"
+repository = "https://github.com/tarzanislav/kometa"
+rust-version = "1.80"
+
+[lib]
+name = "kometa_jadro"
+path = "src/lib.rs"
+
+[[bin]]
+name = "kometa"
+path = "src/main.rs"
+
+[dependencies]
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "sync", "time", "signal"] }
+tokio-util = "0.7"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "http2", "charset"] }
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = "2"
+roxmltree = "0.20"
+clap = { version = "4", features = ["derive"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = 3
