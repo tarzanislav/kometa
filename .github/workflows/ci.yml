@@ -74,3 +74,10 @@ jobs:
         run: |
           cargo build --locked
           cargo test --locked
+      - name: Skutočné streamy HLS a DASH (FFmpeg)
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
+          (cd jadro && cargo build --release --locked)
+          python3 tests/test_jadro_streamy.py

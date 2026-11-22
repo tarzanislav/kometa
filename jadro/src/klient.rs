@@ -23,7 +23,13 @@ pub struct Nastavenia {
 
 impl Default for Nastavenia {
     fn default() -> Self {
-        Nastavenia { referer: None, hlavicky: vec![], spojenia: 4, max_vyska: None, jazyky: vec![] }
+        Nastavenia {
+            referer: None,
+            hlavicky: vec![],
+            spojenia: 4,
+            max_vyska: None,
+            jazyky: vec![],
+        }
     }
 }
 
@@ -39,7 +45,10 @@ pub fn klient(n: &Nastavenia) -> Vysledok<reqwest::Client> {
         }
     }
     for (k, v) in &n.hlavicky {
-        if let (Ok(k), Ok(v)) = (HeaderName::from_bytes(k.as_bytes()), HeaderValue::from_str(v)) {
+        if let (Ok(k), Ok(v)) = (
+            HeaderName::from_bytes(k.as_bytes()),
+            HeaderValue::from_str(v),
+        ) {
             h.insert(k, v);
         }
     }
@@ -82,7 +91,11 @@ pub fn bezpecny_nazov(text: &str) -> String {
     s = s.split_whitespace().collect::<Vec<_>>().join(" ");
     let s = s.trim_matches(|c: char| c == '.' || c == ' ');
     let s: String = s.chars().take(150).collect();
-    if s.is_empty() { "subor".into() } else { s }
+    if s.is_empty() {
+        "subor".into()
+    } else {
+        s
+    }
 }
 
 /// Ak súbor existuje, pridá „ (2)“, „ (3)“…
@@ -90,8 +103,14 @@ pub fn volna_cesta(p: &Path) -> PathBuf {
     if !p.exists() {
         return p.to_path_buf();
     }
-    let stem = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-    let ext = p.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+    let stem = p
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let ext = p
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
     for n in 2.. {
         let c = p.with_file_name(format!("{stem} ({n}){ext}"));
         if !c.exists() {
@@ -121,7 +140,9 @@ pub fn zaciatok_z_rozsahu(h: Option<&HeaderValue>) -> Option<u64> {
 }
 
 pub fn je_html(h: Option<&HeaderValue>) -> bool {
-    h.and_then(|v| v.to_str().ok()).map(|s| s.to_ascii_lowercase().contains("text/html")).unwrap_or(false)
+    h.and_then(|v| v.to_str().ok())
+        .map(|s| s.to_ascii_lowercase().contains("text/html"))
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -130,7 +151,10 @@ mod testy {
 
     #[test]
     fn nazov() {
-        assert_eq!(bezpecny_nazov("Test: \"Video\" / ukážka?"), "Test- 'Video' - ukážka");
+        assert_eq!(
+            bezpecny_nazov("Test: \"Video\" / ukážka?"),
+            "Test- 'Video' - ukážka"
+        );
         assert_eq!(bezpecny_nazov("  ..  "), "subor");
     }
 

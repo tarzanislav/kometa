@@ -5,6 +5,11 @@
 //! Šifrovaný obsah (DRM, kľúče v streame) jadro zámerne nesťahuje.
 
 pub mod chyba;
+pub mod dash;
+pub mod hls;
 pub mod http;
 pub mod klient;
+pub mod kusky;
+pub mod spajanie;
+pub mod stream;
 pub mod udalosti;

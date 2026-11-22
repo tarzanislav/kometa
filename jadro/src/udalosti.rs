@@ -7,8 +7,12 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "typ", rename_all = "snake_case")]
 pub enum Udalost {
-    Info { sprava: String },
-    Varovanie { sprava: String },
+    Info {
+        sprava: String,
+    },
+    Varovanie {
+        sprava: String,
+    },
     Priebeh {
         stiahnute: u64,
         celkom: Option<u64>,
@@ -16,8 +20,13 @@ pub enum Udalost {
         #[serde(skip_serializing_if = "Option::is_none")]
         cast: Option<String>,
     },
-    Hotovo { subor: String },
-    Chyba { sprava: String, kod: String },
+    Hotovo {
+        subor: String,
+    },
+    Chyba {
+        sprava: String,
+        kod: String,
+    },
 }
 
 pub type Hlasic = Arc<dyn Fn(Udalost) + Send + Sync>;

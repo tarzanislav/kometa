@@ -144,11 +144,21 @@ Preložené rozhranie je súčasťou repozitára, aby Kometa fungovala bez Node.
 
 ## Vlastné jadro v Ruste (vo vývoji)
 
-V priečinku [`jadro/`](jadro) vzniká nové jadro Komety v Ruste: jeden spustiteľný súbor bez inštalácie pre Windows, macOS, Linux a neskôr Android. Hotové je sťahovanie po úsekoch s pokračovaním, adaptívnym počtom spojení a obnovou odkazov. Pripravuje sa vlastné HLS a DASH so zastavením pri šifrovanom obsahu, potom Vimeo a skener stránok. Šifrovaný obsah (DRM) jadro zámerne nesťahuje.
+V priečinku [`jadro/`](jadro) vzniká nové jadro Komety v Ruste: jeden spustiteľný súbor bez inštalácie pre Windows, macOS, Linux a neskôr Android. Už vie:
+
+- **súbory** po úsekoch cez viac spojení s pokračovaním, adaptívnym počtom spojení a obnovou odkazov;
+- **HLS** (`.m3u8`) aj **DASH** (`.mpd` – šablóny s číslom aj časovou osou, zoznamy, BaseURL) – vlastné parsery, kúsky sa sťahujú súbežne a po prerušení sa pokračuje;
+- **výber kvality** (`--max-vyska`) a **jazykov zvuku v poradí** (`-j cs,sk,en`) a spojenie do **MKV alebo MP4** s jazykmi a predvolenou stopou;
+- **šifrovaný obsah (DRM) zámerne nesťahuje** – skončí kódom 2; živé vysielanie kódom 4.
 
 ```
 cd jadro && cargo build --release
+kometa info ODKAZ -j cs,sk                         # kvality, jazyky a stopy – nič nesťahuje
+kometa stiahni ODKAZ -o PRIEČINOK -j cs,sk,en      # HLS/DASH → MKV (alebo --mp4), súbor priamo
+kometa stiahni ODKAZ --max-vyska 1080 --json       # udalosti ako JSON pre okno Komety
 ```
+
+Ďalej: Vimeo a skener stránok v Ruste, vlastné spájanie bez FFmpeg a prepojenie s oknom Komety (Tauri).
 
 ## Plán ďalšieho vývoja
 

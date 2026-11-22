@@ -79,9 +79,15 @@ pub async fn stiahni(k: &Client, zdroj: ZdrojUrl, ciel: &Path, m: &Moznosti) -> 
             zisti_velkost(k, &zdroj).await
         };
         if let Some(celkom) = celkom.filter(|c| *c >= MIN_DELENE) {
-            match Useky::new(k.clone(), zdroj.clone(), ciel, celkom, m).spusti().await {
+            match Useky::new(k.clone(), zdroj.clone(), ciel, celkom, m)
+                .spusti()
+                .await
+            {
                 Err(Chyba::Ine(s)) if s == BEZ_RANGE => {
-                    varovanie(&m.hlasic, "Server nepodporuje sťahovanie po častiach – pokračujem jedným spojením.");
+                    varovanie(
+                        &m.hlasic,
+                        "Server nepodporuje sťahovanie po častiach – pokračujem jedným spojením.",
+                    );
                     let _ = tokio::fs::remove_file(&part).await;
                     let _ = tokio::fs::remove_file(&stav).await;
                 }
@@ -96,7 +102,13 @@ pub async fn stiahni(k: &Client, zdroj: ZdrojUrl, ciel: &Path, m: &Moznosti) -> 
 async fn zisti_velkost(k: &Client, zdroj: &ZdrojUrl) -> Option<u64> {
     let mut url = zdroj(false).await.ok()?;
     for pokus in 0..2 {
-        let r = k.get(&url).header(RANGE, "bytes=0-0").header(ACCEPT_ENCODING, "identity").send().await.ok()?;
+        let r = k
+            .get(&url)
+            .header(RANGE, "bytes=0-0")
+            .header(ACCEPT_ENCODING, "identity")
+            .send()
+            .await
+            .ok()?;
         let s = r.status().as_u16();
         if matches!(s, 401 | 403 | 404 | 410) && pokus == 0 {
             url = zdroj(true).await.ok()?;
@@ -114,7 +126,12 @@ async fn zisti_velkost(k: &Client, zdroj: &ZdrojUrl) -> Option<u64> {
 //  Jedno spojenie
 // --------------------------------------------------------------------------------------------
 
-pub async fn jedno_spojenie(k: &Client, zdroj: ZdrojUrl, ciel: &Path, m: &Moznosti) -> Vysledok<PathBuf> {
+pub async fn jedno_spojenie(
+    k: &Client,
+    zdroj: ZdrojUrl,
+    ciel: &Path,
+    m: &Moznosti,
+) -> Vysledok<PathBuf> {
     let part = part_cesta(ciel);
     let mut url = zdroj(false).await?;
     let mut celkom = m.ocakavana_velkost;
@@ -126,7 +143,10 @@ pub async fn jedno_spojenie(k: &Client, zdroj: ZdrojUrl, ciel: &Path, m: &Moznos
         if m.zrusenie.is_cancelled() {
             return Err(Chyba::Pauza);
         }
-        let mut poz = tokio::fs::metadata(&part).await.map(|x| x.len()).unwrap_or(0);
+        let mut poz = tokio::fs::metadata(&part)
+            .await
+            .map(|x| x.len())
+            .unwrap_or(0);
         if let Some(c) = celkom {
             if poz >= c {
                 break;
@@ -143,7 +163,10 @@ pub async fn jedno_spojenie(k: &Client, zdroj: ZdrojUrl, ciel: &Path, m: &Moznos
                 if zlyhania > MAX_POKUSOV {
                     return Err(Chyba::Siet(e.to_string()));
                 }
-                varovanie(&m.hlasic, format!("Spojenie zlyhalo, skúšam znova ({zlyhania}/{MAX_POKUSOV})…"));
+                varovanie(
+                    &m.hlasic,
+                    format!("Spojenie zlyhalo, skúšam znova ({zlyhania}/{MAX_POKUSOV})…"),
+                );
                 spi(&m.zrusenie, caka(zlyhania)).await?;
                 continue;
             }
@@ -184,7 +207,10 @@ pub async fn jedno_spojenie(k: &Client, zdroj: ZdrojUrl, ciel: &Path, m: &Moznos
             celkom = celkom_z_rozsahu(r.headers().get(CONTENT_RANGE)).or(celkom);
         } else {
             if poz > 0 {
-                varovanie(&m.hlasic, "Server nepodporuje pokračovanie, sťahujem od začiatku.");
+                varovanie(
+                    &m.hlasic,
+                    "Server nepodporuje pokračovanie, sťahujem od začiatku.",
+                );
             }
             poz = 0;
             celkom = r
@@ -243,7 +269,10 @@ pub async fn jedno_spojenie(k: &Client, zdroj: ZdrojUrl, ciel: &Path, m: &Moznos
             if zlyhania > MAX_POKUSOV {
                 return Err(Chyba::Siet(e.to_string()));
             }
-            varovanie(&m.hlasic, format!("Spojenie sa prerušilo pri {} MB, pokračujem…", poz >> 20));
+            varovanie(
+                &m.hlasic,
+                format!("Spojenie sa prerušilo pri {} MB, pokračujem…", poz >> 20),
+            );
             spi(&m.zrusenie, caka(zlyhania)).await?;
             continue;
         }
@@ -252,8 +281,16 @@ pub async fn jedno_spojenie(k: &Client, zdroj: ZdrojUrl, ciel: &Path, m: &Moznos
             _ => break,
         }
     }
-    let poz = tokio::fs::metadata(&part).await.map(|x| x.len()).unwrap_or(0);
-    (m.hlasic)(Udalost::Priebeh { stiahnute: poz, celkom: celkom.or(Some(poz)), rychlost: 0.0, cast: None });
+    let poz = tokio::fs::metadata(&part)
+        .await
+        .map(|x| x.len())
+        .unwrap_or(0);
+    (m.hlasic)(Udalost::Priebeh {
+        stiahnute: poz,
+        celkom: celkom.or(Some(poz)),
+        rychlost: 0.0,
+        cast: None,
+    });
     let finalna = volna_cesta(ciel);
     tokio::fs::rename(&part, &finalna).await?;
     Ok(finalna)
@@ -314,14 +351,18 @@ impl Useky {
         let part = part_cesta(ciel);
         let stav = stav_cesta(ciel);
         let ulozene = StavUsekov::nacitaj(&stav).filter(|s| {
-            s.celkom == celkom && std::fs::metadata(&part).map(|x| x.len() == celkom).unwrap_or(false)
+            s.celkom == celkom
+                && std::fs::metadata(&part)
+                    .map(|x| x.len() == celkom)
+                    .unwrap_or(false)
         });
         let useky = match ulozene {
             Some(s) => s.useky,
             None => {
                 let n = (m.spojenia as u64).min((celkom / MIN_USEK).max(1));
                 let krok = celkom / n;
-                let mut v: Vec<[u64; 3]> = (0..n).map(|i| [i * krok, (i + 1) * krok - 1, 0]).collect();
+                let mut v: Vec<[u64; 3]> =
+                    (0..n).map(|i| [i * krok, (i + 1) * krok - 1, 0]).collect();
                 v.last_mut().unwrap()[1] = celkom - 1;
                 v
             }
@@ -356,7 +397,11 @@ impl Useky {
     fn uloz_stav(&self) {
         let data = {
             let sp = self.sp.lock().unwrap();
-            serde_json::to_vec(&StavUsekov { celkom: self.celkom, useky: sp.useky.clone() }).unwrap()
+            serde_json::to_vec(&StavUsekov {
+                celkom: self.celkom,
+                useky: sp.useky.clone(),
+            })
+            .unwrap()
         };
         let tmp = s_priponou(&self.stav, ".tmp");
         if std::fs::write(&tmp, data).is_ok() {
@@ -407,7 +452,11 @@ impl Useky {
             if gen != sp.generacia {
                 return;
             }
-            if sp.posledna_obnova.map(|t| t.elapsed() < Duration::from_secs(5)).unwrap_or(false) {
+            if sp
+                .posledna_obnova
+                .map(|t| t.elapsed() < Duration::from_secs(5))
+                .unwrap_or(false)
+            {
                 // odkaz bol práve obnovený a server stále odmieta → priveľa spojení
                 sp.limit = sp.limit.saturating_sub(1).max(1);
                 return;
@@ -454,7 +503,10 @@ impl Useky {
                         sp.limit = sp.limit.min(sp.aktivne.saturating_sub(1)).max(1);
                         sp.limit
                     };
-                    varovanie(&self.m.hlasic, format!("Server obmedzuje počet spojení – pokračujem s {novy}."));
+                    varovanie(
+                        &self.m.hlasic,
+                        format!("Server obmedzuje počet spojení – pokračujem s {novy}."),
+                    );
                     self.uvolni(i);
                     if spi(&self.zastav, Duration::from_secs(2)).await.is_err() {
                         return Ok(());
@@ -515,7 +567,9 @@ impl Useky {
         if zaciatok_z_rozsahu(r.headers().get(CONTENT_RANGE)) != Some(poz) {
             return Err(ChybaUseku::BezRange);
         }
-        f.seek(SeekFrom::Start(poz)).await.map_err(|e| ChybaUseku::Ina(e.to_string()))?;
+        f.seek(SeekFrom::Start(poz))
+            .await
+            .map_err(|e| ChybaUseku::Ina(e.to_string()))?;
         let mut prud = r.bytes_stream();
         loop {
             let kus = tokio::select! {
@@ -539,26 +593,35 @@ impl Useky {
                 break;
             }
             let kus = &b[..(b.len() as u64).min(miesto) as usize];
-            f.write_all(kus).await.map_err(|e| ChybaUseku::Ina(e.to_string()))?;
+            f.write_all(kus)
+                .await
+                .map_err(|e| ChybaUseku::Ina(e.to_string()))?;
             self.sp.lock().unwrap().useky[i][2] += kus.len() as u64;
             if (kus.len() as u64) == miesto {
                 break;
             }
         }
-        f.flush().await.map_err(|e| ChybaUseku::Ina(e.to_string()))?;
+        f.flush()
+            .await
+            .map_err(|e| ChybaUseku::Ina(e.to_string()))?;
         Ok(())
     }
 
     async fn spusti(self: Arc<Self>) -> Vysledok<PathBuf> {
         let mal_stav = StavUsekov::nacitaj(&self.stav).is_some()
-            && std::fs::metadata(&self.part).map(|x| x.len() == self.celkom).unwrap_or(false);
+            && std::fs::metadata(&self.part)
+                .map(|x| x.len() == self.celkom)
+                .unwrap_or(false);
         if !mal_stav {
             let f = std::fs::File::create(&self.part)?;
             f.set_len(self.celkom)?; // vyhradí miesto na disku
         } else {
             crate::udalosti::info(
                 &self.m.hlasic,
-                format!("Pokračujem v sťahovaní ({} % hotovo).", self.stiahnute() * 100 / self.celkom),
+                format!(
+                    "Pokračujem v sťahovaní ({} % hotovo).",
+                    self.stiahnute() * 100 / self.celkom
+                ),
             );
         }
         self.sp.lock().unwrap().url = (self.zdroj)(false).await?;
@@ -566,10 +629,15 @@ impl Useky {
 
         let pocet = {
             let sp = self.sp.lock().unwrap();
-            sp.useky.iter().filter(|u| u[0] + u[2] <= u[1]).count().clamp(1, sp.limit)
+            sp.useky
+                .iter()
+                .filter(|u| u[0] + u[2] <= u[1])
+                .count()
+                .clamp(1, sp.limit)
         };
-        let mut vlakna: Vec<tokio::task::JoinHandle<Result<(), ChybaUseku>>> =
-            (0..pocet).map(|_| tokio::spawn(self.clone().pracovnik())).collect();
+        let mut vlakna: Vec<tokio::task::JoinHandle<Result<(), ChybaUseku>>> = (0..pocet)
+            .map(|_| tokio::spawn(self.clone().pracovnik()))
+            .collect();
 
         let mut okno = vec![(Instant::now(), self.stiahnute())];
         let mut ulozene = Instant::now();
@@ -612,7 +680,10 @@ impl Useky {
             let pridaj = {
                 let sp = self.sp.lock().unwrap();
                 vlakna.len() < sp.limit
-                    && sp.useky.iter().any(|u| (u[1] + 1).saturating_sub(u[0] + u[2]) >= 2 * MIN_USEK)
+                    && sp
+                        .useky
+                        .iter()
+                        .any(|u| (u[1] + 1).saturating_sub(u[0] + u[2]) >= 2 * MIN_USEK)
             };
             if pridaj && !self.zastav.is_cancelled() {
                 vlakna.push(tokio::spawn(self.clone().pracovnik()));
@@ -626,10 +697,24 @@ impl Useky {
             return Err(Chyba::Pauza);
         }
         if self.stiahnute() < self.celkom {
-            let posledna = self.sp.lock().unwrap().chyby.last().cloned().unwrap_or_else(|| "neznáma chyba".into());
-            return Err(Chyba::Siet(format!("sťahovanie sa nedokončilo: {posledna}")));
+            let posledna = self
+                .sp
+                .lock()
+                .unwrap()
+                .chyby
+                .last()
+                .cloned()
+                .unwrap_or_else(|| "neznáma chyba".into());
+            return Err(Chyba::Siet(format!(
+                "sťahovanie sa nedokončilo: {posledna}"
+            )));
         }
-        (self.m.hlasic)(Udalost::Priebeh { stiahnute: self.celkom, celkom: Some(self.celkom), rychlost: 0.0, cast: None });
+        (self.m.hlasic)(Udalost::Priebeh {
+            stiahnute: self.celkom,
+            celkom: Some(self.celkom),
+            rychlost: 0.0,
+            cast: None,
+        });
         let finalna = volna_cesta(&self.ciel);
         tokio::fs::rename(&self.part, &finalna).await?;
         let _ = tokio::fs::remove_file(&self.stav).await;
