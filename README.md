@@ -9,6 +9,7 @@ YouTube · Vimeo (aj vložené) · Facebook · Instagram · TikTok (bez vodoznak
 
 ## Čo Kometa vie
 
+- **Moderné rozhranie** so 7 farebnými témami, každou v dennom aj nočnom režime (alebo podľa systému). Priebeh sťahovania je kométa so svietiacim jadrom; front má náhľady videí. Odkazy stačí vložiť `Ctrl+V` alebo pretiahnuť z prehliadača. Viac v [docs/dizajn.md](docs/dizajn.md).
 - **Sťahuje z YouTube, Facebooku, Instagramu, TikToku** a z ďalších viac ako 1000 stránok, ktoré podporuje [yt-dlp](https://github.com/yt-dlp/yt-dlp), aj z priamych odkazov na súbory.
 - **Akákoľvek stránka – vlastný skener.** Nájde video aj tam, kde ho iné nástroje nevidia: vložené prehrávače (Vimeo aj s obmedzením na doménu, YouTube, Wistia, Bunny, JW Player, Brightcove, Cloudflare Stream, Dailymotion, Loom…), streamy HLS/DASH, `<video>`, adresy schované v JavaScripte, OpenGraph a JSON-LD, aj prehrávače vo vnorených rámčekoch. Každému nálezu priradí skóre (reklamy idú preč) a správny Referer stránky.
 - **Viac spojení naraz.** Veľké súbory sa delia na úseky; voľné spojenie prevezme polovicu najväčšieho zvyšku a pri odmietnutí serverom (429/503) sa počet spojení sám zníži. Streamy HLS/DASH sa sťahujú po viacerých kúskoch súčasne.
@@ -17,21 +18,25 @@ YouTube · Vimeo (aj vložené) · Facebook · Instagram · TikTok (bez vodoznak
 - **Webshare.cz a Fastshare.cz** cez tvoj vlastný účet (Webshare cez oficiálne API).
 - **Pokračovanie prerušeného sťahovania.** Pri pauze, výpadku siete aj po zatvorení programu sa pokračuje od miesta, kde sa skončilo. Keď odkaz z úložiska vyprší, Kometa si vypýta nový.
 - **Front sťahovania**: viac súborov naraz, pauza a pokračovanie, front ostane uložený aj po reštarte.
-- **Jazykové stopy z YouTube**: z videí s preloženým zvukom stiahne vybrané jazyky a spojí ich s videom do jedného `.mkv`. Predvolené poradie je CZ, SK, EN, EN-US, PL, HU a pôvodná stopa ide na koniec.
+- **Jazykové stopy z YouTube**: z videí s preloženým zvukom stiahne vybrané jazyky a spojí ich s videom do jedného `.mkv` alebo `.mp4`. Predvolené poradie je CZ, SK, EN, EN-US, PL, HU (zmeníš ho ťahaním) a pôvodná stopa ide na koniec. Kompatibilný zvuk: AAC, ktorý prehrá každý prehrávač, a navyše kvalitnejší Opus.
 - Formáty: najlepšia kvalita, MP4 pre TV a mobil, najviac 1080p alebo 720p, MP3, zvuk v pôvodnej kvalite.
+
+| Jazykové stopy | Nastavenia a témy |
+|---|---|
+| ![Jazyky](docs/jazyky.png) | ![Nastavenia](docs/nastavenia.png) |
 
 | Playlist / kanál | Prehľadať stránku |
 |---|---|
 | ![Playlist](docs/playlist.png) | ![Skener](docs/skener.png) |
 
-| Jazykové stopy | Účty a nastavenia |
+| Nočný režim | Téma Súmrak |
 |---|---|
-| ![Jazyky](docs/jazyky.png) | ![Účty](docs/ucty.png) |
+| ![Noc](docs/stahovanie-noc.png) | ![Súmrak](docs/tema-sumrak.png) |
 
 ## Inštalácia (Windows 10/11)
 
-1. Stiahni Kometu: zelené tlačidlo **Code → Download ZIP** a rozbaľ ju (napr. do `Dokumenty\Kometa`).
-2. Dvakrát klikni na **`Instalacia.bat`**. Cez `winget` nainštaluje Python, FFmpeg, Deno a knižnice (yt-dlp, requests, keyring) a na plochu dá ikonu **Kometa**.
+1. Stiahni Kometu z [Vydaní (Releases)](https://github.com/tarzanislav/kometa/releases): súbor `Kometa-X.Y.Z.zip`. Rozbaľ ho (napr. do `Dokumenty\Kometa`). Pri aktualizácii stačí rozbaliť cez staré súbory – nastavenia, účty a front ostanú.
+2. Dvakrát klikni na **`Instalacia.bat`**. Cez `winget` nainštaluje Python, FFmpeg, Deno a knižnice (yt-dlp, requests, keyring, pywebview) a na plochu dá ikonu **Kometa**.
    - Ak na konci napíše, že ho treba spustiť ešte raz (pri prvej inštalácii Pythonu), zavri okno a spusti ho znova.
    - Ak sa objaví „Windows ochránil váš počítač“, klikni na **Ďalšie informácie → Spustiť aj tak**.
 3. Kometu spúšťaj ikonou na ploche alebo cez **`Spustit.bat`**. Pri každom spustení sa aktualizuje yt-dlp, pretože stránky sa často menia.
@@ -43,36 +48,44 @@ Treba Python 3.10+, [FFmpeg](https://ffmpeg.org) a [Deno](https://deno.com) (You
 
 ```
 pip install -U -r requirements.txt
-python app.py
+python app.py                # nové rozhranie v okne aplikácie
+python app.py --prehliadac   # to isté v okne prehliadača Edge/Chrome (bez pywebview)
+python app.py --klasicke     # pôvodné jednoduché okno
 ```
+
+Okno aplikácie používa vo Windows WebView2 (súčasť Windows 10/11), v macOS WebKit a v Linuxe GTK alebo Qt. Ak okno nejde otvoriť, Kometa sa sama otvorí v okne prehliadača.
 </details>
 
 ## Používanie
 
-### Karta Sťahovanie
-1. Vlož jeden alebo viac odkazov (každý na nový riadok) alebo klikni na **Vložiť zo schránky**.
-2. Vyber formát a priečinok a klikni na **Stiahnuť**. Odkaz môže byť aj na bežnú stránku (kurz, článok): ak ju yt-dlp nepozná, Kometa ju prehľadá skenerom – jedno video stiahne hneď, viac videí pridá do frontu.
-   - **Playlist / kanál…** (alebo vlož odkaz na playlist či kanál a klikni na Stiahnuť) ukáže zoznam videí; vyber všetky, najnovších N alebo filtruj podľa názvu.
-   - **Prehľadať stránku…** ukáže všetko, čo sa na stránke našlo (prehrávače, streamy, videá, súbory), a ty vyberieš, čo stiahnuť. Pri videu chránenom heslom (Vimeo) ho zadaj dole v okne.
-3. Vo fronte vidíš priebeh, rýchlosť a zostávajúci čas.
-   - **Dvojklik:** hotové otvorí priečinok so súborom, rozbehnuté pozastaví, pozastavené spustí, pri chybe ukáže podrobnosti.
-   - **Pravé tlačidlo:** ďalšie možnosti (kopírovať odkaz, odstrániť…).
+### Sťahovanie
+1. Vlož jeden alebo viac odkazov (každý na nový riadok), klikni na **Vložiť zo schránky**, stlač `Ctrl+V` kdekoľvek v okne alebo odkaz pretiahni z prehliadača. Pod poľom vidíš, čo Kometa v odkazoch rozpoznala.
+2. Vyber formát a klikni na **Stiahnuť** (alebo `Enter`). Odkaz môže byť aj na bežnú stránku (kurz, článok): ak ju yt-dlp nepozná, Kometa ju prehľadá skenerom – jedno video stiahne hneď, viac videí pridá do frontu.
+   - **Playlist alebo kanál** ukáže mriežku videí; vyber všetky, žiadne, najnovších N alebo hľadaj v názvoch.
+   - **Prehľadať stránku** ukáže všetko, čo sa na stránke našlo (prehrávače, streamy, videá, súbory); odporúčané sú vybrané. Pri videu chránenom heslom (Vimeo) ho zadaj dole v okne.
+3. Front je rozdelený na *Sťahuje sa*, *V poradí*, *Nepodarilo sa* a *Hotové*. Pri každej položke je pauza alebo pokračovanie, kopírovanie odkazu a odstránenie; pri hotovej otvorenie priečinka, pri chybe vysvetlenie a **Skúsiť znova**.
 
-### Karta Jazykové stopy (YouTube)
-Pre videá, ktoré majú na YouTube viac zvukových stôp (preklad či dabing). Vlož odkaz, klikni na **Načítať jazyky** a zaškrtni jazyky. Pod zoznamom vidíš výsledné poradie stôp. Vznikne jedno `.mkv` video; jazyk prepneš v prehrávači (VLC: *Zvuk → Zvuková stopa*). Stopy sa dajú pridať aj k videu, ktoré už máš stiahnuté.
+### Jazykové stopy (YouTube)
+Pre videá, ktoré majú na YouTube viac zvukových stôp (preklad či dabing). Vlož odkaz a klikni na **Načítať jazyky**. Predvolené jazyky sú vybrané v tvojom poradí; poradie zmeníš ťahaním alebo šípkami, ďalšie jazyky pridáš kliknutím. Prvá stopa bude predvolená. Vyber, čo vytvoriť – **video s jazykmi**, **jazyky k tvojmu stiahnutému videu** alebo **len zvuk** – a formát **MKV** alebo **MP4**.
+
+- **MKV** udrží všetky stopy vrátane kvalitnejšieho Opus.
+- **MP4** má obraz H.264 a zvuk AAC – prehrá ho takmer každé zariadenie. Stopy Opus sa doň nepridávajú; H.264 dáva YouTube najviac v rozlíšení 1080p.
 
 **Kompatibilný zvuk** (prepínač, predvolene zapnutý): YouTube dáva preklady najmä vo formáte Opus, ktorý niektoré televízory, autorádiá a staršie prehrávače nevedia prehrať. So zapnutým prepínačom má každý jazyk dve stopy:
-1. **AAC** – prehrá ho každý prehrávač; tieto stopy idú prvé v poradí CZ → SK → … a prvá je predvolená. Ak YouTube AAC pre daný jazyk neponúka, Kometa ho prevedie z Opus (FFmpeg, 192 kb/s).
+1. **AAC** – prehrá ho každý prehrávač; tieto stopy idú prvé v tvojom poradí a prvá je predvolená. Pri každom jazyku vidíš, či ho YouTube ponúka priamo („AAC zo zdroja“ – len sa prebalí) alebo sa prevedie z Opus („AAC prevodom“, FFmpeg, 192 kb/s).
 2. **Opus** – tie isté jazyky v lepšej kvalite, s názvom „Opus (vyššia kvalita)“. Lepší prehrávač (VLC, mpv, Kodi) si ich vyberie v menu zvuku.
 
-Keď prepínač vypneš, vo výsledku budú len stopy Opus (menší súbor). Rovnaký prepínač je aj v karte *Účty a nastavenia* a platí pre bežné sťahovanie videí z YouTube.
+Keď prepínač vypneš, vo výsledku budú len stopy Opus (menší súbor). Rovnaký prepínač je v Nastaveniach a platí aj pre bežné sťahovanie videí z YouTube.
 
-### Karta Účty a nastavenia
-- **Webshare / Fastshare:** zadaj meno a heslo a klikni na **Prihlásiť**. Heslo sa uloží do *Správcu poverení Windows*, nikam inam sa neposiela. Na rýchle sťahovanie treba **VIP (Webshare)** alebo **kredit (Fastshare)**. Kometa neobchádza obmedzenia bezplatných účtov.
+### Účty
+- **Webshare / Fastshare:** zadaj meno a heslo a klikni na **Prihlásiť**. Heslo sa uloží do systémovej kľúčenky (vo Windows *Správca poverení*), nikam inam sa neposiela. Na rýchle sťahovanie treba **VIP (Webshare)** alebo **kredit (Fastshare)**. Kometa neobchádza obmedzenia bezplatných účtov.
 - **Stránky po prihlásení** (Instagram, Facebook, platené kurzy, súkromné Vimeo): prihlás sa v prehliadači a tu ho vyber – Kometa použije jeho prihlásenie (cookies) pri sťahovaní aj pri prehľadávaní stránok. Najspoľahlivejší je **Firefox**; Chrome a Edge treba pri sťahovaní zavrieť.
-- **Súčasne sťahovať** (počet súborov naraz) a **Spojenia na jeden súbor** (1–16, predvolene 4).
-- **Kompatibilný zvuk vo videách:** AAC (predvolená stopa) + Opus v jednom `.mkv`. Dá sa vypnúť.
-- Automatické pokračovanie nedokončených sťahovaní po spustení.
+
+### Nastavenia
+- **Vzhľad:** 7 tém (Kometa, Polárna žiara, Súmrak, Les, More, Levanduľa, Grafit) a režim podľa systému, deň alebo noc. Režim prepneš aj ikonami dole v bočnom paneli.
+- **Súčasne sťahovať** (1–6 súborov naraz) a **Spojenia na jeden súbor** (1–16, predvolene 4).
+- **Kompatibilný zvuk vo videách** a **pokračovanie nedokončených sťahovaní po spustení**.
+- **Priečinok na sťahovanie.**
 
 ## Ako funguje pokračovanie sťahovania
 
@@ -86,22 +99,27 @@ py app.py jazyky ODKAZ                         # video + CZ, SK, EN, EN-US, PL, 
 py app.py jazyky ODKAZ --zoznam                # vypíše dostupné jazyky
 py app.py jazyky ODKAZ -j cs sk en -o "D:\Videa"
 py app.py jazyky ODKAZ --zvuk opus             # bez AAC stôp (oboje | aac | opus)
+py app.py jazyky ODKAZ --mp4                   # výsledok ako MP4 (H.264 + AAC)
 py app.py jazyky ODKAZ --k-videu "moje.mp4"    # pridá stopy k stiahnutému videu
 ```
 
 ## Keď niečo nejde
 
 - **YouTube / TikTok zrazu nefunguje:** spusti Kometu znova cez `Spustit.bat` (aktualizuje yt-dlp).
-- **„Obsah vyžaduje prihlásenie“:** v karte *Účty a nastavenia* vyber prehliadač, v ktorom si prihlásený.
-- **Webshare / Fastshare hlási chybu účtu:** v karte *Účty a nastavenia* sa prihlás znova a skontroluj VIP alebo kredit.
+- **„Obsah vyžaduje prihlásenie“:** na stránke *Účty* vyber prehliadač, v ktorom si prihlásený.
+- **Webshare / Fastshare hlási chybu účtu:** na stránke *Účty* sa prihlás znova a skontroluj VIP alebo kredit.
+- **Okno sa neotvorí:** spusti `py app.py --prehliadac` (rozhranie v okne Edge/Chrome) alebo `py app.py --klasicke`.
 - **„Chýba FFmpeg / Deno“:** spusti `Instalacia.bat`.
 
 ## Štruktúra projektu
 
 ```
 app.py               spúšťač (okno aj príkazový riadok)
+ui/                  zdrojový kód rozhrania (Svelte 5 + TypeScript, Vite)
 kometa/
-  gui.py             okno s kartami
+  webui/             preložené rozhranie (vzniká z ui/ príkazom npm run build)
+  webapp.py          okno aplikácie a API pre rozhranie
+  gui.py             pôvodné jednoduché okno (--klasicke)
   fronta.py          front sťahovania, pauza/pokračovanie, uloženie
   httpdl.py          HTTP sťahovanie s pokračovaním (.part + Range) a cez viac spojení (úseky)
   skener.py          skener stránok: vložené prehrávače, streamy, JS/JSON, OpenGraph, JSON-LD, iframe
@@ -109,7 +127,20 @@ kometa/
   media.py           YouTube/Facebook/Instagram/TikTok cez yt-dlp
   jazyky.py          jazykové stopy YouTube a spájanie cez FFmpeg
   common.py          nastavenia, heslá, pomôcky
+jadro/               nové jadro v Ruste (vo vývoji)
 ```
+
+### Vývoj rozhrania
+
+```
+cd ui
+npm ci
+npm run dev      # vývoj (rozhranie sa pripojí k bežiacej Komete: py app.py --bez-okna)
+npm run check    # kontrola typov
+npm run build    # preloží rozhranie do kometa/webui
+```
+
+Preložené rozhranie je súčasťou repozitára, aby Kometa fungovala bez Node.js. CI overuje, že zodpovedá zdrojovému kódu v `ui/`.
 
 ## Vlastné jadro v Ruste (vo vývoji)
 
@@ -121,9 +152,9 @@ cd jadro && cargo build --release
 
 ## Plán ďalšieho vývoja
 
-1. **Titulky a prepis** – lokálny prepis reči (Whisper large-v3-turbo cez faster-whisper), titulky SRT/VTT vložené do MKV, preklad do slovenčiny.
-2. **Sieťový skener + AI pomocník** – voliteľné zachytenie streamov cez Playwright pre stránky skladané JavaScriptom, AI pomocník pri zlyhaní, kapitoly a zhrnutia.
-3. **Vlastný dabing a knižnica** – oddelenie hlasu od hudby (Demucs), slovenský dabing ako ďalšia zvuková stopa, vyhľadávanie vo videách podľa obsahu.
+1. **Jadro v Ruste** – vlastné HLS a DASH, Vimeo a skener stránok, vlastné spájanie stôp do MKV/MP4 bez FFmpeg; jeden program pre Windows, macOS, Linux a Android (rozhranie cez Tauri).
+2. **Titulky a preklad lokálnou AI** – prepis reči, preložené titulky vložené do MKV/MP4. Bez účtu, bez internetu, bez kreditov.
+3. **AI dabing** – preklad zvuku do iného jazyka ako nová zvuková stopa: šablóny hlasov (ženské a mužské, rôzny vek), prirodzený prednes, zachovaná hudba a zvuky pozadia. Podrobný plán a pravidlá (licencie hlasov, ochrana skutočných ľudí, označovanie) sú v [docs/plan-ai.md](docs/plan-ai.md).
 
 ## Upozornenie
 
@@ -131,4 +162,4 @@ Kometa je určená na súkromné použitie. Sťahuj len obsah, na ktorý máš p
 
 ## Licencia
 
-[MIT](LICENSE). Kometa stojí na projektoch [yt-dlp](https://github.com/yt-dlp/yt-dlp) a [FFmpeg](https://ffmpeg.org).
+[MIT](LICENSE). Kometa stojí na projektoch [yt-dlp](https://github.com/yt-dlp/yt-dlp) a [FFmpeg](https://ffmpeg.org); zoznam všetkých cudzích súčastí a ich licencií je v [docs/zdroje.md](docs/zdroje.md).

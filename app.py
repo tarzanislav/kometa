@@ -2,7 +2,12 @@
 # -*- coding: utf-8 -*-
 """Kometa – sťahovanie videí a súborov (spúšťač).
 
-Bez parametrov otvorí okno. Príkazový riadok:
+Bez parametrov otvorí okno (nové rozhranie). Ďalšie možnosti:
+
+    py app.py --klasicke                 # pôvodné jednoduché okno (tkinter)
+    py app.py --prehliadac [--port N]    # rozhranie v okne prehliadača Edge/Chrome (bez pywebview)
+
+Príkazový riadok:
 
     py app.py ODKAZ [ODKAZ …] [-f video|mp4|1080|720|mp3|audio] [-o PRIEČINOK]
     py app.py jazyky ODKAZ [-j cs sk en en-US pl hu] [--len-zvuk] [--k-videu SÚBOR] …
@@ -63,7 +68,24 @@ def cli_download(argv: list[str]) -> int:
 
 def main() -> int:
     args = sys.argv[1:]
-    if not args:
+    if not args or args[0] in ("--prehliadac", "--bez-okna", "--port"):
+        ap = argparse.ArgumentParser(prog="app.py")
+        ap.add_argument("--prehliadac", action="store_true")
+        ap.add_argument("--bez-okna", action="store_true", help="len lokálny server (na testy)")
+        ap.add_argument("--port", type=int, default=0)
+        a = ap.parse_args(args)
+        try:
+            from kometa.webapp import run
+            run(force_browser=a.prehliadac or a.bez_okna, port=a.port, open_window=not a.bez_okna)
+        except SystemExit:
+            raise
+        except Exception:  # noqa: BLE001 – nové rozhranie sa nedá spustiť → pôvodné okno
+            if a.bez_okna:
+                raise
+            from kometa.gui import main as gui
+            gui()
+        return 0
+    if args[0] == "--klasicke":
         from kometa.gui import main as gui
         gui()
         return 0

@@ -1,0 +1,134 @@
+name: Vydanie
+
+# Vydanie vznikne len so súhlasom vlastníka: značkou „v1.2.3“ alebo cez „Run workflow“ na vetve main
+# s číslom verzie (značka potom vznikne až pri zverejnení). Zverejnenie čaká na schválenie
+# v prostredí „release“.
+#
+# Dve úlohy: „build“ skontroluje, otestuje a zabalí (len čítanie, žiadne tajomstvá);
+# „publish“ len zverejní to, čo „build“ vytvoril.
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Verzia (napr. 1.4.0) – vznikne značka v1.4.0 a vydanie z vetvy main'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Kontrola, skúšky a balík
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.verzia.outputs.number }}
+      tag: ${{ steps.verzia.outputs.tag }}
+    steps:
+      - name: Verzia zo značky alebo zo zadania
+        id: verzia
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          TAG: ${{ github.ref_name }}
+          INPUT: ${{ inputs.version }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            [ "$REF" = "refs/heads/main" ] || { echo "::error::Vydanie sa robí len z vetvy main."; exit 1; }
+            tag="v$(echo "$INPUT" | tr -d '[:space:]')"
+          else
+            tag="$TAG"
+          fi
+          [[ "$tag" =~ ^v([0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4})$ ]] || { echo "::error::Verzia nemá tvar 1.2.3."; exit 1; }
+          echo "number=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verzia v programe, v rozhraní a poznámky k vydaniu
+        env:
+          VERSION: ${{ steps.verzia.outputs.number }}
+        run: |
+          grep -qx "__version__ = \"$VERSION\"" kometa/__init__.py || { echo "::error::kometa/__init__.py nemá verziu $VERSION."; exit 1; }
+          grep -q "\"version\": \"$VERSION\"" ui/package.json || { echo "::error::ui/package.json nemá verziu $VERSION."; exit 1; }
+          [ -f "docs/releases/v$VERSION.md" ] || { echo "::error::Chýbajú poznámky docs/releases/v$VERSION.md."; exit 1; }
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Rozhranie zodpovedá zdrojom
+        run: |
+          (cd ui && npm ci --no-audit --no-fund && npm run check && npm run build)
+          [ -z "$(git status --porcelain -- kometa/webui)" ] || { echo "::error::kometa/webui nezodpovedá ui/."; exit 1; }
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - name: Skúšky
+        run: |
+          python -m pip install -r requirements.txt pyflakes
+          python -m pyflakes app.py kometa tests
+          python tests/test_webapp.py
+
+      - name: Balík pre Windows (ZIP) a kontrolné súčty
+        env:
+          VERSION: ${{ steps.verzia.outputs.number }}
+        run: |
+          mkdir release
+          git archive --format=zip --prefix=Kometa/ -o "release/Kometa-$VERSION.zip" HEAD -- . ':!ui' ':!jadro' ':!.github' ':!tests'
+          (cd release && { echo "# Kometa $VERSION"; sha256sum "Kometa-$VERSION.zip"; } > SHA256SUMS.txt)
+          cat release/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: release/
+          if-no-files-found: error
+
+  publish:
+    name: Zverejnenie (po schválení)
+    needs: build
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: release
+
+      - name: Kontrola a zverejnenie
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          TAG: ${{ needs.build.outputs.tag }}
+          EVENT: ${{ github.event_name }}
+          SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          [[ "$VERSION" =~ ^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}$ && "$TAG" == "v$VERSION" ]] || { echo "::error::Verzia a značka nesúhlasia."; exit 1; }
+          cd release
+          [ "$(head -1 SHA256SUMS.txt)" = "# Kometa $VERSION" ] || { echo "::error::Zoznam súčtov nepatrí k verzii."; exit 1; }
+          tail -n +2 SHA256SUMS.txt | sha256sum --check --strict
+          cd ..
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            if gh release view "$TAG" >/dev/null 2>&1; then echo "::error::Vydanie $TAG už existuje."; exit 1; fi
+            target=(--target "$SHA")
+          else
+            target=(--verify-tag)
+          fi
+          gh release create "$TAG" "release/Kometa-$VERSION.zip" release/SHA256SUMS.txt \
+            --title "Kometa $VERSION" --notes-file "docs/releases/v$VERSION.md" "${target[@]}"

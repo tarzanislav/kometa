@@ -58,7 +58,7 @@ class Unsupported(Exception):
     """yt-dlp stránku nepozná – skúsi sa priame stiahnutie súboru."""
 
 
-def download_media(url: str, outdir: Path, preset: str = "video", *, on_progress=None, on_title=None,
+def download_media(url: str, outdir: Path, preset: str = "video", *, on_progress=None, on_title=None, on_meta=None,
                    stop: threading.Event | None = None, log=print, tmp_files: set | None = None,
                    referer: str | None = None, password: str | None = None) -> Path:
     """Stiahne video/zvuk a vráti cestu k výslednému súboru."""
@@ -93,6 +93,10 @@ def download_media(url: str, outdir: Path, preset: str = "video", *, on_progress
             state["title_sent"] = True
             if on_title:
                 on_title(info.get("title"))
+            if on_meta:
+                on_meta({k: v for k, v in (("thumb", info.get("thumbnail")), ("duration", info.get("duration")),
+                                           ("uploader", info.get("uploader") or info.get("channel")))
+                         if v})
         if state["total"] is None:
             req = info.get("requested_formats") or [info]
             sizes = [f.get("filesize") or f.get("filesize_approx") for f in req]

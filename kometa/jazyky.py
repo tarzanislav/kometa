@@ -238,7 +238,7 @@ def count_audio_streams(path: Path) -> int:
 
 
 def mux(out_path: Path, inputs: list[dict], title: str) -> None:
-    """Spojí vstupy do jedného Matroska súboru bez prekódovania.
+    """Spojí vstupy do jedného súboru bez prekódovania – Matroska (.mkv/.mka) alebo MP4 (.mp4/.m4a) podľa prípony.
 
     inputs: {"path", "kind": "existing"|"video"|"audio", "lang3", "title", "audio_count"}
     """
@@ -257,7 +257,8 @@ def mux(out_path: Path, inputs: list[dict], title: str) -> None:
         else:
             maps += ["-map", f"{i}:a:0"]
             meta += [f"-metadata:s:a:{a}", f"language={inp['lang3']}",
-                     f"-metadata:s:a:{a}", f"title={inp['title']}"]
+                     f"-metadata:s:a:{a}", f"title={inp['title']}",
+                     f"-metadata:s:a:{a}", f"handler_name={inp['title']}"]   # názov stopy v MP4
             a += 1
     for inp in inputs:
         if inp["kind"] == "existing":
@@ -270,10 +271,16 @@ def mux(out_path: Path, inputs: list[dict], title: str) -> None:
     disp = []
     for k in range(a):
         disp += [f"-disposition:a:{k}", "default" if k == 0 else "0"]
-    cmd += maps + ["-c", "copy"] + meta + disp + ["-metadata", f"title={title}", str(out_path)]
+    mp4 = out_path.suffix.lower() in (".mp4", ".m4a")
+    cmd += maps + ["-c", "copy"] + meta + disp + ["-metadata", f"title={title}"]
+    if mp4:
+        cmd += ["-movflags", "+faststart"]       # prehrávanie môže začať skôr, než sa súbor celý načíta
+    cmd.append(str(out_path))
     r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", **NO_WINDOW)
     if r.returncode != 0 or not out_path.exists():
-        raise RuntimeError("FFmpeg nedokázal spojiť stopy:\n" + (r.stderr or "").strip()[-1500:])
+        hint = ("MP4 tieto stopy neudrží – vyber formát MKV.\n" if mp4 and re.search(
+            r"codec not currently supported|Could not find tag|not supported in container", r.stderr or "") else "")
+        raise RuntimeError(hint + "FFmpeg nedokázal spojiť stopy:\n" + (r.stderr or "").strip()[-1500:])
 
 
 def to_aac(src: Path, dest: Path, bitrate: str = "192k") -> Path:
@@ -303,7 +310,8 @@ def run_job(job: dict, log=print, progress=lambda frac, text: None, cancel: thre
     """Celý postup: stiahne zvolené stopy (a príp. video) a spojí ich do jedného súboru.
 
     job: info, tracks, outdir, mode ("audio" | "video" | "existing"), existing_path,
-         include_original, keep_separate, max_height
+         include_original, keep_separate, max_height, audio_mode ("oboje" | "aac" | "opus"),
+         kontajner ("mkv" | "mp4" – MP4 má vždy len stopy AAC)
     """
     cancel = cancel or threading.Event()
     info = job["info"]
@@ -327,6 +335,9 @@ def run_job(job: dict, log=print, progress=lambda frac, text: None, cancel: thre
     audio_mode = job.get("audio_mode") or "oboje"
     if audio_mode not in AUDIO_MODES:
         audio_mode = "oboje"
+    mp4 = job.get("kontajner") == "mp4"
+    if mp4:
+        audio_mode = "aac"    # MP4 = najširšia kompatibilita: obraz H.264 a zvuk AAC (Opus by mnohé zariadenia neprehrali)
     total_steps = len(tracks) * (2 if audio_mode == "oboje" else 1) + (1 if mode == "video" else 0) + 1
     state = {"step": 0, "text": ""}
 
@@ -340,8 +351,10 @@ def run_job(job: dict, log=print, progress=lambda frac, text: None, cancel: thre
         if mode == "video":
             h = job.get("max_height")
             fmt = f"bv[height<={h}]/bv/bv*" if h else "bv/bv*"
+            if mp4:   # H.264 (YouTube ho dáva najviac v 1080p); ak chýba, MP4 udrží aj VP9/AV1
+                fmt = (f"bv[vcodec^=avc1][height<={h}]/bv[vcodec^=avc1]/" if h else "bv[vcodec^=avc1]/") + fmt
             state["text"] = "Sťahujem video…"
-            log("⬇ Video" + (f" (max {h}p)" if h else " (najlepšia kvalita)"))
+            log("⬇ Video" + (f" (max {h}p)" if h else " (najlepšia kvalita)") + (" – H.264 pre MP4" if mp4 else ""))
             sub(0)
             video_path = download_format(info, fmt, tmp / "video", log, sub, cancel)
             state["step"] += 1
@@ -390,12 +403,12 @@ def run_job(job: dict, log=print, progress=lambda frac, text: None, cancel: thre
             inputs.append({"path": existing, "kind": "existing", "audio_count": count_audio_streams(existing),
                            "lang3": iso3(original["code"]) if original and original["code"] else None,
                            "title": f"{original['label']} – originál" if original else "Pôvodný zvuk"})
-            out = unique_path(outdir / f"{safe_name(existing.stem)} [{tag}].mkv")
+            out = unique_path(outdir / f"{safe_name(existing.stem)} [{tag}].{'mp4' if mp4 else 'mkv'}")
         elif mode == "video":
             inputs.append({"path": video_path, "kind": "video"})
-            out = unique_path(outdir / f"{safe_name(title)} [{tag}].mkv")
+            out = unique_path(outdir / f"{safe_name(title)} [{tag}].{'mp4' if mp4 else 'mkv'}")
         else:
-            out = unique_path(outdir / f"{safe_name(title)} [{tag}].mka")
+            out = unique_path(outdir / f"{safe_name(title)} [{tag}].{'m4a' if mp4 else 'mka'}")
         # najprv AAC v poradí jazykov (prvá = predvolená, prehrá ju každý prehrávač), potom tie isté jazyky v Opus
         for t, p, codec in files + extra:
             suffix = " – Opus (vyššia kvalita)" if (codec == "opus" and audio_mode == "oboje") else ""
@@ -440,6 +453,7 @@ def cli(argv: list[str]) -> int:
     ap.add_argument("--bez-originalu", action="store_true", help="nepridá pôvodnú stopu (inak je posledná)")
     ap.add_argument("--samostatne", action="store_true", help="uloží aj každý jazyk ako samostatný súbor")
     ap.add_argument("--max-vyska", type=int, metavar="PX", help="max. výška videa, napr. 1080")
+    ap.add_argument("--mp4", action="store_true", help="výsledok ako MP4 (obraz H.264, zvuk AAC) namiesto MKV")
     ap.add_argument("--zvuk", choices=list(AUDIO_MODES), default=None,
                     help="oboje = AAC (predvolená, prehrá každý prehrávač) + Opus; aac = len AAC; opus = len Opus "
                          "(predvolené podľa nastavenia, inak oboje)")
@@ -471,7 +485,8 @@ def cli(argv: list[str]) -> int:
     job = {"info": info, "tracks": chosen, "outdir": a.vystup or cfg["outdir"], "mode": mode,
            "existing_path": a.k_videu, "include_original": not a.bez_originalu,
            "keep_separate": a.samostatne, "max_height": a.max_vyska,
-           "audio_mode": a.zvuk or cfg.get("audio_mode", "oboje")}
+           "audio_mode": a.zvuk or cfg.get("audio_mode", "oboje"),
+           "kontajner": "mp4" if a.mp4 else cfg.get("kontajner", "mkv")}
 
     def progress(frac, text):
         bar = "█" * int(frac * 30)

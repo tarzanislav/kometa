@@ -68,11 +68,8 @@ def check_dependencies() -> dict:
         from yt_dlp.version import __version__ as ytdlp
     except Exception:
         ytdlp = None
-    try:
-        import keyring  # noqa: F401
-        has_keyring = True
-    except Exception:
-        has_keyring = False
+    import importlib.util
+    has_keyring = importlib.util.find_spec("keyring") is not None
     return {
         "yt-dlp": ytdlp,
         "ffmpeg": shutil.which("ffmpeg"),
@@ -219,6 +216,7 @@ DEFAULT_CONFIG = {
     "include_original": True,
     "audio_mode": "oboje",        # oboje = AAC (predvolená) + Opus, aac, opus
     "keep_separate": False,
+    "kontajner": "mkv",           # mkv | mp4 (MP4: obraz H.264 a zvuk AAC)
     "max_height": "Najlepšia",
     # karta Sťahovanie
     "dl_preset": "video",
@@ -226,6 +224,9 @@ DEFAULT_CONFIG = {
     "connections": 4,
     "autoresume": True,
     "cookies_browser": "",
+    # vzhľad (nové rozhranie)
+    "tema": "kometa",
+    "rezim": "auto",              # auto = podľa systému, den, noc
     # účty (heslá sú v Správcovi poverení Windows, nie tu)
     "webshare_user": "",
     "webshare_token": "",

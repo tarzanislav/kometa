@@ -349,7 +349,8 @@ class DownloadQueue:
                 url, outdir, it.get("preset") or "video", stop=stop, log=self.log, tmp_files=tmp,
                 referer=referer, password=it.get("password") or None,
                 on_progress=lambda d, t, s: (self._update(iid, tmp=sorted(tmp)), progress(d, t, s)),
-                on_title=lambda title: self._update(iid, title=title))
+                on_title=lambda title: self._update(iid, title=title),
+                on_meta=lambda meta: self._update(iid, **meta))
         except media.Unsupported:
             if it.get("from_scan") or known_site:
                 raise HostError("Na tejto stránke sa nenašlo video ani súbor na stiahnutie.") from None

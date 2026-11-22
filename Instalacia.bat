@@ -34,7 +34,10 @@ if not defined PY (
   pause
   exit /b 0
 )
-%PY% -m pip install --disable-pip-version-check -U -r "%~dp0requirements.txt"
+%PY% -m pip install --disable-pip-version-check -U -r "%~dp0requirements.txt" || (
+  echo  Okno aplikacie ^(pywebview^) sa nenainstalovalo - Kometa sa otvori v okne prehliadaca Edge.
+  %PY% -m pip install --disable-pip-version-check -U "yt-dlp[default]" requests keyring
+)
 echo.
 echo  [5/5] Zastupca "Kometa" na ploche...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$d=[Environment]::GetFolderPath('Desktop'); $s=(New-Object -ComObject WScript.Shell).CreateShortcut(\"$d\Kometa.lnk\"); $s.TargetPath='%~dp0Spustit.bat'; $s.WorkingDirectory='%~dp0'; $s.IconLocation='%~dp0assets\kometa.ico'; $s.WindowStyle=7; $s.Description='Kometa - stahovanie videi a suborov'; $s.Save()"

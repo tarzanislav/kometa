@@ -1,0 +1,281 @@
+<script lang="ts">
+  import { app, nastav, noc, skus } from '../lib/app.svelte'
+  import { TEMY } from '../lib/temy'
+  import Ikona from '../components/Ikona.svelte'
+  import Prepinac from '../components/Prepinac.svelte'
+  import Segment from '../components/Segment.svelte'
+  import NahladTemy from './NahladTemy.svelte'
+
+  const n = $derived(app.nastavenia!)
+  let rezim = $state(app.nastavenia?.rezim ?? 'auto')
+  $effect(() => {
+    rezim = app.nastavenia?.rezim ?? 'auto'
+  })
+
+  function cislo(kluc: 'parallel' | 'connections', v: number, min: number, max: number) {
+    nastav({ [kluc]: Math.max(min, Math.min(max, v)) })
+  }
+
+  async function zmenitPriecinok() {
+    const p = await skus<string>('vybrat_priecinok')
+    if (p && app.nastavenia) app.nastavenia.outdir = p
+  }
+</script>
+
+<div class="stranka">
+  <header>
+    <h1>Nastavenia</h1>
+  </header>
+
+  <section aria-labelledby="h-vzhlad">
+    <div class="sekcia-hlava">
+      <h2 id="h-vzhlad">Vzhľad</h2>
+      <Segment
+        popis="Režim"
+        bind:hodnota={rezim}
+        zmena={(v) => nastav({ rezim: v })}
+        moznosti={[
+          { id: 'auto', text: 'Podľa systému', ikona: 'auto' },
+          { id: 'den', text: 'Deň', ikona: 'slnko' },
+          { id: 'noc', text: 'Noc', ikona: 'mesiac' },
+        ]}
+      />
+    </div>
+    <div class="temy" role="radiogroup" aria-label="Farebná téma">
+      {#each TEMY as t (t.id)}
+        <button
+          class="tema"
+          role="radio"
+          aria-checked={n.tema === t.id}
+          onclick={() => nastav({ tema: t.id })}
+        >
+          <NahladTemy tema={t.id} noc={noc()} />
+          <span class="popis-temy">
+            <span class="nazov-temy">{t.nazov}{#if n.tema === t.id}<Ikona meno="fajka" velkost={16} hrubka={2.2} />{/if}</span>
+            <span class="male tlmene">{t.popis}</span>
+          </span>
+        </button>
+      {/each}
+    </div>
+  </section>
+
+  <section class="plocha blok" aria-labelledby="h-stahovanie">
+    <h2 id="h-stahovanie">Sťahovanie</h2>
+    <div class="riadky">
+      <div class="nastavenie">
+        <div>
+          <span class="nazov">Súčasne sťahovať</span>
+          <span class="male tlmene">Koľko súborov naraz.</span>
+        </div>
+        <div class="krokovac" role="group" aria-label="Súčasne sťahovať">
+          <button class="tl ikona" aria-label="Menej" onclick={() => cislo('parallel', n.parallel - 1, 1, 6)} disabled={n.parallel <= 1}>
+            <Ikona meno="minus" velkost={16} />
+          </button>
+          <span class="cisla">{n.parallel}</span>
+          <button class="tl ikona" aria-label="Viac" onclick={() => cislo('parallel', n.parallel + 1, 1, 6)} disabled={n.parallel >= 6}>
+            <Ikona meno="plus" velkost={16} />
+          </button>
+        </div>
+      </div>
+      <div class="nastavenie">
+        <div>
+          <label class="nazov" for="spojenia">Spojenia na jeden súbor</label>
+          <span class="male tlmene">Viac spojení zrýchli veľké súbory a streamy. Ak server protestuje, Kometa ich sama ubere.</span>
+        </div>
+        <div class="posuvnik">
+          <input
+            id="spojenia"
+            type="range"
+            min="1"
+            max="16"
+            value={n.connections}
+            onchange={(e) => cislo('connections', +(e.currentTarget as HTMLInputElement).value, 1, 16)}
+            oninput={(e) => app.nastavenia && (app.nastavenia.connections = +(e.currentTarget as HTMLInputElement).value)}
+          />
+          <span class="cisla">{n.connections}</span>
+        </div>
+      </div>
+      <Prepinac
+        nazov="Kompatibilný zvuk vo videách"
+        zapnute={n.audio_mode !== 'opus'}
+        popis="Videá z YouTube dostanú zvuk AAC, ktorý prehrá každý prehrávač, a navyše kvalitnejší Opus – oboje v jednom MKV."
+        zmena={(v) => nastav({ audio_mode: v ? 'oboje' : 'opus' })}
+      />
+      <Prepinac
+        nazov="Po spustení pokračovať v nedokončených"
+        zapnute={n.autoresume}
+        popis="Rozpracované sťahovanie sa po zapnutí Komety samo rozbehne."
+        zmena={(v) => nastav({ autoresume: v })}
+      />
+    </div>
+  </section>
+
+  <section class="plocha blok" aria-labelledby="h-priecinok">
+    <h2 id="h-priecinok">Priečinok na sťahovanie</h2>
+    <div class="priecinok">
+      <Ikona meno="priecinok" velkost={20} />
+      <span class="cesta vyber-text" title={n.outdir}>{n.outdir}</span>
+      <button class="tl" onclick={zmenitPriecinok}>Zmeniť…</button>
+      <button class="tl tiche" onclick={() => skus('otvorit')}>Otvoriť</button>
+    </div>
+  </section>
+
+  <section class="o-programe" aria-label="O programe">
+    <p class="male tlmene">
+      Kometa {app.init?.verzia} – otvorený zdrojový kód pod licenciou MIT.
+      <a href="https://github.com/tarzanislav/kometa" target="_blank" rel="noreferrer">github.com/tarzanislav/kometa</a>
+    </p>
+    {#if app.init?.chyba_ffmpeg}
+      <p class="male pozor"><Ikona meno="pozor" velkost={16} /> Chýba FFmpeg – spájanie stôp nebude fungovať. Spusti Instalacia.bat.</p>
+    {/if}
+  </section>
+</div>
+
+<style>
+  .stranka {
+    max-width: 1000px;
+    padding: var(--s8) var(--s8) var(--s10);
+  }
+  section {
+    margin-top: var(--s6);
+  }
+  .sekcia-hlava {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s3);
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--s4);
+  }
+  .temy {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
+    gap: var(--s3);
+  }
+  .tema {
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--panel);
+    color: var(--ink);
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+  }
+  .tema:hover {
+    border-color: var(--line-strong);
+  }
+  .tema[aria-checked='true'] {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent);
+  }
+  .popis-temy {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: var(--s2) var(--s3) var(--s3);
+  }
+  .nazov-temy {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 700;
+    color: var(--ink);
+  }
+  .nazov-temy :global(svg) {
+    color: var(--accent-ink);
+  }
+  .blok {
+    padding: var(--s5);
+  }
+  .blok h2 {
+    margin-bottom: var(--s4);
+  }
+  .riadky {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s5);
+  }
+  .nastavenie {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s5);
+  }
+  .nastavenie > div:first-child {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-width: 62ch;
+  }
+  .nazov {
+    font-weight: 600;
+  }
+  .krokovac {
+    display: flex;
+    align-items: center;
+    gap: var(--s1);
+    padding: 2px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-ctl);
+  }
+  .krokovac span {
+    min-width: 26px;
+    text-align: center;
+    font: 650 var(--t-l) / 1 var(--font-display);
+  }
+  .krokovac .tl {
+    width: 30px;
+    height: 30px;
+  }
+  .posuvnik {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+  }
+  .posuvnik span {
+    min-width: 22px;
+    font: 650 var(--t-l) / 1 var(--font-display);
+  }
+  input[type='range'] {
+    width: 200px;
+    accent-color: var(--accent);
+  }
+  .priecinok {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    color: var(--accent-ink);
+  }
+  .cesta {
+    flex: 1;
+    min-width: 0;
+    color: var(--ink);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .o-programe {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s2);
+  }
+  .pozor {
+    display: flex;
+    gap: var(--s2);
+    align-items: center;
+    color: var(--warn);
+    font-weight: 600;
+  }
+  @media (max-width: 860px) {
+    .stranka {
+      padding: var(--s5) var(--s4) var(--s8);
+    }
+    .nastavenie {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+  }
+</style>
