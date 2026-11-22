@@ -165,7 +165,9 @@ jobs:
           for f in *; do
             case "$f" in *"$VERSION"*) ;; *) echo "::error::$f nemá v názve verziu $VERSION."; exit 1 ;; esac
           done
-          { echo "# Kometa $VERSION"; sha256sum -- *; } > SHA256SUMS.txt
+          subory=(*)   # zoznam pred vytvorením SHA256SUMS.txt – inak by v ňom bol aj on sám
+          { echo "# Kometa $VERSION"; sha256sum -- "${subory[@]}"; } > ../SHA256SUMS.txt
+          mv ../SHA256SUMS.txt SHA256SUMS.txt
           cat SHA256SUMS.txt
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
