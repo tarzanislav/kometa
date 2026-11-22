@@ -30,6 +30,32 @@
     "longDescription": "Kometa sťahuje videá zo stránok, Vimeo, streamy HLS a DASH, súbory, Webshare a Fastshare. Vlastné jadro v Ruste spája obraz a zvuk bez FFmpeg.",
     "copyright": "© tarzanislav, licencia MIT",
     "license": "MIT",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"]
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "publisher": "tarzanislav",
+    "homepage": "https://github.com/tarzanislav/kometa",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      }
+    },
+    "macOS": {
+      "signingIdentity": "-",
+      "minimumSystemVersion": "11.0"
+    },
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0"
+        ]
+      }
+    }
   }
 }

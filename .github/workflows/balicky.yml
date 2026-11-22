@@ -1,0 +1,91 @@
+name: Balíky aplikácie
+
+# Inštalačné balíky aplikácie s jadrom v Ruste (Tauri) a samostatný program `kometa`.
+# Volá ho „Vydanie“ pred zverejnením. Ručné spustenie (Run workflow) je len skúška –
+# balíky ostanú ako artefakty behu, nič sa nezverejní.
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  balik:
+    name: Balík (${{ matrix.nazov }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-2025, nazov: windows }
+          - { os: macos-15, nazov: macos }
+          # staršie Ubuntu = AppImage beží aj na starších distribúciách (glibc)
+          - { os: ubuntu-22.04, nazov: linux }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Linux – WebKitGTK
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libwebkit2gtk-4.1-dev libsoup-3.0-dev libgtk-3-dev librsvg2-dev libxdo-dev file
+      - name: macOS – Apple Silicon aj Intel
+        if: runner.os == 'macOS'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Tauri CLI (pevná verzia)
+        shell: bash
+        run: npm install --prefix "$RUNNER_TEMP/tauri" --no-audit --no-fund @tauri-apps/cli@2.12.6
+
+      - name: Aplikácia
+        shell: bash
+        working-directory: aplikacia
+        run: |
+          tauri="$RUNNER_TEMP/tauri/node_modules/.bin/tauri"
+          case "$RUNNER_OS" in
+            Windows) "$tauri" build --ci --bundles nsis ;;
+            macOS)   "$tauri" build --ci --bundles dmg --target universal-apple-darwin ;;
+            Linux)   "$tauri" build --ci --bundles appimage,deb ;;
+          esac
+
+      - name: Samostatný program kometa
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then
+            cargo build --locked --release -p kometa-jadro --target aarch64-apple-darwin
+            cargo build --locked --release -p kometa-jadro --target x86_64-apple-darwin
+            lipo -create -output kometa-macos target/aarch64-apple-darwin/release/kometa target/x86_64-apple-darwin/release/kometa
+          else
+            cargo build --locked --release -p kometa-jadro
+          fi
+
+      - name: Zbieranie
+        shell: bash
+        run: |
+          v="$(sed -n 's/^version = "\(.*\)"/\1/p' aplikacia/Cargo.toml | head -1)"
+          mkdir dist
+          case "$RUNNER_OS" in
+            Windows)
+              cp target/release/bundle/nsis/*-setup.exe "dist/Kometa-$v-windows-x64-setup.exe"
+              cp target/release/kometa.exe "dist/kometa-$v-windows-x64.exe" ;;
+            macOS)
+              cp target/universal-apple-darwin/release/bundle/dmg/*.dmg "dist/Kometa-$v-macos.dmg"
+              cp kometa-macos "dist/kometa-$v-macos" ;;
+            Linux)
+              cp target/release/bundle/appimage/*.AppImage "dist/Kometa-$v-linux-x86_64.AppImage"
+              cp target/release/bundle/deb/*.deb "dist/Kometa-$v-linux-amd64.deb"
+              cp target/release/kometa "dist/kometa-$v-linux-x86_64" ;;
+          esac
+          ls -la dist
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: balik-${{ matrix.nazov }}
+          path: dist/
+          if-no-files-found: error
