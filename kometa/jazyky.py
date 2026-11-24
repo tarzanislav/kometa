@@ -18,7 +18,7 @@ import unicodedata
 from pathlib import Path
 
 from .common import (DEFAULT_LANGS, NO_WINDOW, Cancelled, check_dependencies, format_duration,
-                     load_config, safe_name, unique_path, ydl_opts)
+                     load_config, reserve_path, safe_name, unique_path, ydl_opts)
 
 # --------------------------------------------------------------------------- #
 #  Jazyky
@@ -414,19 +414,24 @@ def run_job(job: dict, log=print, progress=lambda frac, text: None, cancel: thre
             inputs.append({"path": existing, "kind": "existing", "audio_count": count_audio_streams(existing),
                            "lang3": iso3(original["code"]) if original and original["code"] else None,
                            "title": f"{original['label']} – originál" if original else "Pôvodný zvuk"})
-            out = unique_path(outdir / f"{safe_name(existing.stem)} [{tag}].{'mp4' if mp4 else 'mkv'}")
+            out = reserve_path(outdir / f"{safe_name(existing.stem)} [{tag}].{'mp4' if mp4 else 'mkv'}")
         elif mode == "video":
             inputs.append({"path": video_path, "kind": "video"})
-            out = unique_path(outdir / f"{safe_name(title)} [{tag}].{'mp4' if mp4 else 'mkv'}")
+            out = reserve_path(outdir / f"{safe_name(title)} [{tag}].{'mp4' if mp4 else 'mkv'}")
         else:
-            out = unique_path(outdir / f"{safe_name(title)} [{tag}].{'m4a' if mp4 else 'mka'}")
+            out = reserve_path(outdir / f"{safe_name(title)} [{tag}].{'m4a' if mp4 else 'mka'}")
         # CZ (AAC), CZ (Opus), SK (AAC), SK (Opus)… – prvá je predvolená
         for t, got in per_lang:
             for p, codec in got:
                 suffix = (" – AAC" if codec == "aac" else " – Opus") if len(got) > 1 else ""
                 inputs.append({"path": p, "kind": "audio", "lang3": iso3(t["code"]),
                                "title": t["label"] + (" – originál" if t["original"] else "") + suffix})
-        mux(out, inputs, title)
+        try:
+            mux(out, inputs, title)
+        except BaseException:
+            if out.exists() and out.stat().st_size == 0:   # zabraný názov uvoľniť
+                out.unlink()
+            raise
 
         if job.get("keep_separate"):
             for t, got in per_lang:

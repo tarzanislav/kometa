@@ -18,7 +18,7 @@ YouTube · Vimeo (aj vložené) · Facebook · Instagram · TikTok (bez vodoznak
 - **Webshare.cz a Fastshare.cz** cez tvoj vlastný účet (Webshare cez oficiálne API).
 - **Pokračovanie prerušeného sťahovania.** Pri pauze, výpadku siete aj po zatvorení programu sa pokračuje od miesta, kde sa skončilo. Keď odkaz z úložiska vyprší, Kometa si vypýta nový.
 - **Front sťahovania**: viac súborov naraz, pauza a pokračovanie, front ostane uložený aj po reštarte.
-- **Jazykové stopy z YouTube**: z videí s preloženým zvukom stiahne vybrané jazyky a spojí ich s videom do jedného `.mkv` alebo `.mp4`. Predvolené poradie je CZ, SK, EN, PL, HU, RU (zmeníš ho ťahaním) a pôvodná stopa ide na koniec. Pri každom jazyku zvolíš AAC, Opus alebo oboje; stopy idú po jazykoch – CZ (AAC), CZ (Opus), SK (AAC)…
+- **Jazykové stopy z YouTube**: z videí s preloženým zvukom stiahne vybrané jazyky a spojí ich s videom do jedného `.mkv` alebo `.mp4`. Predvolené poradie je CZ, SK, EN, PL, HU, RU (zmeníš ho ťahaním) a pôvodná stopa ide na koniec. Pri každom jazyku zvolíš AAC, Opus alebo oboje; stopy idú po jazykoch – CZ (AAC), CZ (Opus), SK (AAC)… Jazyky zvolíš aj pre celý playlist či kanál naraz.
 - Formáty: najlepšia kvalita, MP4 pre TV a mobil, najviac 1080p alebo 720p, MP3, zvuk v pôvodnej kvalite.
 
 | Jazykové stopy | Nastavenia a témy |
@@ -85,7 +85,7 @@ Okno aplikácie používa vo Windows WebView2 (súčasť Windows 10/11), v macOS
 ### Sťahovanie
 1. Vlož jeden alebo viac odkazov (každý na nový riadok), klikni na **Vložiť zo schránky**, stlač `Ctrl+V` kdekoľvek v okne alebo odkaz pretiahni z prehliadača. Pod poľom vidíš, čo Kometa v odkazoch rozpoznala.
 2. Vyber formát a klikni na **Stiahnuť** (alebo `Enter`). Odkaz môže byť aj na bežnú stránku (kurz, článok): ak ju yt-dlp nepozná, Kometa ju prehľadá skenerom – jedno video stiahne hneď, viac videí pridá do frontu.
-   - **Playlist alebo kanál** ukáže mriežku videí; vyber všetky, žiadne, najnovších N alebo hľadaj v názvoch.
+   - **Playlist alebo kanál** ukáže mriežku videí; vyber všetky, žiadne, najnovších N alebo hľadaj v názvoch. Pri YouTube zvoľ dole formát **Video s jazykovými stopami** a nad videami sa ukáže výber jazykov pre všetky vybrané videá naraz (viac nižšie).
    - **Prehľadať stránku** ukáže všetko, čo sa na stránke našlo (prehrávače, streamy, videá, súbory); odporúčané sú vybrané. Pri videu chránenom heslom (Vimeo) ho zadaj dole v okne.
 3. Front je rozdelený na *Sťahuje sa*, *V poradí*, *Nepodarilo sa* a *Hotové*. Pri každej položke je pauza alebo pokračovanie, kopírovanie odkazu a odstránenie; pri hotovej otvorenie priečinka, pri chybe vysvetlenie a **Skúsiť znova**.
 
@@ -104,6 +104,10 @@ Pre videá, ktoré majú na YouTube viac zvukových stôp (preklad či dabing). 
 Voľba **Zvuk pre všetky jazyky** nastaví všetky jazyky naraz a **pri každom jazyku** ju môžeš zmeniť zvlášť (napr. čeština AAC + Opus, slovenčina len AAC). Stopy idú vo výsledku po jazykoch: **CZ (AAC) → CZ (Opus) → SK (AAC) → SK (Opus) → EN (AAC) → EN (Opus)…** a prvá je predvolená. Predvolené poradie jazykov je **CZ, SK, EN, PL, HU, RU**; ďalšie jazyky, ktoré pridáš, idú za nimi. Ak video nemá stopu „EN“, ale má viac variantov angličtiny, vyberie sa americká (EN-US), inak britská.
 
 Prevod do AAC potrebuje FFmpeg (Kometa pre Python ho má vždy; aplikácia bez neho nechá Opus a povie to). Rovnaká voľba zvuku je v Nastaveniach a platí aj pre bežné sťahovanie videí z YouTube.
+
+**Celý playlist alebo kanál s jazykmi.** V karte *Sťahovanie* klikni na **Playlist alebo kanál**, vyber videá a dole formát **Video s jazykovými stopami**. Nad videami sa ukáže rovnaký výber ako pri jednom videu – poradie jazykov, AAC/Opus pre všetky aj pre každý jazyk zvlášť, video alebo len zvuk, MKV alebo MP4, kvalita a pôvodná stopa na koniec. Jazyky sa nezisťujú vopred: každé video dostane tie z vybraných jazykov, ktoré naozaj má, v zvolenom poradí; ktoré chýbajú, uvidíš v zázname. Pre video bez žiadneho z vybraných jazykov zvolíš **Stiahnuť s pôvodným zvukom** alebo **Preskočiť**. Pri položke vo fronte vidno, aké jazyky sa sťahujú, a priebeh ukazuje aj krok (napr. „Sťahujem: Slovenčina (2/4)…“).
+
+Formát **Video s jazykmi** je aj v bežnom zozname formátov – vtedy sa pre každý vložený odkaz z YouTube použijú jazyky a voľby z karty *Jazykové stopy*. Odkazy z iných stránok sa stiahnu ako obyčajné video.
 
 ### Účty
 - **Webshare / Fastshare:** zadaj meno a heslo a klikni na **Prihlásiť**. Heslo sa uloží do systémovej kľúčenky (vo Windows *Správca poverení*), nikam inam sa neposiela. Na rýchle sťahovanie treba **VIP (Webshare)** alebo **kredit (Fastshare)**. Kometa neobchádza obmedzenia bezplatných účtov.

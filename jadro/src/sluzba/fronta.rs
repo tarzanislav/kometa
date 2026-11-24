@@ -21,6 +21,34 @@ pub enum Stav {
     Rozbalene,
 }
 
+/// Jazykové stopy pre položku frontu (playlist, kanál, alebo video s voľbou „Video s jazykmi“).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct VolbyJazykov {
+    /// želané jazyky v poradí (napr. cs, sk, en); video ich má len niektoré
+    pub poradie: Vec<String>,
+    /// pridať pôvodnú stopu na koniec
+    #[serde(default)]
+    pub original: bool,
+    /// zvuk pre všetky jazyky: "oboje" | "aac" | "opus"
+    #[serde(default)]
+    pub zvuk: String,
+    /// voľba pri jednotlivých jazykoch
+    #[serde(default)]
+    pub zvuky: HashMap<String, String>,
+    /// "mkv" | "mp4"
+    #[serde(default)]
+    pub kontajner: String,
+    /// "Najlepšia", "1080p", …
+    #[serde(default)]
+    pub kvalita: String,
+    /// "video" | "audio"
+    #[serde(default)]
+    pub rezim: String,
+    /// keď video nemá žiadny z jazykov: "povodny" (stiahnuť s pôvodným zvukom) | "preskocit"
+    #[serde(default)]
+    pub bez_jazykov: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Polozka {
     pub id: String,
@@ -64,6 +92,15 @@ pub struct Polozka {
     /// rozpracované súbory yt-dlp (na zmazanie pri odstránení)
     #[serde(default)]
     pub docasne: Vec<String>,
+    /// jazykové stopy (YouTube) – inak bežné sťahovanie
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jazyky: Option<VolbyJazykov>,
+    /// podiel hotovej práce, keď sa nedá rátať v bajtoch (jazyky: viac súborov za sebou)
+    #[serde(skip)]
+    pub podiel: Option<f64>,
+    /// čo sa práve robí (napr. „Sťahujem: Čeština (2/3)“)
+    #[serde(skip)]
+    pub krok: String,
 }
 
 /// Čo pridať do frontu.
@@ -77,6 +114,7 @@ pub struct Nova {
     pub referer: String,
     pub heslo: String,
     pub zo_skenu: bool,
+    pub jazyky: Option<VolbyJazykov>,
 }
 
 pub struct Beh {
@@ -206,6 +244,9 @@ impl Fronta {
                 dlzka: None,
                 autor: String::new(),
                 docasne: vec![],
+                jazyky: n.jazyky,
+                podiel: None,
+                krok: String::new(),
             });
             pridane.push(id);
         }

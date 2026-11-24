@@ -246,7 +246,7 @@ def zakladne(o: Okno, out: Path):
     skontroluj("neznáma akcia", o.volaj("zmaz_disk") == {"ok": False, "chyba": "Neznáma akcia."})
     i = o.data("init")
     skontroluj("init: jadro v Ruste a čo vie", i["jadro"] == "rust" and i["funkcie"]["jazyky"] is True
-               and i["funkcie"]["ucty"] and len(i["formaty"]) == 6 and i["nastavenia"]["tema"] == "les", i)
+               and i["funkcie"]["ucty"] and len(i["formaty"]) == 7 and i["nastavenia"]["tema"] == "les", i)
     n = o.data("ulozit_nastavenia", {"outdir": str(out), "parallel": 99, "connections": "3", "heslo": "x"})
     ulozene = json.loads((o.priecinok / "nastavenia.json").read_text(encoding="utf-8"))
     skontroluj("nastavenia: kontrola hodnôt, neznáme kľúče okna zahodené, vlastné ostanú",
@@ -521,6 +521,41 @@ def jazyky(out: Path):
         p = prud(f) if f else []
         skontroluj("len zvuk: Slovenčina v Opus do MKA", s["text"] == "Hotovo" and f.suffix == ".mka"
                    and p == [("audio", "opus", "slo", "Slovenčina", 1)], (s, p))
+
+        # playlist alebo kanál: jazyky pre viac videí naraz – každé video samostatne vo fronte
+        yt = lambda i: f"https://www.youtube.com/watch?v={i * 11}"  # noqa: E731
+        volby = {"poradie": ["sk", "cs"], "original": False, "zvuk": "oboje", "zvuky": {"sk": "aac"},
+                 "kontajner": "mkv", "kvalita": "Najlepšia", "rezim": "video", "bez_jazykov": "povodny"}
+        r = o.data("pridat_vybrane", [{"url": yt("a"), "title": "Prvé"}, {"url": yt("b"), "title": "Druhé"}],
+                   "video", "Kanál", volby)
+        hotove = lambda s, u: (polozka(s, u) or {}).get("stav") in ("hotovo", "chyba")  # noqa: E731
+        s = o.cakaj(lambda s: hotove(s, yt("a")) and hotove(s, yt("b")), 120)
+        a, b = polozka(s, yt("a")), polozka(s, yt("b"))
+        cakane = [("video", "vp9", "", "", 1), ("audio", "aac", "slo", "Slovenčina", 1),
+                  ("audio", "aac", "cze", "Čeština – AAC", 0), ("audio", "opus", "cze", "Čeština – Opus", 0)]
+        pa = prud(out / "jz" / "Kanál" / a["subor"]) if a["subor"] else []
+        pb = prud(out / "jz" / "Kanál" / b["subor"]) if b["subor"] else []
+        skontroluj("playlist s jazykmi: každé video SK (len AAC) → CZ (AAC, Opus), do priečinka kanála",
+                   r["pridane"] == 2 and a["stav"] == b["stav"] == "hotovo" and pa == cakane and pb == cakane
+                   and a["format"] == "jazyky" and a["subor"] != b["subor"], (r, a, b, pa))
+        skontroluj("položka ukáže voľby jazykov", (a.get("jazyky") or "").startswith("SK, CS · AAC + Opus · MKV"), a)
+        o.data("pridat_vybrane", [{"url": yt("c"), "title": "Tretie"}], "video", "", dict(volby, poradie=["de"],
+                                                                                         bez_jazykov="preskocit"))
+        s = o.cakaj(lambda s: hotove(s, yt("c")), 60)
+        skontroluj("video bez vybraných jazykov sa dá preskočiť", polozka(s, yt("c"))["stav"] == "chyba"
+                   and "preskočené" in polozka(s, yt("c"))["chyba"], polozka(s, yt("c")))
+        o.data("pridat_vybrane", [{"url": yt("d"), "title": "Štvrté"}], "video", "", dict(volby, poradie=["de"]))
+        s = o.cakaj(lambda s: hotove(s, yt("d")), 60)
+        d = polozka(s, yt("d"))
+        pd = prud(out / "jz" / d["subor"]) if d["subor"] else []
+        skontroluj("video bez vybraných jazykov: s pôvodným zvukom", d["stav"] == "hotovo"
+                   and [x[2:4] for x in pd[1:]] == [("eng", "Angličtina – originál – AAC"),
+                                                    ("eng", "Angličtina – originál – Opus")], (d, pd))
+        o.data("pridat", yt("e"), "jazyky")
+        s = o.cakaj(lambda s: hotove(s, yt("e")), 60)
+        e = polozka(s, yt("e"))
+        skontroluj("bežné sťahovanie „Video s jazykmi“ podľa nastavení", e["stav"] == "hotovo" and e["format"] == "jazyky"
+                   and len(prud(out / "jz" / e["subor"])) >= 2, e)
     finally:
         o.zatvor()
     o = Okno(D / "cfg-jz2", KOMETA_YTDLP=str(nastroj), KOMETA_FFMPEG="nie")

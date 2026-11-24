@@ -23,8 +23,9 @@ pub const TEMY: [&str; 7] = [
 pub const KVALITY: [&str; 6] = ["Najlepšia", "2160p", "1440p", "1080p", "720p", "480p"];
 
 /// Formáty sťahovania: (kľúč, popis). Rovnaké kľúče ako v Pythone.
-pub const FORMATY: [(&str, &str); 6] = [
+pub const FORMATY: [(&str, &str); 7] = [
     ("video", "Video – najlepšia kvalita"),
+    ("jazyky", "Video s jazykmi (YouTube, podľa karty Jazyky)"),
     ("mp4", "Video – MP4 pre TV a mobil (H.264)"),
     ("1080", "Video – najviac 1080p"),
     ("720", "Video – najviac 720p"),

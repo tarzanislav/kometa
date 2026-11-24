@@ -2,6 +2,7 @@
   import { volaj, ChybaJadra } from '../lib/api'
   import { app, nastav, skus, toast } from '../lib/app.svelte'
   import { dlzka, kratkyKod, pocet } from '../lib/format'
+  import { ZVUKY, priorita, type Zvuk } from '../lib/jazyky'
   import type { Stopa, VideoJazyky } from '../lib/typy'
   import Ikona from '../components/Ikona.svelte'
   import Kometa from '../components/Kometa.svelte'
@@ -26,18 +27,6 @@
   let zvukVsetky = $state<Zvuk>(n.audio_mode ?? 'oboje')
   let zvuky = $state<Record<string, Zvuk>>({})
 
-  type Zvuk = 'oboje' | 'aac' | 'opus'
-  const ZVUKY: { id: Zvuk; text: string }[] = [
-    { id: 'oboje', text: 'AAC + Opus' },
-    { id: 'aac', text: 'Len AAC' },
-    { id: 'opus', text: 'Len Opus' },
-  ]
-  /** Poradie jazykov: CZ, SK, EN, PL, HU, RU – ostatné za nimi. */
-  const PRIORITA = ['cs', 'sk', 'en', 'pl', 'hu', 'ru']
-  const priorita = (kod: string) => {
-    const i = PRIORITA.indexOf(kod.toLowerCase().split('-')[0])
-    return i < 0 ? Infinity : i
-  }
   const uloha = $derived(app.stav?.jazyky)
   const stopy = $derived(video?.stopy ?? [])
   const podlaKodu = $derived(new Map(stopy.map((s) => [s.kod, s])))

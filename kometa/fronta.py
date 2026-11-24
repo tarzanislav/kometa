@@ -119,7 +119,7 @@ class DownloadQueue:
     # ---------- ovládanie ----------
     def add(self, urls: list[str], preset: str, outdir: str, *, referer: str | None = None,
             password: str | None = None, titles: list[str] | None = None, providers: list[str] | None = None,
-            from_scan: bool = False) -> list[str]:
+            from_scan: bool = False, jazyky: dict | None = None) -> list[str]:
         new = []
         with self._lock:
             known = {self.items[i]["url"] for i in self.order if self.items[i]["status"] != "hotovo"}
@@ -137,6 +137,8 @@ class DownloadQueue:
                                    "done": 0, "total": None, "speed": 0, "file": "", "dest": "", "tmp": [],
                                    "error": "", "added": time.time(), "referer": referer or "",
                                    "password": password or "", "from_scan": from_scan}
+                if jazyky:
+                    self.items[iid]["jazyky"] = dict(jazyky)
                 self.order.append(iid)
                 new.append(iid)
         self.save()
@@ -268,6 +270,9 @@ class DownloadQueue:
             with self._lock:
                 cur = self.items.get(iid)
                 if cur:
+                    size = path.stat().st_size if path.exists() else None
+                    if cur.get("jazyky") and size:
+                        cur.update(total=size, done=size, frac=None, step="")
                     cur.update(status="hotovo", file=str(path), speed=0, tmp=[],
                                done=cur.get("total") or cur.get("done"), title=cur.get("title") or path.name)
             self.log(f"✔ Hotovo: {path.name}")
@@ -287,6 +292,10 @@ class DownloadQueue:
 
     # ---------- samotné sťahovanie ----------
     def _process(self, iid: str, it: dict, stop: threading.Event) -> Path | None:
+        if it.get("jazyky"):
+            path = self._jazyky(iid, it, stop)
+            if path is not None:
+                return path
         url, outdir = it["url"], Path(it["outdir"])
         conns = max(1, int(self.cfg.get("connections") or 4))
         referer = it.get("referer") or None
@@ -361,6 +370,45 @@ class DownloadQueue:
                 raise
             self.log(f"⚠ yt-dlp: {clean_error(e).splitlines()[0][:160]} – skúšam vlastný skener stránky")
         return self._from_page(iid, it, stop)
+
+    def _jazyky(self, iid: str, it: dict, stop: threading.Event) -> Path | None:
+        """Video s jazykovými stopami (playlist, kanál, „Video s jazykmi“): zistí jazyky tohto videa,
+        vyberie želané, ktoré má, a spojí ich ako karta Jazykové stopy. None = nemá samostatné zvuky."""
+        from . import jazyky
+        from .common import Cancelled
+        o = it["jazyky"]
+        info = jazyky.fetch_info(it["url"], log=lambda m: None)
+        title = info.get("title") or info.get("id") or it.get("title") or "video"
+        self._update(iid, title=title, thumb=info.get("thumbnail") or it.get("thumb") or "",
+                     duration=info.get("duration"), uploader=info.get("uploader") or info.get("channel") or "")
+        tracks = jazyky.list_audio_tracks(info)
+        if not tracks:
+            self.log(f"{title}: video nemá samostatné zvukové stopy – sťahujem bežne")
+            return None
+        picked, missing = jazyky.pick_tracks(tracks, o.get("poradie") or [])
+        original = next((t for t in tracks if t["original"]), None)
+        if not picked:
+            codes = ", ".join(c.upper() for c in o.get("poradie") or [])
+            if o.get("bez_jazykov") == "preskocit":
+                raise HostError(f"Video nemá žiadny z vybraných jazykov ({codes}) – preskočené.")
+            picked = [original or tracks[0]]
+            self.log(f"{title} – nemá {codes}, sťahujem s pôvodným zvukom ({picked[0]['label']})")
+        elif missing:
+            self.log(f"{title} – chýba {', '.join(c.upper() for c in missing)}")
+        quality = o.get("kvalita") or ""
+        job = {"info": info, "tracks": picked, "outdir": it["outdir"],
+               "mode": "audio" if o.get("rezim") == "audio" else "video",
+               "include_original": bool(o.get("original")), "keep_separate": False,
+               "max_height": int(quality[:-1]) if quality.endswith("p") and quality[:-1].isdigit() else None,
+               "audio_mode": o.get("zvuk") if o.get("zvuk") in ("oboje", "aac", "opus") else "oboje",
+               "zvuky": o.get("zvuky") or {}, "kontajner": "mp4" if o.get("kontajner") == "mp4" else "mkv"}
+        try:
+            return jazyky.run_job(job, log=lambda m: None,
+                                  progress=lambda frac, text: (self._update(iid, frac=frac, step=(text or "").rstrip("…")),
+                                                               self.save(force=False)),
+                                  cancel=stop)
+        except Cancelled:
+            raise Paused() from None
 
     def _from_page(self, iid: str, it: dict, stop: threading.Event) -> Path | None:
         """Prehľadá stránku vlastným skenerom; jedno video stiahne, viac ich pridá do frontu."""

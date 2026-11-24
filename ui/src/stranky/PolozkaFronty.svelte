@@ -11,12 +11,13 @@
   let bezObrazka = $state(false)
 
   const formatNazov = $derived(app.init?.formaty.find((f) => f.id === p.format)?.nazov ?? '')
-  const podiel = $derived(p.celkom ? p.hotovo / p.celkom : null)
+  const podiel = $derived(p.podiel ?? (p.celkom ? p.hotovo / p.celkom : null))
   const kometaStav = $derived(
     p.stav === 'stahuje' ? 'bezi' : p.stav === 'pauza' ? 'pauza' : p.stav === 'chyba' ? 'chyba' : 'caka',
   )
   const velkostText = $derived.by(() => {
     if (p.stav === 'hotovo') return velkost(p.celkom || p.hotovo)
+    if (p.podiel != null) return `${p.krok || 'Pripravujem'} (${Math.floor(p.podiel * 100)} %)`
     if (!p.hotovo && !p.celkom) return ''
     if (p.celkom) return `${velkost(p.hotovo)} z ${velkost(p.celkom)} (${Math.floor((podiel ?? 0) * 100)} %)`
     return velkost(p.hotovo)
@@ -48,6 +49,8 @@
       <span class="stitok">{p.zdroj}</span>
       {#if p.stav === 'hotovo' && p.subor && p.subor !== p.nazov}
         <span class="subor vyber-text" title={p.subor}>{p.subor}</span>
+      {:else if p.jazyky && p.stav !== 'hotovo'}
+        <span class="jazyky-stitok" title="Jazykové stopy">{p.jazyky}</span>
       {:else if formatNazov && p.stav !== 'hotovo'}
         <span>{formatNazov}</span>
       {/if}
@@ -72,7 +75,9 @@
   <div class="vpravo">
     {#if p.stav === 'stahuje'}
       <strong class="cisla">{rychlostText(p.rychlost)}</strong>
-      <span class="male tlmene cisla">{p.zostava ? `ešte ${zostava(p.zostava)}` : 'pripravujem…'}</span>
+      <span class="male tlmene cisla"
+        >{p.zostava ? `ešte ${zostava(p.zostava)}` : p.podiel != null ? `${Math.floor(p.podiel * 100)} %` : 'pripravujem…'}</span
+      >
     {:else if p.stav === 'pauza'}
       <span class="stav pauza">Pozastavené</span>
     {:else if p.stav === 'caka'}

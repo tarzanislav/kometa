@@ -65,6 +65,8 @@ pub async fn prace(v: Arc<Vnutro>, id: String, zrusenie: CancellationToken) {
                         velkost.unwrap_or_else(|| x.celkom.unwrap_or(x.hotovo).max(x.hotovo));
                     x.celkom = Some(x.hotovo);
                     x.docasne.clear();
+                    x.podiel = None;
+                    x.krok.clear();
                     if x.nazov.is_empty() {
                         x.nazov = cesta
                             .file_name()
@@ -244,6 +246,17 @@ async fn stiahni(
     if matches!(p.zdroj.as_str(), "Webshare" | "Fastshare") {
         return super::ucty::stiahni(v, p, z, &h.0).await;
     }
+    if let Some(o) = &p.jazyky {
+        match super::jazyky::z_frontu(v, p, o, z).await {
+            Err(Chyba::Nepodporovane(t)) => {
+                v.zapis(format!(
+                    "{}: {t} – sťahujem bežne",
+                    if p.nazov.is_empty() { &p.url } else { &p.nazov }
+                ));
+            }
+            r => return r.map(Koniec::Subor),
+        }
+    }
     let ytdlp = v.nastroje.ytdlp();
     if std::env::var("KOMETA_VZDY_YTDLP").is_ok_and(|x| x == "1") || len_ytdlp(&p.url) {
         let exe = ytdlp.ok_or_else(|| {
@@ -334,6 +347,7 @@ async fn nativne(
                 referer: x.referer.clone(),
                 heslo: p.heslo.clone(),
                 zo_skenu: true,
+                jazyky: None,
             })
             .collect();
         let pocet = nove.len();

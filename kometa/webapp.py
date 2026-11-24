@@ -43,7 +43,7 @@ THEMES = {"kometa", "polarna", "sumrak", "les", "more", "levandula", "grafit"}
 # kľúče nastavení, ktoré smie UI meniť, a ich kontrola
 _SETTINGS = {
     "outdir": lambda v: str(v).strip() or str(common.default_outdir()),
-    "dl_preset": lambda v: v if v in media.PRESETS else "video",
+    "dl_preset": lambda v: v if v in media.PRESETS or v == "jazyky" else "video",
     "parallel": lambda v: max(1, min(6, int(v))),
     "connections": lambda v: max(1, min(16, int(v))),
     "autoresume": bool,
@@ -57,6 +57,16 @@ _SETTINGS = {
     "kontajner": lambda v: v if v in ("mkv", "mp4") else "mkv",
     "max_height": lambda v: v if v in ("Najlepšia", "2160p", "1440p", "1080p", "720p", "480p") else "Najlepšia",
 }
+
+
+def popis_jazykov(o: dict) -> str:
+    """Krátky popis volieb jazykov pre položku frontu (napr. „CZ, SK, EN · AAC + Opus · MKV“)."""
+    kody = ", ".join(c.upper() for c in o.get("poradie") or [])
+    mp4 = o.get("kontajner") == "mp4"
+    zvuk = {"aac": "AAC", "opus": "Opus"}.get(o.get("zvuk"), "AAC + Opus")
+    t = f"{kody}{' + originál' if o.get('original') else ''} · {'AAC' if mp4 else zvuk} · " \
+        f"{'MP4' if mp4 else 'MKA' if o.get('rezim') == 'audio' else 'MKV'}"
+    return t + (" · rôzny zvuk pri jazykoch" if o.get("zvuky") and not mp4 else "")
 
 
 def yt_thumb(url: str) -> str:
@@ -108,7 +118,9 @@ class Jadro:
             "platforma": sys.platform,
             "nastavenia": {k: c.get(k) for k in _SETTINGS},
             "jazyky_poradie": c.get("langs") or common.DEFAULT_LANGS,
-            "formaty": [{"id": k, "nazov": v[0]} for k, v in media.PRESETS.items()],
+            "formaty": [{"id": k, "nazov": v[0]} for k, v in media.PRESETS.items()][:1]
+            + [{"id": "jazyky", "nazov": "Video s jazykmi (YouTube, podľa karty Jazyky)"}]
+            + [{"id": k, "nazov": v[0]} for k, v in media.PRESETS.items()][1:],
             "prehliadace": BROWSERS,
             "zvuk": AUDIO_MODES,
             "chyba_ffmpeg": not deps.get("ffmpeg"),
@@ -141,7 +153,9 @@ class Jadro:
                 "nazov": it.get("title") or "", "stav": it["status"], "hotovo": done, "celkom": total,
                 "rychlost": speed, "zostava": eta, "subor": Path(path).name if path else "", "chyba": short,
                 "podrobnosti": detail, "nahlad": it.get("thumb") or yt_thumb(it["url"]),
-                "dlzka": it.get("duration"), "autor": it.get("uploader") or "", "pridane": it.get("added")}
+                "dlzka": it.get("duration"), "autor": it.get("uploader") or "", "pridane": it.get("added"),
+                "podiel": it.get("frac"), "krok": it.get("step") or "",
+                "jazyky": popis_jazykov(it["jazyky"]) if it.get("jazyky") else None}
 
     # ------------------------------------------------------------------ pridávanie
     def _outdir(self) -> str:
@@ -149,15 +163,36 @@ class Jadro:
         Path(out).mkdir(parents=True, exist_ok=True)
         return out
 
+    def _preset(self, preset: str) -> str:
+        return preset if preset in media.PRESETS or preset == "jazyky" else self.cfg.get("dl_preset") or "video"
+
+    def _jazyky_z_nastaveni(self) -> dict:
+        c = self.cfg
+        return {"poradie": list(c.get("langs") or common.DEFAULT_LANGS), "original": bool(c.get("include_original", True)),
+                "zvuk": c.get("audio_mode") or "oboje", "zvuky": {}, "kontajner": c.get("kontajner") or "mkv",
+                "kvalita": c.get("max_height") or "Najlepšia", "rezim": "video", "bez_jazykov": "povodny"}
+
+    def _pridaj(self, urls: list[str], preset: str, out: str, titles: list[str] | None = None,
+                jazyky: dict | None = None) -> list[str]:
+        """„Video s jazykmi“ len pri YouTube – ostatné stránky sa stiahnu ako video."""
+        if preset != "jazyky":
+            return self.dq.add(urls, preset, out, titles=titles)
+        titles = titles or [""] * len(urls)
+        yt = [i for i, u in enumerate(urls) if media.source_name(u) == "YouTube"]
+        ine = [i for i in range(len(urls)) if i not in yt]
+        new = self.dq.add([urls[i] for i in yt], "jazyky", out, titles=[titles[i] for i in yt],
+                          jazyky=jazyky or self._jazyky_z_nastaveni()) if yt else []
+        return new + (self.dq.add([urls[i] for i in ine], "video", out, titles=[titles[i] for i in ine]) if ine else [])
+
     def pridat(self, text: str, preset: str = "") -> dict:
         urls = list(dict.fromkeys(u.rstrip(").,;]") for u in URL_RE.findall(text or "")))
         if not urls:
             raise ValueError("Vlož aspoň jeden odkaz – začína na http:// alebo https://.")
-        preset = preset if preset in media.PRESETS else self.cfg.get("dl_preset") or "video"
+        preset = self._preset(preset)
         self._save(dl_preset=preset)
         collections = [u for u in urls if media.is_collection(u)]
         single = [u for u in urls if u not in collections]
-        new = self.dq.add(single, preset, self._outdir()) if single else []
+        new = self._pridaj(single, preset, self._outdir()) if single else []
         return {"pridane": len(new), "uz_vo_fronte": len(single) - len(new), "kolekcie": collections}
 
     def rozpoznat(self, text: str) -> list[dict]:
@@ -176,12 +211,19 @@ class Jadro:
         data["kanal"] = bool(media._YT_CHANNEL_RE.match(url.strip())) if hasattr(media, "_YT_CHANNEL_RE") else False
         return data
 
-    def pridat_vybrane(self, polozky: list[dict], preset: str = "", priecinok: str = "") -> dict:
-        preset = preset if preset in media.PRESETS else self.cfg.get("dl_preset") or "video"
+    def pridat_vybrane(self, polozky: list[dict], preset: str = "", priecinok: str = "",
+                       jazyky: dict | None = None) -> dict:
+        if jazyky is not None:
+            if not (jazyky.get("poradie") or jazyky.get("original")):
+                raise ValueError("Vyber aspoň jeden jazyk.")
+            preset = "jazyky"
+        else:
+            preset = self._preset(preset)
         out = self._outdir()
         if priecinok:
             out = str(Path(out) / safe_name(priecinok, 100))
-        new = self.dq.add([p["url"] for p in polozky], preset, out, titles=[p.get("title") or "" for p in polozky])
+        new = self._pridaj([p["url"] for p in polozky], preset, out, titles=[p.get("title") or "" for p in polozky],
+                           jazyky=jazyky)
         return {"pridane": len(new), "uz_vo_fronte": len(polozky) - len(new)}
 
     def skenovat(self, url: str) -> list[dict]:

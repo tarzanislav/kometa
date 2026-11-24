@@ -151,6 +151,20 @@ def safe_name(text: str, limit: int = 140) -> str:
     return text or "subor"
 
 
+def reserve_path(path: Path) -> Path:
+    """Voľný názov súboru, ktorý si hneď „zaberie“ (prázdny súbor) – dve súbežné sťahovania
+    videí s rovnakým názvom si tak nikdy nevyberú ten istý."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    n = 1
+    while True:
+        cand = path if n == 1 else path.with_name(f"{path.stem} ({n}){path.suffix}")
+        try:
+            with open(cand, "x"):
+                return cand
+        except FileExistsError:
+            n += 1
+
+
 def unique_path(path: Path) -> Path:
     if not path.exists():
         return path

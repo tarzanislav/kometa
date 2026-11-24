@@ -20,6 +20,12 @@ export interface Polozka {
   dlzka: number | null
   autor: string
   pridane: number
+  /** podiel hotovej práce, keď sa nedá rátať v bajtoch (video s jazykmi) */
+  podiel?: number | null
+  /** čo sa práve robí, napr. „Sťahujem: Čeština (2/3)“ */
+  krok?: string
+  /** voľby jazykov, napr. „CZ, SK, EN · AAC + Opus · MKV“ */
+  jazyky?: string | null
 }
 
 export interface StavUctu {

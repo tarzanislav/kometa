@@ -8,6 +8,8 @@
   import Okno from '../components/Okno.svelte'
   import Prepinac from '../components/Prepinac.svelte'
   import Segment from '../components/Segment.svelte'
+  import VolbaJazykov from '../components/VolbaJazykov.svelte'
+  import { PRIORITA, type VolbyJazykov } from '../lib/jazyky'
 
   let { url }: { url: string } = $props()
 
@@ -23,6 +25,19 @@
   let doPriecinka = $state(true)
   let format = $state(app.nastavenia?.dl_preset ?? 'video')
   let zobrazit = $state(240)
+  // jazyky z nastavení (karta Jazykové stopy si ich pamätá)
+  const n = app.nastavenia
+  let jazyky = $state<VolbyJazykov>({
+    poradie: [...(app.init?.jazyky_poradie?.length ? app.init.jazyky_poradie : PRIORITA)],
+    original: n?.include_original ?? true,
+    zvuk: n?.audio_mode ?? 'oboje',
+    zvuky: {},
+    kontajner: n?.kontajner ?? 'mkv',
+    kvalita: n?.max_height || 'Najlepšia',
+    rezim: 'video',
+    bez_jazykov: 'povodny',
+  })
+  const sJazykmi = $derived(format === 'jazyky')
 
   const kanal = $derived(/youtube\.com\/(@|channel\/|c\/|user\/)/.test(adresa))
   const zoznam = $derived(
@@ -67,6 +82,7 @@
       polozky,
       format,
       doPriecinka ? data.title : '',
+      sJazykmi ? $state.snapshot(jazyky) : null,
     )
     if (!r) return
     toast(`Pridané do sťahovania: ${pocet(r.pridane, 'video', 'videá', 'videí')}.`, 'ok')
@@ -133,6 +149,10 @@
       </span>
     </div>
 
+    {#if sJazykmi}
+      <VolbaJazykov bind:volby={jazyky} />
+    {/if}
+
     <ul class="mriezka">
       {#each zoznam.slice(0, zobrazit) as e (e.url)}
         {@const on = vybrane.has(e.url)}
@@ -159,9 +179,15 @@
     <span class="medzera"></span>
     <label class="skryte" for="pl-format">Formát</label>
     <select id="pl-format" class="vyber format" bind:value={format}>
-      {#each app.init?.formaty ?? [] as f (f.id)}<option value={f.id}>{f.nazov}</option>{/each}
+      {#each app.init?.formaty ?? [] as f (f.id)}
+        <option value={f.id}>{f.id === 'jazyky' ? 'Video s jazykovými stopami' : f.nazov}</option>
+      {/each}
     </select>
-    <button class="tl hlavne velke" disabled={!data || !vybrane.size} onclick={pridat}>
+    <button
+      class="tl hlavne velke"
+      disabled={!data || !vybrane.size || (sJazykmi && !jazyky.poradie.length && !jazyky.original)}
+      onclick={pridat}
+    >
       Stiahnuť {vybrane.size ? pocet(vybrane.size, 'video', 'videá', 'videí') : ''}
     </button>
   {/snippet}

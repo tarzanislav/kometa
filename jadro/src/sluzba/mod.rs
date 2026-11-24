@@ -284,7 +284,12 @@ impl Sluzba {
                     .collect(),
             ),
             "kolekcia" => self.kolekcia(&arg::<String>(a, 0)?, &arg::<String>(a, 1)?).await?,
-            "pridat_vybrane" => self.pridat_vybrane(&arg::<Vec<Value>>(a, 0)?, &arg::<String>(a, 1)?, &arg::<String>(a, 2)?),
+            "pridat_vybrane" => self.pridat_vybrane(
+                &arg::<Vec<Value>>(a, 0)?,
+                &arg::<String>(a, 1)?,
+                &arg::<String>(a, 2)?,
+                arg::<Option<fronta::VolbyJazykov>>(a, 3)?,
+            )?,
             "skenovat" => self.skenovat(&arg::<String>(a, 0)?).await?,
             "pridat_zo_skenu" => self.pridat_zo_skenu(&arg::<Vec<Value>>(a, 0)?, &arg::<String>(a, 1)?, &arg::<String>(a, 2)?),
             "pozastavit" => {
@@ -481,19 +486,44 @@ impl Sluzba {
             urls.into_iter().partition(|u| zdroje::je_kolekcia(u));
         let priecinok = self.v.priecinok_vystupu();
         let pocet = jednotlive.len();
+        let jazyky = (preset == "jazyky").then(|| self.jazyky_z_nastaveni());
         let nove = self.v.fronta.lock().unwrap().pridaj(
             jednotlive
                 .into_iter()
-                .map(|url| Nova {
-                    url,
-                    format: preset.clone(),
-                    priecinok: priecinok.clone(),
-                    ..Default::default()
+                .map(|url| {
+                    // „Video s jazykmi“ ide len pri YouTube; ostatné stránky sa stiahnu ako video
+                    let youtube = zdroje::nazov_zdroja(&url) == "YouTube";
+                    Nova {
+                        format: if preset == "jazyky" && !youtube {
+                            "video".into()
+                        } else {
+                            preset.clone()
+                        },
+                        jazyky: jazyky.clone().filter(|_| youtube),
+                        url,
+                        priecinok: priecinok.clone(),
+                        ..Default::default()
+                    }
                 })
                 .collect(),
         );
         self.v.naplanuj();
         Ok(json!({"pridane": nove.len(), "uz_vo_fronte": pocet - nove.len(), "kolekcie": kolekcie}))
+    }
+
+    /// Jazyky podľa nastavení (karta Jazykové stopy si ich pamätá).
+    fn jazyky_z_nastaveni(&self) -> fronta::VolbyJazykov {
+        let n = self.v.nastavenia.lock().unwrap();
+        fronta::VolbyJazykov {
+            poradie: n.jazyky(),
+            original: n.ano("include_original", true),
+            zvuk: n.text("audio_mode"),
+            zvuky: Default::default(),
+            kontajner: n.text("kontajner"),
+            kvalita: n.text("max_height"),
+            rezim: "video".into(),
+            bez_jazykov: "povodny".into(),
+        }
     }
 
     fn preset(&self, p: &str) -> String {
@@ -528,8 +558,23 @@ impl Sluzba {
         Ok(d)
     }
 
-    fn pridat_vybrane(&self, polozky: &[Value], preset: &str, priecinok: &str) -> Value {
-        let preset = self.preset(preset);
+    fn pridat_vybrane(
+        &self,
+        polozky: &[Value],
+        preset: &str,
+        priecinok: &str,
+        jazyky: Option<fronta::VolbyJazykov>,
+    ) -> Vysledok<Value> {
+        if let Some(o) = &jazyky {
+            if o.poradie.is_empty() && !o.original {
+                return Err(chyba("Vyber aspoň jeden jazyk."));
+            }
+        }
+        let preset = if jazyky.is_some() {
+            "jazyky".to_string()
+        } else {
+            self.preset(preset)
+        };
         let mut out = PathBuf::from(self.v.priecinok_vystupu());
         if !priecinok.trim().is_empty() {
             out = out.join(zdroje::bezpecny_nazov(priecinok, 100));
@@ -538,14 +583,21 @@ impl Sluzba {
         let nove: Vec<Nova> = polozky
             .iter()
             .filter_map(|p| {
+                let url = p.get("url")?.as_str()?.to_string();
+                let youtube = zdroje::nazov_zdroja(&url) == "YouTube";
                 Some(Nova {
-                    url: p.get("url")?.as_str()?.to_string(),
                     nazov: p
                         .get("title")
                         .and_then(Value::as_str)
                         .unwrap_or("")
                         .to_string(),
-                    format: preset.clone(),
+                    format: if preset == "jazyky" && !youtube {
+                        "video".into()
+                    } else {
+                        preset.clone()
+                    },
+                    jazyky: jazyky.clone().filter(|_| youtube),
+                    url,
                     priecinok: out.clone(),
                     ..Default::default()
                 })
@@ -554,7 +606,7 @@ impl Sluzba {
         let pocet = nove.len();
         let pridane = self.v.fronta.lock().unwrap().pridaj(nove).len();
         self.v.naplanuj();
-        json!({"pridane": pridane, "uz_vo_fronte": pocet - pridane})
+        Ok(json!({"pridane": pridane, "uz_vo_fronte": pocet - pridane}))
     }
 
     async fn skenovat(&self, url: &str) -> Vysledok<Value> {
@@ -606,6 +658,7 @@ impl Sluzba {
                 referer: s(p, "referer"),
                 heslo: heslo.to_string(),
                 zo_skenu: true,
+                jazyky: None,
             })
             .collect();
         let n = self.v.fronta.lock().unwrap().pridaj(nove).len();
@@ -670,5 +723,7 @@ fn polozka_pre_okno(p: &Polozka) -> Value {
         "subor": Path::new(&p.subor).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
         "chyba": p.chyba, "podrobnosti": p.podrobnosti, "nahlad": p.nahlad, "dlzka": p.dlzka,
         "autor": p.autor, "pridane": p.pridane,
+        "podiel": p.podiel, "krok": p.krok,
+        "jazyky": p.jazyky.as_ref().map(jazyky::popis_volieb),
     })
 }

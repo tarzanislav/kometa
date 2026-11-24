@@ -576,7 +576,8 @@ pub fn stiahni(v: &Arc<Vnutro>, volby: &Map<String, Value>) -> Vysledok<()> {
     });
     let v2 = v.clone();
     v.rt_spawn(async move {
-        let r = prace(&v2, uloha, &z).await;
+        let rep: Arc<dyn Hlasenie> = Arc::new(DoKarty(Arc::downgrade(&v2)));
+        let r = prace(&v2, uloha, &z, rep).await;
         v2.jazyky.uprav(|s| {
             s.busy = false;
             match &r {
@@ -598,6 +599,198 @@ pub fn stiahni(v: &Arc<Vnutro>, volby: &Map<String, Value>) -> Vysledok<()> {
     Ok(())
 }
 
+/// Video z frontu s jazykovými stopami: zistí jazyky tohto videa, vyberie želané (čo má)
+/// a spojí ich ako karta Jazykové stopy. `Nepodporovane` = video nemá samostatné zvukové stopy.
+pub async fn z_frontu(
+    v: &Arc<Vnutro>,
+    p: &super::fronta::Polozka,
+    o: &super::fronta::VolbyJazykov,
+    z: &CancellationToken,
+) -> Vysledok<PathBuf> {
+    let exe = v.nastroje.ytdlp().ok_or_else(|| {
+        Chyba::Ine(
+            "Jazyky videa zistí pomocník yt-dlp – v Nastaveniach klikni na „Doinštalovať yt-dlp“."
+                .into(),
+        )
+    })?;
+    let info = ytdlp::info(&exe, &p.url, &spolocne(v), z).await?;
+    let titul = [s(&info, "title"), s(&info, "id")]
+        .into_iter()
+        .find(|x| !x.is_empty())
+        .unwrap_or("video")
+        .to_string();
+    let meta = ytdlp::meta_z(&info);
+    v.fronta.lock().unwrap().uprav(&p.id, |x| {
+        x.nazov = titul.clone();
+        if x.nahlad.is_empty() {
+            x.nahlad = meta.nahlad.clone();
+        }
+        x.dlzka = meta.dlzka.or(x.dlzka);
+        x.autor = meta.autor.clone();
+    });
+    let vsetky = stopy(&info);
+    if vsetky.is_empty() {
+        return Err(Chyba::Nepodporovane(
+            "video nemá samostatné zvukové stopy".into(),
+        ));
+    }
+    let r: Arc<dyn Hlasenie> = Arc::new(DoPolozky {
+        v: Arc::downgrade(v),
+        id: p.id.clone(),
+        nazov: titul.clone(),
+    });
+    let (mut vybrane, chyba) = vyber(&vsetky, &o.poradie);
+    let original = vsetky.iter().find(|s| s.original).cloned();
+    if vybrane.is_empty() {
+        let kody = o
+            .poradie
+            .iter()
+            .map(|k| k.to_uppercase())
+            .collect::<Vec<_>>()
+            .join(", ");
+        if o.bez_jazykov == "preskocit" {
+            return Err(Chyba::Ine(format!(
+                "Video nemá žiadny z vybraných jazykov ({kody}) – preskočené."
+            )));
+        }
+        let povodny = original
+            .clone()
+            .or_else(|| vsetky.first().cloned())
+            .expect("aspoň jedna stopa");
+        r.zapis(format!(
+            "nemá {kody} – sťahujem s pôvodným zvukom ({})",
+            povodny.nazov
+        ));
+        vybrane.push(povodny);
+    } else if !chyba.is_empty() {
+        r.zapis(format!(
+            "chýba {}",
+            chyba
+                .iter()
+                .map(|k| k.to_uppercase())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    let uloha = Uloha {
+        info,
+        stopy: vybrane,
+        original,
+        rezim: if o.rezim == "audio" {
+            "audio".into()
+        } else {
+            "video".into()
+        },
+        existujuce: None,
+        pridat_original: o.original,
+        samostatne: false,
+        vyska: o.kvalita.strip_suffix('p').and_then(|x| x.parse().ok()),
+        zvuk: if matches!(o.zvuk.as_str(), "oboje" | "aac" | "opus") {
+            o.zvuk.clone()
+        } else {
+            "oboje".into()
+        },
+        zvuky: o
+            .zvuky
+            .iter()
+            .filter(|(_, z)| matches!(z.as_str(), "oboje" | "aac" | "opus"))
+            .map(|(k, z)| (k.clone(), z.clone()))
+            .collect(),
+        mp4: o.kontajner == "mp4",
+        priecinok: PathBuf::from(&p.priecinok),
+    };
+    prace(v, uloha, z, r).await
+}
+
+/// Krátky popis volieb pre okno (napr. „CZ, SK, EN · AAC + Opus · MKV“).
+pub fn popis_volieb(o: &super::fronta::VolbyJazykov) -> String {
+    let kody = o
+        .poradie
+        .iter()
+        .map(|k| k.to_uppercase())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let zvuk = match o.zvuk.as_str() {
+        "aac" => "AAC",
+        "opus" => "Opus",
+        _ => "AAC + Opus",
+    };
+    let mp4 = o.kontajner == "mp4";
+    let mut t = format!(
+        "{kody}{} · {} · {}",
+        if o.original { " + originál" } else { "" },
+        if mp4 { "AAC" } else { zvuk },
+        if mp4 {
+            "MP4"
+        } else if o.rezim == "audio" {
+            "MKA"
+        } else {
+            "MKV"
+        }
+    );
+    if !o.zvuky.is_empty() && !mp4 {
+        t.push_str(" · rôzny zvuk pri jazykoch");
+    }
+    t
+}
+
+/// Kam úloha jazykov hlási priebeh a záznam: karta Jazykové stopy alebo položka frontu.
+pub trait Hlasenie: Send + Sync {
+    fn priebeh(&self, podiel: f64, text: &str, rychlost: f64);
+    fn zapis(&self, t: String);
+}
+
+/// Karta Jazykové stopy.
+struct DoKarty(std::sync::Weak<Vnutro>);
+
+impl Hlasenie for DoKarty {
+    fn priebeh(&self, podiel: f64, text: &str, _rychlost: f64) {
+        if let Some(v) = self.0.upgrade() {
+            v.jazyky.uprav(|s| {
+                s.frac = podiel;
+                s.text = text.to_string();
+            });
+        }
+    }
+    fn zapis(&self, t: String) {
+        if let Some(v) = self.0.upgrade() {
+            v.jazyky.zapis(t);
+        }
+    }
+}
+
+/// Položka frontu (playlist, kanál alebo bežné sťahovanie s jazykmi).
+struct DoPolozky {
+    v: std::sync::Weak<Vnutro>,
+    id: String,
+    nazov: String,
+}
+
+impl Hlasenie for DoPolozky {
+    fn priebeh(&self, podiel: f64, text: &str, rychlost: f64) {
+        if let Some(v) = self.v.upgrade() {
+            let mut f = v.fronta.lock().unwrap();
+            f.uprav(&self.id, |x| {
+                x.podiel = Some(podiel);
+                x.krok = text.trim_end_matches('…').to_string();
+                x.rychlost = rychlost;
+            });
+            f.uloz(false);
+        }
+    }
+    fn zapis(&self, t: String) {
+        if let Some(v) = self.v.upgrade() {
+            if !t.starts_with('⬇') && !t.starts_with('⇒') {
+                v.zapis(format!(
+                    "{} – {}",
+                    self.nazov,
+                    t.trim_start_matches(['ℹ', '↻', ' '])
+                ));
+            }
+        }
+    }
+}
+
 /// Priebeh celej úlohy: kroky (sťahovania + spojenie) a podiel v aktuálnom kroku.
 struct Priebeh {
     krokov: f64,
@@ -605,39 +798,36 @@ struct Priebeh {
     text: String,
 }
 
-fn hlasic(v: &Arc<Vnutro>, p: &Arc<Mutex<Priebeh>>) -> Hlasic {
-    let (v, p) = (Arc::downgrade(v), p.clone());
+fn hlasic(r: &Arc<dyn Hlasenie>, p: &Arc<Mutex<Priebeh>>) -> Hlasic {
+    let (r, p) = (r.clone(), p.clone());
     Arc::new(move |u| {
-        let Some(v) = v.upgrade() else { return };
         if let Udalost::Priebeh {
-            stiahnute, celkom, ..
+            stiahnute,
+            celkom,
+            rychlost,
+            ..
         } = u
         {
-            let p = p.lock().unwrap();
-            let cast = celkom
-                .map(|c| stiahnute as f64 / c.max(1) as f64)
-                .unwrap_or(0.0)
-                .min(1.0);
-            let frac = ((p.krok + cast) / p.krokov).min(1.0);
-            let text = p.text.clone();
-            v.jazyky.uprav(|s| {
-                s.frac = frac;
-                s.text = text;
-            });
+            let (frac, text) = {
+                let p = p.lock().unwrap();
+                let cast = celkom
+                    .map(|c| stiahnute as f64 / c.max(1) as f64)
+                    .unwrap_or(0.0)
+                    .min(1.0);
+                (((p.krok + cast) / p.krokov).min(1.0), p.text.clone())
+            };
+            r.priebeh(frac, &text, rychlost);
         }
     })
 }
 
-fn krok(v: &Vnutro, p: &Arc<Mutex<Priebeh>>, text: String) {
-    let (frac, t) = {
+fn krok(r: &Arc<dyn Hlasenie>, p: &Arc<Mutex<Priebeh>>, text: String) {
+    let frac = {
         let mut p = p.lock().unwrap();
-        p.text = text;
-        (p.krok / p.krokov, p.text.clone())
+        p.text = text.clone();
+        p.krok / p.krokov
     };
-    v.jazyky.uprav(|s| {
-        s.frac = frac;
-        s.text = t;
-    });
+    r.priebeh(frac, &text, 0.0);
 }
 
 fn dalsi(p: &Arc<Mutex<Priebeh>>) {
@@ -693,6 +883,37 @@ fn na(f: &Value, druh: &'static str) -> Vysledok<FormatNa> {
     })
 }
 
+/// Voľný názov, ktorý si hneď zaberie (prázdny súbor) – dve súbežné úlohy si nevyberú ten istý.
+fn rezervuj(p: PathBuf) -> PathBuf {
+    let kmen = p
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let pr = p
+        .extension()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    for i in 1..10_000 {
+        let c = if i == 1 {
+            p.clone()
+        } else {
+            p.with_file_name(format!("{kmen} ({i}).{pr}"))
+        };
+        if std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&c)
+            .is_ok()
+        {
+            return c;
+        }
+        if !c.exists() {
+            return c; // priečinok sa nedá zapísať – chybu ohlási až zápis
+        }
+    }
+    p
+}
+
 fn jedinecna(p: PathBuf) -> PathBuf {
     if !p.exists() {
         return p;
@@ -724,7 +945,12 @@ async fn na_aac(v: &Vnutro, zdroj: &Path, ciel: &Path) -> Option<PathBuf> {
     (o.status.success() && ciel.exists()).then(|| ciel.to_path_buf())
 }
 
-async fn prace(v: &Arc<Vnutro>, u: Uloha, z: &CancellationToken) -> Vysledok<PathBuf> {
+async fn prace(
+    v: &Arc<Vnutro>,
+    u: Uloha,
+    z: &CancellationToken,
+    r: Arc<dyn Hlasenie>,
+) -> Vysledok<PathBuf> {
     tokio::fs::create_dir_all(&u.priecinok).await?;
     let titul = [s(&u.info, "title"), s(&u.info, "id")]
         .into_iter()
@@ -755,7 +981,7 @@ async fn prace(v: &Arc<Vnutro>, u: Uloha, z: &CancellationToken) -> Vysledok<Pat
         krok: 0.0,
         text: String::new(),
     }));
-    let h = hlasic(v, &p);
+    let h = hlasic(&r, &p);
     let tmp = u
         .priecinok
         .join(format!(".kometa_jazyky_{}", super::server::novy_kluc()));
@@ -776,8 +1002,8 @@ async fn prace(v: &Arc<Vnutro>, u: Uloha, z: &CancellationToken) -> Vysledok<Pat
                     ""
                 }
             );
-            v.jazyky.zapis(popis);
-            krok(v, &p, "Sťahujem video…".into());
+            r.zapis(popis);
+            krok(&r, &p, "Sťahujem video…".into());
             video = Some(stiahni_format(v, &na(&f, "video")?, &tmp.join("video"), z, &h).await?);
             dalsi(&p);
         }
@@ -790,7 +1016,7 @@ async fn prace(v: &Arc<Vnutro>, u: Uloha, z: &CancellationToken) -> Vysledok<Pat
             let rezim = rezim_stopy(t);
             let (chcem_aac, chcem_opus) = (rezim != "opus", rezim != "aac");
             krok(
-                v,
+                &r,
                 &p,
                 format!("Sťahujem: {} ({}/{})…", t.nazov, i + 1, stopy.len()),
             );
@@ -799,7 +1025,7 @@ async fn prace(v: &Arc<Vnutro>, u: Uloha, z: &CancellationToken) -> Vysledok<Pat
                 "opus" => "Opus",
                 _ => "AAC + Opus",
             };
-            v.jazyky.zapis(format!(
+            r.zapis(format!(
                 "⬇ {}  [{}] – {popis_rezimu}",
                 t.nazov,
                 if t.kod.is_empty() { "—" } else { &t.kod }
@@ -826,14 +1052,14 @@ async fn prace(v: &Arc<Vnutro>, u: Uloha, z: &CancellationToken) -> Vysledok<Pat
                             stiahni_format(v, &na(&zdroj, "zvuk")?, &meno("opus"), z, &h).await?;
                         match na_aac(v, &o, &meno("aac").with_extension("m4a")).await {
                             Some(a) => {
-                                v.jazyky.zapis(format!(
+                                r.zapis(format!(
                                     "↻ {} prevedené do AAC (zdroj ho neponúka)",
                                     t.nazov
                                 ));
                                 subory.push((a, "aac"));
                             }
                             None => {
-                                v.jazyky.zapis(format!(
+                                r.zapis(format!(
                                     "ℹ {}: zdroj nemá AAC a bez FFmpeg ostane Opus",
                                     t.nazov
                                 ));
@@ -859,17 +1085,14 @@ async fn prace(v: &Arc<Vnutro>, u: Uloha, z: &CancellationToken) -> Vysledok<Pat
                         subory.push((cesta, "opus"));
                     }
                     None if !chcem_aac => {
-                        v.jazyky
-                            .zapis(format!("ℹ {}: zdroj nemá Opus – použijem AAC", t.nazov));
+                        r.zapis(format!("ℹ {}: zdroj nemá Opus – použijem AAC", t.nazov));
                         let a = t.aac.clone().unwrap_or_else(|| t.najlepsi.clone());
                         subory.push((
                             stiahni_format(v, &na(&a, "zvuk")?, &meno("aac"), z, &h).await?,
                             "aac",
                         ));
                     }
-                    None => v
-                        .jazyky
-                        .zapis(format!("ℹ {}: zdroj nemá Opus – ostane len AAC", t.nazov)),
+                    None => r.zapis(format!("ℹ {}: zdroj nemá Opus – ostane len AAC", t.nazov)),
                 }
                 dalsi(&p);
             }
@@ -884,8 +1107,8 @@ async fn prace(v: &Arc<Vnutro>, u: Uloha, z: &CancellationToken) -> Vysledok<Pat
         if z.is_cancelled() {
             return Err(Chyba::Pauza);
         }
-        krok(v, &p, "Spájam stopy do jedného súboru…".into());
-        v.jazyky.zapis("⇒ Spájam stopy…");
+        krok(&r, &p, "Spájam stopy do jedného súboru…".into());
+        r.zapis("⇒ Spájam stopy…".into());
         let kody: Vec<String> = jazyky
             .iter()
             .map(|(t, _)| {
@@ -996,8 +1219,16 @@ async fn prace(v: &Arc<Vnutro>, u: Uloha, z: &CancellationToken) -> Vysledok<Pat
                 }),
             });
         }
-        let ciel = jedinecna(ciel);
-        let out = spajanie::spoj(&vstupy, &ciel, &titul).await?;
+        let ciel = rezervuj(ciel);
+        let out = match spajanie::spoj(&vstupy, &ciel, &titul).await {
+            Ok(o) => o,
+            Err(e) => {
+                if std::fs::metadata(&ciel).is_ok_and(|m| m.len() == 0) {
+                    let _ = std::fs::remove_file(&ciel); // zabraný názov uvoľniť
+                }
+                return Err(e);
+            }
+        };
         if u.samostatne {
             for (t, cesta, kodek) in jazyky
                 .iter()
@@ -1016,7 +1247,7 @@ async fn prace(v: &Arc<Vnutro>, u: Uloha, z: &CancellationToken) -> Vysledok<Pat
                     nazov: Some(t.nazov.clone()),
                 };
                 if let Ok(x) = spajanie::spoj(std::slice::from_ref(&vstup), &c, &titul).await {
-                    v.jazyky.zapis(format!(
+                    r.zapis(format!(
                         "   ↳ {}",
                         x.file_name().unwrap_or_default().to_string_lossy()
                     ));
