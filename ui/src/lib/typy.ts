@@ -109,6 +109,8 @@ export interface Nastavenia {
   rezim: 'auto' | 'den' | 'noc'
   include_original: boolean
   keep_separate: boolean
+  titulky?: 'vypnute' | 'jazyky'
+  titulky_auto?: boolean
   mode: 'video' | 'existing' | 'audio'
   kontajner: 'mkv' | 'mp4'
   max_height: string
@@ -217,4 +219,8 @@ export interface VideoJazyky {
   original: string
   stopy: Stopa[]
   vybrane: string[]
+  /** jazyky (základné kódy), ku ktorým má video titulky od autora */
+  titulky?: string[]
+  /** má video automatické titulky YouTube */
+  auto_titulky?: boolean
 }

@@ -4,6 +4,7 @@
 //!
 //! Rovnaké voľby a tvary dát ako `kometa/jazyky.py` v Pythone.
 
+use super::nastavenia::PREDVOLENE_JAZYKY;
 use super::ytdlp::{self, FormatNa, Spolocne};
 use super::zdroje::bezpecny_nazov;
 use super::Vnutro;
@@ -408,6 +409,112 @@ fn spolocne(v: &Vnutro) -> Spolocne {
     }
 }
 
+/// Zistí jazyky zvuku vo viacerých videách naraz (playlist, kanál, viac odkazov) – najviac
+/// 4 videá súčasne a najviac 60. Vráti každé video (názov, dĺžka, jazyky) aj súčet: v koľkých
+/// videách je ktorý jazyk (podľa základného kódu, „en-US“ patrí k „en“).
+pub async fn zisti(v: &Arc<Vnutro>, urls: Vec<String>) -> Vysledok<Value> {
+    let exe = v.nastroje.ytdlp().ok_or_else(|| {
+        Chyba::Ine(
+            "Jazyky videí zistí pomocník yt-dlp – v Nastaveniach klikni na „Doinštalovať yt-dlp“."
+                .into(),
+        )
+    })?;
+    let sp = spolocne(v);
+    let sem = Arc::new(tokio::sync::Semaphore::new(4));
+    let mut ulohy = tokio::task::JoinSet::new();
+    let urls: Vec<String> = urls
+        .into_iter()
+        .map(|u| u.trim().to_string())
+        .filter(|u| je_youtube(u))
+        .take(60)
+        .collect();
+    for (i, url) in urls.iter().cloned().enumerate() {
+        let (exe, sp, sem) = (exe.clone(), sp.clone(), sem.clone());
+        ulohy.spawn(async move {
+            let _p = sem.acquire_owned().await;
+            let r = tokio::time::timeout(
+                std::time::Duration::from_secs(90),
+                ytdlp::info(&exe, &url, &sp, &CancellationToken::new()),
+            )
+            .await;
+            (i, url, r)
+        });
+    }
+    let mut videa: Vec<(usize, Value)> = vec![];
+    let mut pocty: Vec<(String, String, usize, usize)> = vec![]; // kód, názov, počet, z toho pôvodný
+    while let Some(Ok((i, url, r))) = ulohy.join_next().await {
+        let info = match r {
+            Ok(Ok(info)) if info.get("formats").is_some() => info,
+            Ok(Ok(_)) => {
+                videa.push((i, json!({"url": url, "chyba": "Nie je to jedno video."})));
+                continue;
+            }
+            Ok(Err(e)) => {
+                videa.push((i, json!({"url": url, "chyba": e.to_string()})));
+                continue;
+            }
+            Err(_) => {
+                videa.push((
+                    i,
+                    json!({"url": url, "chyba": "Video neodpovedá – skús neskôr."}),
+                ));
+                continue;
+            }
+        };
+        let st = stopy(&info);
+        let mut kody: Vec<(String, bool)> = vec![];
+        for t in &st {
+            let z = t.kod.split('-').next().unwrap_or("").to_lowercase();
+            if z.is_empty() {
+                continue;
+            }
+            match kody.iter_mut().find(|(k, _)| *k == z) {
+                Some(x) => x.1 |= t.original,
+                None => kody.push((z, t.original)),
+            }
+        }
+        for (k, orig) in &kody {
+            match pocty.iter_mut().find(|x| x.0 == *k) {
+                Some(x) => {
+                    x.2 += 1;
+                    x.3 += usize::from(*orig);
+                }
+                None => pocty.push((k.clone(), nazov_jazyka(k, ""), 1, usize::from(*orig))),
+            }
+        }
+        videa.push((
+            i,
+            json!({
+                "url": url,
+                "nazov": s(&info, "title"),
+                "dlzka": info.get("duration"),
+                "nahlad": super::zdroje::nahlad_youtube(&url),
+                "jazyky": kody.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>(),
+                "original": kody.iter().find(|(_, o)| *o).map(|(k, _)| k.clone()),
+            }),
+        ));
+    }
+    videa.sort_by_key(|x| x.0);
+    let preskumanych = videa.iter().filter(|x| x.1.get("chyba").is_none()).count();
+    // najčastejšie jazyky prvé, pri rovnosti podľa poradia CZ, SK, EN…
+    pocty.sort_by_key(|x| {
+        (
+            std::cmp::Reverse(x.2),
+            PREDVOLENE_JAZYKY
+                .iter()
+                .position(|p| *p == x.0)
+                .unwrap_or(99),
+        )
+    });
+    Ok(json!({
+        "preskumanych": preskumanych,
+        "videa": videa.into_iter().map(|x| x.1).collect::<Vec<_>>(),
+        "jazyky": pocty.into_iter().map(|(kod, nazov, pocet, original)| json!({
+            "kod": kod, "nazov": nazov, "pocet": pocet, "original": original,
+        })).collect::<Vec<_>>(),
+    }))
+}
+
 pub async fn nacitaj(v: &Arc<Vnutro>, url: &str) -> Vysledok<Value> {
     let url = url.trim();
     if !je_youtube(url) {
@@ -447,6 +554,8 @@ pub async fn nacitaj(v: &Arc<Vnutro>, url: &str) -> Vysledok<Value> {
         "stopy": st.iter().map(|t| json!({"kod": t.kod, "nazov": t.nazov, "original": t.original,
             "aac": t.aac.is_some(), "kbps": n(&t.najlepsi, "abr").round() as i64})).collect::<Vec<_>>(),
         "vybrane": vybrane.iter().filter(|t| !t.original).map(|t| t.kod.clone()).collect::<Vec<_>>(),
+        "titulky": jazyky_titulkov(&info),
+        "auto_titulky": info.get("automatic_captions").and_then(Value::as_object).is_some_and(|m| !m.is_empty()),
     });
     *v.jazyky.nacitane.lock().unwrap() = Some((info, st));
     Ok(out)
@@ -468,6 +577,93 @@ struct Uloha {
     zvuky: std::collections::HashMap<String, String>,
     mp4: bool,
     priecinok: PathBuf,
+    /// ku každému jazyku zvuku aj titulky v tom istom jazyku
+    titulky: bool,
+    /// aj automatické titulky YouTube, keď autor nedal vlastné
+    titulky_auto: bool,
+}
+
+/// Titulky k jazyku: najprv od autora videa, potom (ak sú povolené) automatické YouTube.
+/// Vráti (adresa, prípona, automatické).
+fn najdi_titulky(
+    info: &Value,
+    kod: &str,
+    original: bool,
+    auto: bool,
+) -> Option<(String, String, bool)> {
+    let z = kod.to_lowercase();
+    let z = z.split('-').next().unwrap_or("").to_string();
+    if z.is_empty() {
+        return None;
+    }
+    for (kluc, automaticke) in [("subtitles", false), ("automatic_captions", true)] {
+        if automaticke && !auto {
+            continue;
+        }
+        let Some(m) = info.get(kluc).and_then(Value::as_object) else {
+            continue;
+        };
+        // poradie kľúčov: presný kód, základný kód, varianty („en-US“); pri automatických
+        // titulkoch originálu prvé „xx-orig“ (rozpoznaná reč, nie preklad)
+        let mut kandidati: Vec<String> = vec![];
+        if automaticke && original {
+            kandidati.push(format!("{z}-orig"));
+        }
+        kandidati.push(kod.to_string());
+        kandidati.push(z.clone());
+        let mut ine: Vec<&String> = m
+            .keys()
+            .filter(|k| k.to_lowercase().starts_with(&format!("{z}-")) && !k.ends_with("-orig"))
+            .collect();
+        ine.sort();
+        kandidati.extend(ine.into_iter().cloned());
+        for k in kandidati {
+            let Some(zoznam) = m.get(&k).and_then(Value::as_array) else {
+                continue;
+            };
+            for pripona in ["json3", "vtt"] {
+                if let Some(f) = zoznam.iter().find(|f| s(f, "ext") == pripona) {
+                    let u = s(f, "url");
+                    if !u.is_empty() {
+                        return Some((u.to_string(), pripona.to_string(), automaticke));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Jazyky (základné kódy), ku ktorým dal autor videa titulky.
+fn jazyky_titulkov(info: &Value) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    for k in info
+        .get("subtitles")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flat_map(|m| m.keys())
+    {
+        let z = k.to_lowercase().split('-').next().unwrap_or("").to_string();
+        if !z.is_empty() && z != "live_chat" && !out.contains(&z) {
+            out.push(z);
+        }
+    }
+    out
+}
+
+/// Stiahne titulky a uloží ich ako SRT; vráti počet titulkov (0 = nič použiteľné).
+async fn stiahni_titulky(url: &str, pripona: &str, ciel: &Path) -> Vysledok<usize> {
+    let k = crate::klient::klient(&crate::klient::Nastavenia::default())?;
+    let t = k.get(url).send().await?.error_for_status()?.text().await?;
+    let titulky = if pripona == "json3" {
+        crate::media::srt::z_json3(&t)
+    } else {
+        crate::media::srt::z_vtt(&t)
+    };
+    if !titulky.is_empty() {
+        tokio::fs::write(ciel, crate::media::srt::na_srt(&titulky)).await?;
+    }
+    Ok(titulky.len())
 }
 
 pub fn stiahni(v: &Arc<Vnutro>, volby: &Map<String, Value>) -> Vysledok<()> {
@@ -535,6 +731,15 @@ pub fn stiahni(v: &Arc<Vnutro>, volby: &Map<String, Value>) -> Vysledok<()> {
         z.insert("max_height".into(), json!(kvalita));
         z.insert("audio_mode".into(), json!(zvuk));
         z.insert("kontajner".into(), json!(if mp4 { "mp4" } else { "mkv" }));
+        z.insert(
+            "titulky".into(),
+            json!(if t("titulky") == "jazyky" {
+                "jazyky"
+            } else {
+                "vypnute"
+            }),
+        );
+        z.insert("titulky_auto".into(), json!(b("titulky_auto")));
         n.zmen(&z);
     }
     let uloha = Uloha {
@@ -563,6 +768,8 @@ pub fn stiahni(v: &Arc<Vnutro>, volby: &Map<String, Value>) -> Vysledok<()> {
             .collect(),
         mp4,
         priecinok: PathBuf::from(v.nastavenia.lock().unwrap().text("outdir")),
+        titulky: t("titulky") == "jazyky",
+        titulky_auto: b("titulky_auto"),
     };
     let z = CancellationToken::new();
     *v.jazyky.zrusenie.lock().unwrap() = z.clone();
@@ -698,6 +905,8 @@ pub async fn z_frontu(
             .collect(),
         mp4: o.kontajner == "mp4",
         priecinok: PathBuf::from(&p.priecinok),
+        titulky: o.titulky == "jazyky",
+        titulky_auto: o.titulky_auto,
     };
     prace(v, uloha, z, r).await
 }
@@ -730,6 +939,13 @@ pub fn popis_volieb(o: &super::fronta::VolbyJazykov) -> String {
     );
     if !o.zvuky.is_empty() && !mp4 {
         t.push_str(" · rôzny zvuk pri jazykoch");
+    }
+    if o.titulky == "jazyky" {
+        t.push_str(if o.titulky_auto {
+            " · titulky (aj automatické)"
+        } else {
+            " · titulky"
+        });
     }
     t
 }
@@ -976,7 +1192,10 @@ async fn prace(
         .iter()
         .map(|t| if rezim_stopy(t) == "oboje" { 2 } else { 1 })
         .sum();
-    let krokov = vystupov as f64 + if u.rezim == "video" { 1.0 } else { 0.0 } + 1.0;
+    let krokov = vystupov as f64
+        + if u.rezim == "video" { 1.0 } else { 0.0 }
+        + if u.titulky { 1.0 } else { 0.0 }
+        + 1.0;
     let p = Arc::new(Mutex::new(Priebeh {
         krokov,
         krok: 0.0,
@@ -1108,6 +1327,58 @@ async fn prace(
         if z.is_cancelled() {
             return Err(Chyba::Pauza);
         }
+        // titulky ku každému jazyku zvuku (v rovnakom poradí ako zvuk)
+        let mut titulky: Vec<(Stopa, PathBuf, bool)> = vec![];
+        if u.titulky {
+            krok(&r, &p, "Sťahujem titulky…".into());
+            let mut chyba: Vec<String> = vec![];
+            for (i, (t, _)) in jazyky.iter().enumerate() {
+                if t.kod.is_empty() {
+                    continue;
+                }
+                let Some((url, pripona, auto)) =
+                    najdi_titulky(&u.info, &t.kod, t.original, u.titulky_auto)
+                else {
+                    chyba.push(t.kod.to_uppercase());
+                    continue;
+                };
+                let c = tmp.join(format!("t{:02}_{}.srt", i + 1, bezpecny_nazov(&t.kod, 20)));
+                match stiahni_titulky(&url, &pripona, &c).await {
+                    Ok(n) if n > 0 => titulky.push((t.clone(), c, auto)),
+                    Ok(_) => chyba.push(t.kod.to_uppercase()),
+                    Err(e) => {
+                        r.zapis(format!("ℹ titulky {}: {e}", t.nazov));
+                        chyba.push(t.kod.to_uppercase());
+                    }
+                }
+            }
+            if !titulky.is_empty() {
+                r.zapis(format!(
+                    "💬 Titulky: {}",
+                    titulky
+                        .iter()
+                        .map(|(t, _, a)| format!(
+                            "{}{}",
+                            t.kod.to_uppercase(),
+                            if *a { " (automatické)" } else { "" }
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            if !chyba.is_empty() {
+                r.zapis(format!(
+                    "ℹ Titulky nie sú k dispozícii: {}{}",
+                    chyba.join(", "),
+                    if u.titulky_auto {
+                        ""
+                    } else {
+                        " (automatické sú vypnuté)"
+                    }
+                ));
+            }
+            dalsi(&p);
+        }
         krok(&r, &p, "Spájam stopy do jedného súboru…".into());
         r.zapis("⇒ Spájam stopy…".into());
         let kody: Vec<String> = jazyky
@@ -1220,6 +1491,20 @@ async fn prace(
                 }),
             });
         }
+        if !u.mp4 {
+            for (t, cesta, auto) in &titulky {
+                vstupy.push(Vstup {
+                    cesta: cesta.clone(),
+                    druh: "titulky".into(),
+                    jazyk: Some(t.kod.clone()),
+                    nazov: Some(format!(
+                        "{}{}",
+                        t.nazov,
+                        if *auto { " (automatické)" } else { "" }
+                    )),
+                });
+            }
+        }
         let ciel = rezervuj(ciel);
         let out = match spajanie::spoj(&vstupy, &ciel, &titul).await {
             Ok(o) => o,
@@ -1230,6 +1515,25 @@ async fn prace(
                 return Err(e);
             }
         };
+        // MP4 (alebo „aj samostatne“): titulky vedľa súboru – prehrávače ich načítajú samy
+        if u.mp4 || u.samostatne {
+            let kmen = out
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            for (t, cesta, _) in &titulky {
+                let c = jedinecna(u.priecinok.join(format!(
+                    "{kmen}.{}.srt",
+                    t.kod.split('-').next().unwrap_or(&t.kod)
+                )));
+                if tokio::fs::copy(cesta, &c).await.is_ok() {
+                    r.zapis(format!(
+                        "   ↳ {}",
+                        c.file_name().unwrap_or_default().to_string_lossy()
+                    ));
+                }
+            }
+        }
         if u.samostatne {
             for (t, cesta, kodek) in jazyky
                 .iter()

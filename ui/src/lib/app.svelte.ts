@@ -1,3 +1,4 @@
+import type { VolbyJazykov } from './jazyky'
 // Spoločný stav rozhrania: údaje z jadra, nastavenia, téma, upozornenia a otvorené okná.
 
 import { volaj, ChybaJadra } from './api'
@@ -5,7 +6,7 @@ import type { Init, Nastavenia, Stav } from './typy'
 
 export type Stranka = 'stahovanie' | 'schranka' | 'kurzy' | 'jazyky' | 'ucty' | 'nastavenia'
 export type Dialog =
-  | { druh: 'playlist'; url: string }
+  | { druh: 'playlist'; url: string; jazyky?: VolbyJazykov }
   | { druh: 'skener'; url: string }
   | { druh: 'zmazat'; co: 'front' | 'subory'; ids?: string[] | null }
   | null

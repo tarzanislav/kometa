@@ -1,13 +1,55 @@
 <script lang="ts">
   // Jazykové stopy pre viac videí naraz (playlist, kanál). Každé video dostane tie z jazykov,
   // ktoré má – v tomto poradí, so zvukom podľa voľby pri jazyku.
-  import { BEZNE, KVALITY, ZVUKY, nazovJazyka, vlozJazyk, type VolbyJazykov, type Zvuk } from '../lib/jazyky'
+  import {
+    BEZNE,
+    KVALITY,
+    ZVUKY,
+    nazovJazyka,
+    vlozJazyk,
+    type VolbyJazykov,
+    type ZisteneJazyky,
+    type Zvuk,
+  } from '../lib/jazyky'
   import { kratkyKod } from '../lib/format'
   import Ikona from './Ikona.svelte'
+  import Kometa from './Kometa.svelte'
   import Prepinac from './Prepinac.svelte'
   import Segment from './Segment.svelte'
+  import VolbaTitulkov from './VolbaTitulkov.svelte'
 
-  let { volby = $bindable() }: { volby: VolbyJazykov } = $props()
+  let {
+    volby = $bindable(),
+    nadpis = 'Jazykové stopy pre vybrané videá',
+    zistene = null,
+    zistuje = 0,
+    celkom = 0,
+    zistit,
+  }: {
+    volby: VolbyJazykov
+    nadpis?: string
+    /** aké jazyky majú videá (vzorka alebo všetky) */
+    zistene?: ZisteneJazyky | null
+    /** koľko videí sa práve skúma (0 = nič) */
+    zistuje?: number
+    /** koľko videí je vybraných spolu */
+    celkom?: number
+    zistit?: () => void
+  } = $props()
+
+  const zakladny = (k: string) => k.toLowerCase().split('-')[0]
+  const pocetJazyka = (kod: string) => zistene?.jazyky.find((j) => j.kod === zakladny(kod))?.pocet ?? 0
+  /** nájdené jazyky, ktoré ešte nie sú v poradí */
+  const dalsie = $derived(
+    (zistene?.jazyky ?? []).filter((j) => !volby.poradie.some((k) => zakladny(k) === j.kod)),
+  )
+  const vzorkou = $derived(!!zistene && celkom > zistene.preskumanych)
+
+  function pridajVsetkyNajdene() {
+    let p = [...volby.poradie]
+    for (const j of dalsie) p = vlozJazyk(p, j.kod)
+    volby.poradie = p
+  }
 
   let novy = $state('')
   const ponuka = $derived(BEZNE.filter(([k]) => !volby.poradie.includes(k)))
@@ -42,17 +84,71 @@
 
 <section class="volba" aria-labelledby="vj-nadpis">
   <div class="hlava">
-    <h3 id="vj-nadpis">Jazykové stopy pre vybrané videá</h3>
+    <h3 id="vj-nadpis">{nadpis}</h3>
     <p class="male tlmene">
       Každé video dostane tie z jazykov, ktoré má – v tomto poradí. Stopy idú po jazykoch: CZ (AAC), CZ (Opus), SK (AAC)…
     </p>
   </div>
+
+  {#if zistit}
+    <div class="zistene" aria-live="polite">
+      {#if zistuje}
+        <div class="zistuje">
+          <Kometa hodnota={null} popis="Zisťujem jazyky" />
+          <span class="male tlmene">Zisťujem, aké jazyky majú videá ({zistuje})…</span>
+        </div>
+      {:else if zistene}
+        <p class="male">
+          <strong>Jazyky vo videách</strong>
+          <span class="tlmene">
+            {vzorkou
+              ? `– podľa ${zistene.preskumanych} z ${celkom} videí (vzorka z celého výberu)`
+              : `– v ${zistene.preskumanych} ${zistene.preskumanych === 1 ? 'videe' : 'videách'}`}
+          </span>
+          <button class="tl tiche male-akcia" onclick={zistit}><Ikona meno="znova" velkost={14} /> Zistiť znova</button>
+        </p>
+        {#if dalsie.length}
+          <div class="cipy">
+            <span class="male tlmene">Pridať:</span>
+            {#each dalsie as j (j.kod)}
+              <button
+                class="cip"
+                title="{j.nazov} – v {j.pocet} z {zistene.preskumanych} videí{j.original ? ', niekde pôvodný jazyk' : ''}"
+                onclick={() => (volby.poradie = vlozJazyk(volby.poradie, j.kod))}
+              >
+                + {kratkyKod(j.kod)} <span class="cisla tlmene">{j.pocet}/{zistene.preskumanych}</span>
+              </button>
+            {/each}
+            {#if dalsie.length > 1}
+              <button class="tl tiche male-akcia" onclick={pridajVsetkyNajdene}>Pridať všetky nájdené</button>
+            {/if}
+          </div>
+        {:else if !zistene.jazyky.length}
+          <p class="male tlmene">Vo videách sa nenašiel preložený zvuk – stiahnu sa s pôvodným zvukom (podľa voľby nižšie).</p>
+        {/if}
+      {:else}
+        <button class="tl tiche" onclick={zistit}>
+          <Ikona meno="hladat" velkost={15} /> Zistiť, aké jazyky videá majú
+        </button>
+      {/if}
+    </div>
+  {/if}
 
   <ol class="jazyky" aria-label="Jazyky v poradí">
     {#each volby.poradie as kod, i (kod)}
       <li>
         <span class="cislo cisla" class:prvy={i === 0}>{i + 1}</span>
         <span class="meno" title={nazovJazyka(kod)}>{kratkyKod(kod)}</span>
+        {#if zistene && !zistuje}
+          {@const p = pocetJazyka(kod)}
+          <span
+            class="vyskyt cisla"
+            class:ziadny={p === 0}
+            title={p ? `${nazovJazyka(kod)} je v ${p} z ${zistene.preskumanych} preskúmaných videí` : `${nazovJazyka(kod)} sa v preskúmaných videách nenašla`}
+          >
+            {p ? `${p}/${zistene.preskumanych}` : 'nie je'}
+          </span>
+        {/if}
         <select
           class="vyber maly"
           aria-label="Zvuk – {nazovJazyka(kod)}"
@@ -137,6 +233,9 @@
       </div>
     </div>
     <div class="pole-volby">
+      <VolbaTitulkov bind:titulky={volby.titulky} bind:auto={volby.titulky_auto} mp4={volby.kontajner === 'mp4'} />
+    </div>
+    <div class="pole-volby">
       <Prepinac
         nazov="Pôvodná stopa na koniec"
         bind:zapnute={volby.original}
@@ -153,6 +252,61 @@
     border-radius: var(--r-panel);
     background: var(--bg);
     box-shadow: inset 0 0 0 1px var(--line);
+  }
+  .zistene {
+    margin-top: var(--s3);
+  }
+  .zistene p {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2);
+  }
+  .zistuje {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+  }
+  .zistuje :global(.kometa) {
+    flex: 0 0 160px;
+  }
+  .cipy {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s1) var(--s2);
+    margin-top: var(--s2);
+  }
+  .cip {
+    padding: 3px 10px;
+    border: 0;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent-ink, var(--ink));
+    font: 600 var(--t-s) / 1.4 var(--font-text);
+    cursor: pointer;
+  }
+  .cip:hover,
+  .cip:focus-visible {
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+  .male-akcia {
+    height: 26px;
+    padding: 0 var(--s2);
+    font-size: var(--t-s);
+  }
+  .vyskyt {
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--ok-soft, var(--sunken));
+    color: var(--ok, var(--ink-2));
+    font-size: var(--t-xs);
+    font-weight: 650;
+  }
+  .vyskyt.ziadny {
+    background: var(--warn-soft, var(--sunken));
+    color: var(--warn, var(--muted));
   }
   .hlava h3 {
     font: 650 var(--t-m) / 1.3 var(--font-display);

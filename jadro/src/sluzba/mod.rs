@@ -63,6 +63,7 @@ pub const METODY: &[&str] = &[
     "otvorit_subor",
     "schranka",
     "jazyky_nacitat",
+    "jazyky_zistit",
     "jazyky_stiahnut",
     "jazyky_zrusit",
     "vybrat_priecinok",
@@ -510,6 +511,7 @@ impl Sluzba {
                 Value::Null
             }
             "schranka" => json!(self.blokujuco(|v| v.prostredie.schranka()).await),
+            "jazyky_zistit" => jazyky::zisti(v, arg::<Vec<String>>(a, 0)?).await?,
             "jazyky_nacitat" => jazyky::nacitaj(v, &arg::<String>(a, 0)?).await?,
             "jazyky_stiahnut" => {
                 jazyky::stiahni(v, &arg::<Map<String, Value>>(a, 0)?)?;
@@ -698,6 +700,8 @@ impl Sluzba {
             kvalita: n.text("max_height"),
             rezim: "video".into(),
             bez_jazykov: "povodny".into(),
+            titulky: n.text("titulky"),
+            titulky_auto: n.ano("titulky_auto", false),
         }
     }
 

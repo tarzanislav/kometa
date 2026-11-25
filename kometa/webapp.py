@@ -32,7 +32,7 @@ from .common import (Cancelled, apply_settings, check_dependencies, clean_error,
                      load_config, open_folder, safe_name, save_config, set_password)
 from .fronta import DownloadQueue
 from .hosts import Accounts, DatoidClient, FastshareClient, WebshareClient
-from .jazyky import AUDIO_MODES, fetch_info, list_audio_tracks, pick_tracks, run_job
+from .jazyky import AUDIO_MODES, fetch_info, lang_label, list_audio_tracks, pick_tracks, run_job
 
 WEBUI = Path(__file__).with_name("webui")
 YT_ID = re.compile(r"(?:youtube\.com/(?:watch\?(?:[^#]*&)?v=|shorts/|live/|embed/)|youtu\.be/)([\w-]{11})")
@@ -58,6 +58,8 @@ _SETTINGS = {
     "max_height": lambda v: v if v in ("Najlepšia", "2160p", "1440p", "1080p", "720p", "480p") else "Najlepšia",
     "rozbalovat": bool,
     "po_rozbaleni": lambda v: v if v in ("nechat", "kos") else "nechat",
+    "titulky": lambda v: v if v in ("vypnute", "jazyky") else "vypnute",
+    "titulky_auto": bool,
 }
 
 
@@ -68,7 +70,10 @@ def popis_jazykov(o: dict) -> str:
     zvuk = {"aac": "AAC", "opus": "Opus"}.get(o.get("zvuk"), "AAC + Opus")
     t = f"{kody}{' + originál' if o.get('original') else ''} · {'AAC' if mp4 else zvuk} · " \
         f"{'MP4' if mp4 else 'MKA' if o.get('rezim') == 'audio' else 'MKV'}"
-    return t + (" · rôzny zvuk pri jazykoch" if o.get("zvuky") and not mp4 else "")
+    t += " · rôzny zvuk pri jazykoch" if o.get("zvuky") and not mp4 else ""
+    if o.get("titulky") == "jazyky":
+        t += " · titulky (aj automatické)" if o.get("titulky_auto") else " · titulky"
+    return t
 
 
 def yt_thumb(url: str) -> str:
@@ -175,7 +180,8 @@ class Jadro:
         c = self.cfg
         return {"poradie": list(c.get("langs") or common.DEFAULT_LANGS), "original": bool(c.get("include_original", True)),
                 "zvuk": c.get("audio_mode") or "oboje", "zvuky": {}, "kontajner": c.get("kontajner") or "mkv",
-                "kvalita": c.get("max_height") or "Najlepšia", "rezim": "video", "bez_jazykov": "povodny"}
+                "kvalita": c.get("max_height") or "Najlepšia", "rezim": "video", "bez_jazykov": "povodny",
+                "titulky": c.get("titulky") or "vypnute", "titulky_auto": bool(c.get("titulky_auto"))}
 
     def _pridaj(self, urls: list[str], preset: str, out: str, titles: list[str] | None = None,
                 jazyky: dict | None = None, password: str = "") -> list[str]:
@@ -365,7 +371,44 @@ class Jadro:
                 "stopy": [{"kod": t["code"], "nazov": t["label"], "original": t["original"],
                            "aac": bool(t.get("aac")), "kbps": round((t["format"].get("abr") or 0))}
                           for t in tracks],
-                "vybrane": [t["code"] for t in chosen if not t["original"]]}
+                "vybrane": [t["code"] for t in chosen if not t["original"]],
+                "titulky": sorted({k.lower().split("-")[0] for k in (info.get("subtitles") or {}) if k != "live_chat"}),
+                "auto_titulky": bool(info.get("automatic_captions"))}
+
+    def jazyky_zistit(self, urls: list[str]) -> dict:
+        """Jazyky zvuku vo viacerých videách (najviac 4 naraz, najviac 60 videí)."""
+        from concurrent.futures import ThreadPoolExecutor
+        yt = re.compile(r"^(https?://)?([\w-]+\.)*(youtube\.com|youtu\.be)/")
+        urls = [u.strip() for u in urls or [] if yt.match((u or "").strip())][:60]
+
+        def jeden(url: str) -> dict:
+            try:
+                info = fetch_info(url, log=lambda m: None)
+            except Exception as e:  # noqa: BLE001
+                return {"url": url, "chyba": common.clean_error(e) or str(e)}
+            if not info.get("formats"):
+                return {"url": url, "chyba": "Nie je to jedno video."}
+            kody: dict[str, bool] = {}
+            for t in list_audio_tracks(info):
+                k = (t["code"] or "").split("-")[0].lower()
+                if k:
+                    kody[k] = kody.get(k, False) or bool(t["original"])
+            return {"url": url, "nazov": info.get("title") or "", "dlzka": info.get("duration"),
+                    "nahlad": yt_thumb(url) or "", "jazyky": list(kody),
+                    "original": next((k for k, o in kody.items() if o), None)}
+
+        with ThreadPoolExecutor(4) as ex:
+            videa = list(ex.map(jeden, urls))
+        pocty: dict[str, list] = {}
+        for v in videa:
+            for k in v.get("jazyky", []):
+                x = pocty.setdefault(k, [0, 0])
+                x[0] += 1
+                x[1] += int(v.get("original") == k)
+        poradie = list(common.DEFAULT_LANGS)
+        jazyky = sorted(pocty.items(), key=lambda kv: (-kv[1][0], poradie.index(kv[0]) if kv[0] in poradie else 99))
+        return {"preskumanych": sum(1 for v in videa if "chyba" not in v), "videa": videa,
+                "jazyky": [{"kod": k, "nazov": lang_label(k), "pocet": c, "original": o} for k, (c, o) in jazyky]}
 
     def jazyky_stiahnut(self, volby: dict) -> None:
         if self._lang["busy"]:
@@ -388,11 +431,13 @@ class Jadro:
         self._save(langs=[t["code"] for t in tracks if t["code"] and not t["original"]] or self.cfg.get("langs"),
                    mode=mode, include_original=bool(volby.get("original")),
                    keep_separate=bool(volby.get("samostatne")), max_height=q, audio_mode=audio_mode,
-                   kontajner=kontajner)
+                   kontajner=kontajner, titulky="jazyky" if volby.get("titulky") == "jazyky" else "vypnute",
+                   titulky_auto=bool(volby.get("titulky_auto")))
         job = {"info": self._lang_info, "tracks": tracks, "outdir": self._outdir(), "mode": mode,
                "existing_path": existing, "include_original": bool(volby.get("original")),
                "keep_separate": bool(volby.get("samostatne")), "audio_mode": audio_mode, "kontajner": kontajner,
                "zvuky": {str(k): v for k, v in (volby.get("zvuky") or {}).items() if v in AUDIO_MODES},
+               "titulky": volby.get("titulky"), "titulky_auto": bool(volby.get("titulky_auto")),
                "max_height": int(q[:-1]) if q.endswith("p") and q[:-1].isdigit() else None}
         self._lang_cancel = threading.Event()
         self._lang.update(busy=True, frac=0.0, text="Pripravujem…", log=[], file="", error="")
@@ -545,7 +590,7 @@ API_METHODS = ["init", "stav", "pridat", "rozpoznat", "kolekcia", "pridat_vybran
                "pozastavit", "spustit", "odstranit", "vycistit_hotove", "pozastavit_vsetko", "spustit_vsetko",
                "vycistit_front", "subory_na_zmazanie", "zmazat_subory", "zadat_heslo", "rozbalit", "otvorit",
                "otvorit_subor", "schranka",
-               "jazyky_nacitat", "jazyky_stiahnut", "jazyky_zrusit",
+               "jazyky_nacitat", "jazyky_zistit", "jazyky_stiahnut", "jazyky_zrusit",
                "vybrat_priecinok", "vybrat_video", "prihlasit", "odhlasit", "ulozit_nastavenia"]
 
 

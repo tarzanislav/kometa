@@ -519,7 +519,8 @@ class DownloadQueue:
                "include_original": bool(o.get("original")), "keep_separate": False,
                "max_height": int(quality[:-1]) if quality.endswith("p") and quality[:-1].isdigit() else None,
                "audio_mode": o.get("zvuk") if o.get("zvuk") in ("oboje", "aac", "opus") else "oboje",
-               "zvuky": o.get("zvuky") or {}, "kontajner": "mp4" if o.get("kontajner") == "mp4" else "mkv"}
+               "zvuky": o.get("zvuky") or {}, "kontajner": "mp4" if o.get("kontajner") == "mp4" else "mkv",
+               "titulky": o.get("titulky"), "titulky_auto": bool(o.get("titulky_auto"))}
         try:
             return jazyky.run_job(job, log=lambda m: None,
                                   progress=lambda frac, text: (self._update(iid, frac=frac, step=(text or "").rstrip("…")),

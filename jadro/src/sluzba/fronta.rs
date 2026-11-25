@@ -47,6 +47,12 @@ pub struct VolbyJazykov {
     /// keď video nemá žiadny z jazykov: "povodny" (stiahnuť s pôvodným zvukom) | "preskocit"
     #[serde(default)]
     pub bez_jazykov: String,
+    /// titulky: "vypnute" | "jazyky" (ku každému jazyku zvuku titulky v tom istom jazyku)
+    #[serde(default)]
+    pub titulky: String,
+    /// keď video nemá titulky od autora, použiť automatické (strojové) titulky YouTube
+    #[serde(default)]
+    pub titulky_auto: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

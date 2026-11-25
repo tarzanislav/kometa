@@ -240,10 +240,110 @@ def count_audio_streams(path: Path) -> int:
     return len(re.findall(r"Stream #0:\d+.*?: Audio:", r.stderr))
 
 
+# --------------------------------------------------------------------------- #
+#  Titulky – ku každému jazyku zvuku titulky v tom istom jazyku
+# --------------------------------------------------------------------------- #
+
+def find_subtitles(info: dict, code: str, original: bool, auto: bool) -> tuple[str, str, bool] | None:
+    """(adresa, prípona, automatické) – najprv od autora videa, potom automatické YouTube."""
+    base = (code or "").lower().split("-")[0]
+    if not base:
+        return None
+    for key, automatic in (("subtitles", False), ("automatic_captions", True)):
+        if automatic and not auto:
+            continue
+        subs = info.get(key) or {}
+        cands = ([f"{base}-orig"] if automatic and original else []) + [code, base] + sorted(
+            k for k in subs if k.lower().startswith(base + "-") and not k.endswith("-orig"))
+        for k in cands:
+            for ext in ("json3", "vtt"):
+                f = next((x for x in subs.get(k) or [] if x.get("ext") == ext and x.get("url")), None)
+                if f:
+                    return f["url"], ext, automatic
+    return None
+
+
+def _clean_cues(cues: list[list]) -> list[list]:
+    out: list[list] = []
+    for start, end, text in sorted(((a, b, "\n".join(r.strip() for r in t.splitlines() if r.strip()))
+                                    for a, b, t in cues), key=lambda c: c[0]):
+        if not text or end <= start:
+            continue
+        if out and out[-1][2] == text and start <= out[-1][1] + 50:
+            out[-1][1] = max(out[-1][1], end)
+            continue
+        if out and out[-1][1] > start:
+            out[-1][1] = max(start, out[-1][0] + 1)   # rolujúce automatické titulky neprekrývať
+        out.append([start, end, text])
+    return out
+
+
+def subs_from_json3(text: str) -> list[list]:
+    import json
+    try:
+        events = json.loads(text).get("events") or []
+    except ValueError:
+        return []
+    cues = []
+    for e in events:
+        segs = e.get("segs")
+        dur = e.get("dDurationMs") or 0
+        if not segs or dur <= 0:
+            continue
+        t = "".join(s.get("utf8", "") for s in segs)
+        if t.strip():
+            start = e.get("tStartMs") or 0
+            cues.append([start, start + dur, t])
+    return _clean_cues(cues)
+
+
+def subs_from_vtt(text: str) -> list[list]:
+    import html
+
+    def ms(t: str) -> int | None:
+        t = t.strip().replace(",", ".")
+        hms, _, frac = t.partition(".")
+        try:
+            parts = [int(x) for x in hms.split(":")]
+            sec = parts[0] * 3600 + parts[1] * 60 + parts[2] if len(parts) == 3 else parts[0] * 60 + parts[1]
+            return sec * 1000 + int((frac or "0")[:3].ljust(3, "0"))
+        except (ValueError, IndexError):
+            return None
+    cues = []
+    for block in text.replace("\r\n", "\n").split("\n\n"):
+        lines = block.splitlines()
+        i = next((n for n, r in enumerate(lines) if "-->" in r), None)
+        if i is None:
+            continue
+        a, _, b = lines[i].partition("-->")
+        start, end = ms(a), ms((b.split() or [""])[0])
+        if start is None or end is None:
+            continue
+        cues.append([start, end, "\n".join(html.unescape(re.sub(r"<[^>]*>", "", r)) for r in lines[i + 1:])])
+    return _clean_cues(cues)
+
+
+def to_srt(cues: list[list]) -> str:
+    def t(ms: int) -> str:
+        ms = max(0, ms)
+        return f"{ms // 3600000:02}:{ms // 60000 % 60:02}:{ms // 1000 % 60:02},{ms % 1000:03}"
+    return "".join(f"{i}\n{t(a)} --> {t(b)}\n{txt}\n\n" for i, (a, b, txt) in enumerate(cues, 1))
+
+
+def download_subtitles(url: str, ext: str, dest: Path) -> int:
+    import requests
+    r = requests.get(url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
+    r.raise_for_status()
+    cues = subs_from_json3(r.text) if ext == "json3" else subs_from_vtt(r.text)
+    if cues:
+        dest.write_text(to_srt(cues), encoding="utf-8")
+    return len(cues)
+
+
 def mux(out_path: Path, inputs: list[dict], title: str) -> None:
     """Spojí vstupy do jedného súboru bez prekódovania – Matroska (.mkv/.mka) alebo MP4 (.mp4/.m4a) podľa prípony.
 
-    inputs: {"path", "kind": "existing"|"video"|"audio", "lang3", "title", "audio_count"}
+    inputs: {"path", "kind": "existing"|"video"|"audio"|"subtitle", "lang3", "title", "audio_count"}
     """
     cmd = [_ffmpeg(), "-hide_banner", "-loglevel", "error", "-y"]
     for inp in inputs:
@@ -257,6 +357,8 @@ def mux(out_path: Path, inputs: list[dict], title: str) -> None:
             tail += ["-map", f"{i}:a?"]
         elif inp["kind"] == "video":
             maps += ["-map", f"{i}:v:0"]
+        elif inp["kind"] == "subtitle":
+            continue                                  # titulky až za všetkými zvukmi
         else:
             maps += ["-map", f"{i}:a:0"]
             meta += [f"-metadata:s:a:{a}", f"language={inp['lang3']}",
@@ -275,7 +377,14 @@ def mux(out_path: Path, inputs: list[dict], title: str) -> None:
     for k in range(a):
         disp += [f"-disposition:a:{k}", "default" if k == 0 else "0"]
     mp4 = out_path.suffix.lower() in (".mp4", ".m4a")
-    cmd += maps + ["-c", "copy"] + meta + disp + ["-metadata", f"title={title}"]
+    subs = [(i, inp) for i, inp in enumerate(inputs) if inp["kind"] == "subtitle"]
+    for k, (i, inp) in enumerate(subs):
+        maps += ["-map", f"{i}:0"]
+        meta += [f"-metadata:s:s:{k}", f"language={inp['lang3']}", f"-metadata:s:s:{k}", f"title={inp['title']}",
+                 f"-metadata:s:s:{k}", f"handler_name={inp['title']}"]
+        disp += [f"-disposition:s:{k}", "0"]
+    cmd += maps + ["-c", "copy"] + (["-c:s", "mov_text" if mp4 else "srt"] if subs else []) + meta + disp + [
+        "-metadata", f"title={title}"]
     if mp4:
         cmd += ["-movflags", "+faststart"]       # prehrávanie môže začať skôr, než sa súbor celý načíta
     cmd.append(str(out_path))
@@ -403,6 +512,30 @@ def run_job(job: dict, log=print, progress=lambda frac, text: None, cancel: thre
 
         if cancel.is_set():
             raise Cancelled()
+        subtitles: list[tuple[dict, Path, bool]] = []
+        if job.get("titulky") == "jazyky":
+            state["text"] = "Sťahujem titulky…"
+            missing = []
+            for n, (t, _) in enumerate(per_lang, 1):
+                if not t["code"]:
+                    continue
+                found = find_subtitles(info, t["code"], t["original"], bool(job.get("titulky_auto")))
+                dest = tmp / f"t{n:02}_{safe_name(t['code'])}.srt"
+                try:
+                    ok = bool(found) and download_subtitles(found[0], found[1], dest) > 0
+                except Exception as e:  # noqa: BLE001 – titulky nie sú podmienkou
+                    log(f"ℹ titulky {t['label']}: {e}")
+                    ok = False
+                if ok:
+                    subtitles.append((t, dest, found[2]))
+                else:
+                    missing.append(t["code"].upper())
+            if subtitles:
+                log("💬 Titulky: " + ", ".join(t["code"].upper() + (" (automatické)" if a else "")
+                                              for t, _, a in subtitles))
+            if missing:
+                log("ℹ Titulky nie sú k dispozícii: " + ", ".join(missing)
+                    + ("" if job.get("titulky_auto") else " (automatické sú vypnuté)"))
         state["text"] = "Spájam stopy do jedného súboru…"
         log("⇒ Spájam stopy…")
         sub(0)
@@ -426,6 +559,9 @@ def run_job(job: dict, log=print, progress=lambda frac, text: None, cancel: thre
                 suffix = (" – AAC" if codec == "aac" else " – Opus") if len(got) > 1 else ""
                 inputs.append({"path": p, "kind": "audio", "lang3": iso3(t["code"]),
                                "title": t["label"] + (" – originál" if t["original"] else "") + suffix})
+        for t, p, automatic in subtitles:
+            inputs.append({"path": p, "kind": "subtitle", "lang3": iso3(t["code"]),
+                           "title": t["label"] + (" (automatické)" if automatic else "")})
         try:
             mux(out, inputs, title)
         except BaseException:
@@ -434,6 +570,10 @@ def run_job(job: dict, log=print, progress=lambda frac, text: None, cancel: thre
             raise
 
         if job.get("keep_separate"):
+            for t, p, _ in subtitles:
+                c = unique_path(outdir / f"{out.stem}.{t['code'].split('-')[0]}.srt")
+                shutil.copyfile(p, c)
+                log(f"   ↳ {c.name}")
             for t, got in per_lang:
                 if not got:
                     continue

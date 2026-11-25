@@ -139,6 +139,7 @@ fn kodek_id(k: Kodek) -> &'static str {
         Kodek::Mp3 => "A_MPEG/L3",
         Kodek::Ac3 => "A_AC3",
         Kodek::Eac3 => "A_EAC3",
+        Kodek::Srt => "S_TEXT/UTF8",
     }
 }
 
@@ -160,7 +161,14 @@ fn stopa_prvok(cislo: usize, s: &StopaVystupu) -> Vysledok<Vec<u8>> {
     let mut t = vec![];
     t.extend(uint(0xD7, cislo as u64 + 1));
     t.extend(uint(0x73C5, uid(cislo as u64 + 7)));
-    t.extend(uint(0x83, if i.druh() == Druh::Video { 1 } else { 2 }));
+    t.extend(uint(
+        0x83,
+        match i.druh() {
+            Druh::Video => 1,
+            Druh::Zvuk => 2,
+            Druh::Titulky => 0x11,
+        },
+    ));
     t.extend(uint(0xB9, 1)); // FlagEnabled
     t.extend(uint(0x88, s.predvolena as u64)); // FlagDefault (predvolená hodnota je 1 – zapisuje sa vždy)
     t.extend(uint(0x55AA, 0)); // FlagForced
@@ -206,7 +214,9 @@ fn stopa_prvok(cislo: usize, s: &StopaVystupu) -> Vysledok<Vec<u8>> {
         }
         _ => {}
     }
-    if i.druh() == Druh::Video {
+    if i.druh() == Druh::Titulky {
+        // text nemá nastavenia dekodéra ani obraz/zvuk
+    } else if i.druh() == Druh::Video {
         let mut v = vec![];
         if i.sirka > 0 && i.vyska > 0 {
             v.extend(uint(0xB0, i.sirka as u64));
@@ -245,6 +255,8 @@ pub struct ZapisovacMkv {
     cues: Vec<(i64, usize, u64)>,
     pocty: Vec<u64>,
     koniec_ns: i64,
+    /// stopy titulkov – zapisujú sa ako BlockGroup s BlockDuration
+    titulky: Vec<bool>,
 }
 
 impl ZapisovacMkv {
@@ -311,6 +323,10 @@ impl ZapisovacMkv {
             cues: vec![],
             pocty: vec![0; stopy.len()],
             koniec_ns: 0,
+            titulky: stopy
+                .iter()
+                .map(|s| s.info.druh() == Druh::Titulky)
+                .collect(),
         })
     }
 
@@ -362,13 +378,24 @@ impl ZapisovacMkv {
         let mut blok = Vec::with_capacity(data.len() + 4);
         blok.push(0x80 | (stopa as u8 + 1));
         blok.extend(rel.to_be_bytes());
-        blok.push(if kluc { 0x80 } else { 0 });
-        blok.extend_from_slice(data);
-        self.klaster.extend(id_bajty(SIMPLEBLOCK));
-        self.klaster.extend(vint(blok.len() as u64));
-        self.klaster.extend(blok);
+        if self.titulky[stopa] {
+            // titulok: Block + BlockDuration (ako dlho ostane na obrazovke)
+            blok.push(0);
+            blok.extend_from_slice(data);
+            let mut g = prvok(0xA1, &blok);
+            g.extend(uint(0x9B, ((trvanie.max(0) + 500_000) / 1_000_000) as u64));
+            self.klaster.extend(prvok(0xA0, &g));
+        } else {
+            blok.push(if kluc { 0x80 } else { 0 });
+            blok.extend_from_slice(data);
+            self.klaster.extend(id_bajty(SIMPLEBLOCK));
+            self.klaster.extend(vint(blok.len() as u64));
+            self.klaster.extend(blok);
+        }
         self.pocty[stopa] += 1;
-        self.koniec_ns = self.koniec_ns.max(pts + trvanie.max(0));
+        if !self.titulky[stopa] {
+            self.koniec_ns = self.koniec_ns.max(pts + trvanie.max(0));
+        }
         Ok(())
     }
 
@@ -498,8 +525,18 @@ pub fn over(cesta: &Path, pocet_stop: usize) -> Vysledok<Vec<u64>> {
                     if q + cvel > k.len() {
                         return Err(zle("blok presahuje cluster"));
                     }
-                    if cid as u32 == SIMPLEBLOCK {
-                        let mut r = q;
+                    // SimpleBlock, alebo BlockGroup (titulky) s Block vnútri
+                    let blok = match cid as u32 {
+                        SIMPLEBLOCK => Some(q),
+                        0xA0 => {
+                            let mut r = q;
+                            let bid = citaj_vint(&k, &mut r, true);
+                            let _ = citaj_vint(&k, &mut r, false);
+                            (bid == Some(0xA1)).then_some(r)
+                        }
+                        _ => None,
+                    };
+                    if let Some(mut r) = blok {
                         let stopa =
                             citaj_vint(&k, &mut r, false).ok_or_else(|| zle("blok"))? as usize;
                         if stopa == 0 || stopa > pocet_stop {

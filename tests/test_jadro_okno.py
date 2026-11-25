@@ -11,6 +11,7 @@ a – ak je nainštalovaný Playwright – aj rozhranie v Chromiu.
 import hashlib
 import http.server
 import json
+import re
 import os
 import shutil
 import signal
@@ -239,6 +240,7 @@ class Okno:
 
     def __init__(self, priecinok: Path, **env):
         self.priecinok = priecinok
+        self.env = env
         e = dict(os.environ, KOMETA_PRIECINOK=str(priecinok), KOMETA_BEZ_TREZORU="1", NO_PROXY="127.0.0.1,localhost",
                  KOMETA_WEBSHARE_ZAKLAD=BASE + "/ws/api", KOMETA_FASTSHARE_ZAKLAD=BASE + "/fastshare", KOMETA_DATOID_ZAKLAD=BASE + "/datoid", **env)
         self.p = subprocess.Popen([str(EXE), "okno", "--bez-okna"], stdout=subprocess.PIPE, text=True, env=e)
@@ -793,11 +795,82 @@ def priprav_jazyky() -> tuple[Path, str]:
         zvuk("140-1", "cs", "mp4a.40.2", "cs.m4a", "Czech, medium", -1),
         zvuk("251-1", "cs", "opus", "cs.webm", "Czech, medium", -1),
         zvuk("251-2", "sk", "opus", "sk.webm", "Slovak, medium", -1)]}
+    # titulky: CZ od autora (json3), SK od autora (len WebVTT), EN len automatické (rozpoznaná reč)
+    (m / "cs.json3").write_text(json.dumps({"events": [
+        {"tStartMs": 0, "dDurationMs": 3000, "wWinId": 1},
+        {"tStartMs": 500, "dDurationMs": 1000, "segs": [{"utf8": "Ahoj, "}, {"utf8": "svet"}]},
+        {"tStartMs": 1600, "dDurationMs": 1200, "segs": [{"utf8": "Druhý titulok"}]}]}), encoding="utf-8")
+    (m / "sk.vtt").write_text("WEBVTT\n\n00:00:00.500 --> 00:00:01.500\nAhoj, <i>svet</i>\n\n"
+                              "00:00:01.600 --> 00:00:02.800\nDruhý titulok\n", encoding="utf-8")
+    (m / "en.json3").write_text(json.dumps({"events": [
+        {"tStartMs": 400, "dDurationMs": 2000, "segs": [{"utf8": "hello"}, {"utf8": " world"}]}]}), encoding="utf-8")
+    info["subtitles"] = {"cs": [{"ext": "json3", "url": u("cs.json3")}, {"ext": "vtt", "url": u("chyba.vtt")}],
+                         "sk": [{"ext": "vtt", "url": u("sk.vtt")}], "live_chat": [{"ext": "json", "url": u("x")}]}
+    info["automatic_captions"] = {"en-orig": [{"ext": "json3", "url": u("en.json3")}],
+                                  "de": [{"ext": "json3", "url": u("en.json3")}]}
     (D / "info.json").write_text(json.dumps(info), encoding="utf-8")
     nastroj = D / "falosny-yt-dlp"
     nastroj.write_text(f"#!/bin/sh\ncat '{D / 'info.json'}'\n", encoding="utf-8")
     nastroj.chmod(0o755)
     return nastroj, "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+
+
+def jazyky_rozhranie(o: Okno, yt):
+    """Karta Jazykové stopy: viac odkazov naraz a kanál; okno playlistu s prepínačom jazykov."""
+    from playwright.sync_api import sync_playwright
+    pl = {"_type": "playlist", "title": "Kanál o histórii", "uploader": "Kanál", "entries": [
+        {"id": c * 11, "url": yt(c), "title": f"Diel {i + 1}", "duration": 600, "ie_key": "Youtube"}
+        for i, c in enumerate("fghijklmnopq")]}
+    (D / "pl.json").write_text(json.dumps(pl), encoding="utf-8")
+    nastroj = Path(o.env["KOMETA_YTDLP"])
+    povodny = nastroj.read_text(encoding="utf-8")
+    nastroj.write_text(f"#!/bin/sh\ncase \"$*\" in *--flat-playlist*) cat '{D / 'pl.json'}';; *) cat '{D / 'info.json'}';; esac\n",
+                       encoding="utf-8")
+    pred = {x["url"] for x in o.data("stav")["polozky"]}
+    try:
+        with sync_playwright() as p:
+            b = p.chromium.launch()
+            s = b.new_page(viewport={"width": 1280, "height": 1000})
+            s.route("**/i.ytimg.com/**", lambda r: r.fulfill(status=204, body=""))
+            s.goto(o.url)
+            s.get_by_role("button", name="Jazykové stopy").first.click()
+            s.locator("#yt-url").fill(f"{yt('r')}\n{yt('s')}\n{yt('t')}")
+            s.get_by_role("button", name="Načítať jazyky").click()
+            s.get_by_text("Jazykové stopy pre 3 videá").wait_for(timeout=20000)
+            s.get_by_text("Jazyky vo videách").wait_for(timeout=30000)
+            skontroluj("viac odkazov: každé video ukáže svoje jazyky", s.locator(".zoznam .video").count() == 3
+                       and s.locator(".zoznam .jazyk").count() == 9)
+            s.get_by_role("checkbox", name="Stiahnuť Jazyková skúška").nth(2).uncheck()
+            s.get_by_role("button", name="Stiahnuť 2 videá").click()
+            s.get_by_role("heading", name="Sťahovanie", exact=True).wait_for(timeout=10000)
+            s.wait_for_timeout(500)
+            st = o.data("stav")
+            nove = [x for x in st["polozky"] if x["url"] not in pred]
+            skontroluj("viac odkazov: 2 vybrané videá s jazykmi do frontu",
+                       sorted(x["url"] for x in nove) == [yt("r"), yt("s")] and all(x["format"] == "jazyky" for x in nove),
+                       [(x["url"], x["format"]) for x in nove])
+            # kanál v karte Jazykové stopy → výber videí s jazykmi
+            s.get_by_role("button", name="Jazykové stopy").first.click()
+            s.locator("#yt-url").fill("https://www.youtube.com/@historia")
+            s.get_by_role("button", name="Načítať jazyky").click()
+            s.get_by_text("Kanál o histórii").first.wait_for(timeout=20000)
+            prep = s.get_by_role("switch", name="S jazykovými stopami")
+            skontroluj("kanál z karty Jazykové stopy: okno s výberom videí a zapnutými jazykmi",
+                       prep.get_attribute("aria-checked") == "true")
+            s.get_by_text("podľa 10 z 12 videí", exact=False).wait_for(timeout=30000)
+            skontroluj("kanál: jazyky zistené zo vzorky videí", s.locator(".vyskyt").first.inner_text() == "10/10")
+            s.get_by_role("button", name="Žiadne").click()
+            s.get_by_role("button", name="Najnovších").click()
+            s.get_by_role("button", name="Stiahnuť 10 videí").click()
+            s.wait_for_timeout(1500)
+            st = o.data("stav")
+            z_kanala = [x for x in st["polozky"] if x["url"] in {e["url"] for e in pl["entries"]}]
+            skontroluj("kanál: 10 najnovších videí s jazykmi do frontu", len(z_kanala) == 10
+                       and all(x["format"] == "jazyky" for x in z_kanala), len(z_kanala))
+            b.close()
+    finally:
+        nastroj.write_text(povodny, encoding="utf-8")
+    o.cakaj(lambda s: all(x["stav"] in ("hotovo", "chyba") for x in s["polozky"]), 240)
 
 
 def jazyky(out: Path):
@@ -829,6 +902,30 @@ def jazyky(out: Path):
                   ("audio", "opus", "eng", "Angličtina – originál – Opus", 0)]
         skontroluj("MKV: obraz VP9, stopy CZ (AAC), CZ (Opus), SK (AAC), SK (Opus), originál (AAC, Opus)",
                    s["text"] == "Hotovo" and f.name == "Jazyková skúška [cs+sk+en].mkv" and p == cakane, (s, p))
+        skontroluj("načítanie: titulky od autora a automatické", n["titulky"] == ["cs", "sk"] and n["auto_titulky"] is True, n)
+        s, f = uloha(o, {"poradie": ["cs", "sk"], "rezim": "video", "original": True, "zvuk": "aac",
+                         "kontajner": "mkv", "titulky": "jazyky"})
+        p = prud(f) if f else []
+        tit = [x for x in p if x[0] == "subtitle"]
+        skontroluj("titulky ku každému jazyku zvuku, vložené do MKV (bez automatických len od autora)",
+                   s["text"] == "Hotovo" and tit == [("subtitle", "subrip", "cze", "Čeština", 0),
+                                                     ("subtitle", "subrip", "slo", "Slovenčina", 0)]
+                   and any("Titulky nie sú k dispozícii: EN (automatické sú vypnuté)" in r for r in s["log"]), (s, p))
+        r = subprocess.run([FF, "-v", "error", "-i", str(f), "-map", "0:s:1", "-f", "srt", "-"], capture_output=True, text=True)
+        # časy sa posunú spolu s obrazom (spoločný začiatok všetkých stôp – Opus začína o pár ms skôr)
+        skontroluj("obsah titulkov (WebVTT → SRT, bez značiek a s časmi)",
+                   re.search(r"00:00:00,5[0-4]\d --> 00:00:01,5[0-4]\d\nAhoj, svet\n", r.stdout) is not None
+                   and "Druhý titulok" in r.stdout, r.stdout + r.stderr)
+        s, f = uloha(o, {"poradie": ["cs"], "rezim": "video", "original": True, "zvuk": "aac", "kontajner": "mkv",
+                         "titulky": "jazyky", "titulky_auto": True})
+        tit = [x for x in (prud(f) if f else []) if x[0] == "subtitle"]
+        skontroluj("automatické titulky k originálu (rozpoznaná reč)", tit == [
+            ("subtitle", "subrip", "cze", "Čeština", 0), ("subtitle", "subrip", "eng", "Angličtina (automatické)", 0)], tit)
+        s, f = uloha(o, {"poradie": ["cs", "sk"], "rezim": "video", "original": False, "zvuk": "aac",
+                         "kontajner": "mp4", "titulky": "jazyky"})
+        srt = sorted(x.name for x in f.parent.iterdir() if x.name.startswith(f.stem + ".") and x.suffix == ".srt") if f else []
+        skontroluj("MP4: titulky vedľa videa ako .srt", srt == [f"{f.stem}.cs.srt", f"{f.stem}.sk.srt"]
+                   and "Ahoj, svet" in (f.parent / srt[0]).read_text(encoding="utf-8"), srt)
         s, f = uloha(o, {"poradie": ["cs", "sk", "en"], "rezim": "audio", "zvuk": "oboje", "kontajner": "mkv",
                          "zvuky": {"cs": "aac", "sk": "aac", "en": "opus"}})
         p = prud(f) if f else []
@@ -881,6 +978,13 @@ def jazyky(out: Path):
         skontroluj("video bez vybraných jazykov: s pôvodným zvukom", d["stav"] == "hotovo"
                    and [x[2:4] for x in pd[1:]] == [("eng", "Angličtina – originál – AAC"),
                                                     ("eng", "Angličtina – originál – Opus")], (d, pd))
+        z = o.data("jazyky_zistit", [yt("a"), yt("b"), yt("c"), "https://vimeo.com/123"])
+        skontroluj("zistenie jazykov vo viacerých videách (iné ako YouTube sa vynechá)",
+                   z["preskumanych"] == 3 and [(j["kod"], j["pocet"], j["original"]) for j in z["jazyky"]]
+                   == [("cs", 3, 0), ("sk", 3, 0), ("en", 3, 3)]
+                   and [v["jazyky"] for v in z["videa"]] == [["en", "cs", "sk"]] * 3
+                   and z["videa"][0]["nazov"] == "Jazyková skúška", z)
+        jazyky_rozhranie(o, yt)
         o.data("pridat", yt("e"), "jazyky")
         s = o.cakaj(lambda s: hotove(s, yt("e")), 60)
         e = polozka(s, yt("e"))

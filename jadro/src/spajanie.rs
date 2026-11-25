@@ -203,7 +203,29 @@ async fn spoj_ffmpeg(vstupy: &[Vstup], ciel: &Path, titul: &str) -> Vysledok<Pat
             zvuk += 1;
         }
     }
+    // titulky až za zvukmi (v MKV ako SRT, v MP4 ako mov_text), predvolene vypnuté
+    let mut tit = 0usize;
+    for (i, v) in vstupy.iter().enumerate() {
+        if !v.druh.contains("titulky") {
+            continue;
+        }
+        a.extend(["-map".into(), format!("{i}:0")]);
+        if let Some(j) = &v.jazyk {
+            meta.extend([
+                format!("-metadata:s:s:{tit}"),
+                format!("language={}", iso639_2(j)),
+            ]);
+        }
+        if let Some(n) = &v.nazov {
+            meta.extend([format!("-metadata:s:s:{tit}"), format!("title={n}")]);
+        }
+        meta.extend([format!("-disposition:s:{tit}"), "0".into()]);
+        tit += 1;
+    }
     a.extend(["-c".into(), "copy".into()]);
+    if tit > 0 {
+        a.extend(["-c:s".into(), if mp4 { "mov_text" } else { "srt" }.into()]);
+    }
     a.extend(meta);
     a.extend(["-metadata".into(), format!("title={titul}")]);
     if mp4 {

@@ -9,9 +9,9 @@
   import Prepinac from '../components/Prepinac.svelte'
   import Segment from '../components/Segment.svelte'
   import VolbaJazykov from '../components/VolbaJazykov.svelte'
-  import { PRIORITA, type VolbyJazykov } from '../lib/jazyky'
+  import { PRIORITA, vzorka, type VolbyJazykov, type ZisteneJazyky } from '../lib/jazyky'
 
-  let { url }: { url: string } = $props()
+  let { url, jazyky: zaciatok = undefined }: { url: string; jazyky?: VolbyJazykov } = $props()
 
   // svelte-ignore state_referenced_locally
   let adresa = $state(url)
@@ -23,11 +23,15 @@
   let vybrane = $state(new Set<string>())
   let najnovsich = $state(10)
   let doPriecinka = $state(true)
-  let format = $state(app.nastavenia?.dl_preset ?? 'video')
+  // svelte-ignore state_referenced_locally
+  let format = $state(zaciatok ? 'jazyky' : app.nastavenia?.dl_preset === 'jazyky' ? 'jazyky' : (app.nastavenia?.dl_preset ?? 'video'))
+  /** formát, ku ktorému sa vráti vypnutie jazykových stôp */
+  let bezJazykov = $state(app.nastavenia?.dl_preset && app.nastavenia.dl_preset !== 'jazyky' ? app.nastavenia.dl_preset : 'video')
   let zobrazit = $state(240)
   // jazyky z nastavení (karta Jazykové stopy si ich pamätá)
   const n = app.nastavenia
-  let jazyky = $state<VolbyJazykov>({
+  // svelte-ignore state_referenced_locally
+  let jazyky = $state<VolbyJazykov>(zaciatok ? { ...zaciatok, poradie: [...zaciatok.poradie], zvuky: { ...zaciatok.zvuky } } : {
     poradie: [...(app.init?.jazyky_poradie?.length ? app.init.jazyky_poradie : PRIORITA)],
     original: n?.include_original ?? true,
     zvuk: n?.audio_mode ?? 'oboje',
@@ -36,8 +40,43 @@
     kvalita: n?.max_height || 'Najlepšia',
     rezim: 'video',
     bez_jazykov: 'povodny',
+    titulky: n?.titulky ?? 'vypnute',
+    titulky_auto: n?.titulky_auto ?? false,
   })
   const sJazykmi = $derived(format === 'jazyky')
+  const youtube = $derived(/(^|\.|\/\/)(youtube\.com|youtu\.be)\//.test(adresa))
+  let zistene = $state<ZisteneJazyky | null>(null)
+  let zistuje = $state(0)
+
+  function prepniJazyky(zapnut: boolean) {
+    if (zapnut) {
+      if (format !== 'jazyky') bezJazykov = format
+      format = 'jazyky'
+    } else format = bezJazykov
+  }
+
+  /** Jazyky vo vzorke vybraných videí (najviac 10, rovnomerne z celého výberu). */
+  async function zistitJazyky() {
+    if (!data || zistuje) return
+    const urls = vzorka(
+      data.entries.filter((e) => vybrane.has(e.url)).map((e) => e.url),
+      10,
+    )
+    if (!urls.length) return
+    zistuje = urls.length
+    try {
+      zistene = await volaj<ZisteneJazyky>('jazyky_zistit', urls)
+    } catch (e) {
+      toast(e instanceof ChybaJadra ? e.message : String(e), 'chyba')
+    } finally {
+      zistuje = 0
+    }
+  }
+
+  // pri zapnutí jazykových stôp sa raz samo zistí, aké jazyky kanál má
+  $effect(() => {
+    if (sJazykmi && youtube && data && !zistene && !zistuje) zistitJazyky()
+  })
 
   const kanal = $derived(/youtube\.com\/(@|channel\/|c\/|user\/)/.test(adresa))
   const zoznam = $derived(
@@ -56,6 +95,7 @@
     try {
       data = await volaj<Kolekcia>('kolekcia', adresa.trim(), karta)
       vybrane = new Set(data.entries.map((e) => e.url))
+      zistene = null
     } catch (e) {
       chyba = e instanceof ChybaJadra ? e.message : String(e)
     } finally {
@@ -149,8 +189,24 @@
       </span>
     </div>
 
+    {#if youtube}
+      <div class="jazyky-prepinac" class:on={sJazykmi}>
+        <Prepinac
+          nazov="S jazykovými stopami"
+          zapnute={sJazykmi}
+          popis="Každé video dostane vybrané jazyky zvuku (CZ, SK, EN…) spojené s obrazom do jedného súboru."
+          zmena={prepniJazyky}
+        />
+      </div>
+    {/if}
     {#if sJazykmi}
-      <VolbaJazykov bind:volby={jazyky} />
+      <VolbaJazykov
+        bind:volby={jazyky}
+        {zistene}
+        {zistuje}
+        celkom={vybrane.size}
+        zistit={youtube ? zistitJazyky : undefined}
+      />
     {/if}
 
     <ul class="mriezka">
@@ -177,12 +233,16 @@
   {#snippet pata()}
     <Prepinac nazov="Do vlastného priečinka" bind:zapnute={doPriecinka} popis={data ? `Priečinok „${data.title}“` : undefined} />
     <span class="medzera"></span>
-    <label class="skryte" for="pl-format">Formát</label>
-    <select id="pl-format" class="vyber format" bind:value={format}>
-      {#each app.init?.formaty ?? [] as f (f.id)}
-        <option value={f.id}>{f.id === 'jazyky' ? 'Video s jazykovými stopami' : f.nazov}</option>
-      {/each}
-    </select>
+    {#if sJazykmi}
+      <span class="format-jazyky"><Ikona meno="jazyky" velkost={16} /> S jazykovými stopami</span>
+    {:else}
+      <label class="skryte" for="pl-format">Formát</label>
+      <select id="pl-format" class="vyber format" bind:value={format}>
+        {#each (app.init?.formaty ?? []).filter((f) => f.id !== 'jazyky' || youtube) as f (f.id)}
+          <option value={f.id}>{f.id === 'jazyky' ? 'Video s jazykovými stopami' : f.nazov}</option>
+        {/each}
+      </select>
+    {/if}
     <button
       class="tl hlavne velke"
       disabled={!data || !vybrane.size || (sJazykmi && !jazyky.poradie.length && !jazyky.original)}
@@ -328,6 +388,22 @@
   }
   .medzera {
     flex: 1;
+  }
+  .jazyky-prepinac {
+    margin-top: var(--s3);
+    padding: var(--s3) var(--s4);
+    border-radius: var(--r-panel);
+    background: var(--accent-soft);
+  }
+  .jazyky-prepinac.on {
+    margin-bottom: calc(-1 * var(--s2));
+  }
+  .format-jazyky {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    color: var(--accent-ink);
+    font-weight: 600;
   }
   .format {
     width: 240px;

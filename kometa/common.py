@@ -298,6 +298,9 @@ DEFAULT_CONFIG = {
     # archívy po stiahnutí
     "rozbalovat": True,
     "po_rozbaleni": "nechat",     # nechat | kos
+    # titulky k jazykovým stopám
+    "titulky": "vypnute",          # vypnute | jazyky
+    "titulky_auto": False,
 }
 
 _cfg_lock = threading.Lock()

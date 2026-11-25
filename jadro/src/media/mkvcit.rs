@@ -351,6 +351,7 @@ fn kodek(id: &str) -> Option<Kodek> {
         "A_MPEG/L3" => Kodek::Mp3,
         "A_AC3" => Kodek::Ac3,
         "A_EAC3" => Kodek::Eac3,
+        "S_TEXT/UTF8" => Kodek::Srt,
         _ => return None,
     })
 }
@@ -636,7 +637,7 @@ impl CitacMkv {
         let kluc = match kluc_skupiny {
             Some(k) => k,
             None => priznaky & 0x80 != 0,
-        } || s.info.kodek.druh() == super::Druh::Zvuk;
+        } || s.info.kodek.druh() != super::Druh::Video;
         let zaklad = (self.cas_zhluku + rel) * self.mierka - s.posun;
         let krok = if s.predvolene_trvanie > 0 {
             s.predvolene_trvanie

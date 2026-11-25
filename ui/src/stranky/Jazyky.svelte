@@ -2,12 +2,14 @@
   import { volaj, ChybaJadra } from '../lib/api'
   import { app, nastav, skus, toast } from '../lib/app.svelte'
   import { dlzka, kratkyKod, pocet } from '../lib/format'
-  import { ZVUKY, priorita, type Zvuk } from '../lib/jazyky'
-  import type { Stopa, VideoJazyky } from '../lib/typy'
+  import { PRIORITA, ZVUKY, priorita, type VolbyJazykov, type Zvuk } from '../lib/jazyky'
+  import type { Rozpoznany, Stopa, VideoJazyky } from '../lib/typy'
   import Ikona from '../components/Ikona.svelte'
   import Kometa from '../components/Kometa.svelte'
   import Prepinac from '../components/Prepinac.svelte'
   import Segment from '../components/Segment.svelte'
+  import JazykyViac from './JazykyViac.svelte'
+  import VolbaTitulkov from '../components/VolbaTitulkov.svelte'
 
   const n = app.nastavenia!
   let url = $state('')
@@ -20,6 +22,8 @@
   let kvalita = $state(n.max_height || 'Najlepšia')
   let original = $state(n.include_original)
   let samostatne = $state(n.keep_separate)
+  let titulky = $state<'vypnute' | 'jazyky'>(n.titulky ?? 'vypnute')
+  let titulkyAuto = $state(n.titulky_auto ?? false)
   let subor = $state('')
   let zaznam = $state(false)
   let tahany = $state<number | null>(null)
@@ -48,13 +52,52 @@
     !!video && (vybrane.length > 0 || (original && !!orig)) && !uloha?.busy && (rezim !== 'existing' || !!subor),
   )
 
+  // viac videí naraz (vložené odkazy) alebo playlist/kanál
+  let viac = $state<string[]>([])
+  let kolekcie = $state<string[]>([])
+  let volbyViac = $state<VolbyJazykov | null>(null)
+
+  /** Voľby z tejto karty pre viac videí (poradie, zvuk, výsledok). */
+  function volbyZoStranky(): VolbyJazykov {
+    return {
+      poradie: [...(poradie.length ? poradie : app.init?.jazyky_poradie?.length ? app.init.jazyky_poradie : PRIORITA)],
+      original,
+      zvuk: zvukVsetky,
+      zvuky: { ...zvuky },
+      kontajner,
+      kvalita,
+      rezim: rezim === 'audio' ? 'audio' : 'video',
+      bez_jazykov: 'povodny',
+      titulky,
+      titulky_auto: titulkyAuto,
+    }
+  }
+
   async function nacitat() {
     if (!url.trim() || nacitava) return
+    // viac odkazov alebo playlist či kanál → hromadne
+    const r = ((await skus<Rozpoznany[]>('rozpoznat', url)) ?? []).filter((x) => x.zdroj === 'YouTube')
+    const zoz = r.filter((x) => x.kolekcia).map((x) => x.url)
+    const vid = r.filter((x) => !x.kolekcia).map((x) => x.url)
+    if (zoz.length === 1 && !vid.length) {
+      app.dialog = { druh: 'playlist', url: zoz[0], jazyky: volbyZoStranky() }
+      return
+    }
+    if (vid.length + zoz.length > 1) {
+      volbyViac = volbyZoStranky()
+      video = null
+      chybaNacitania = ''
+      viac = vid
+      kolekcie = zoz
+      return
+    }
+    viac = []
+    kolekcie = []
     nacitava = true
     chybaNacitania = ''
     video = null
     try {
-      const v = await volaj<VideoJazyky>('jazyky_nacitat', url.trim())
+      const v = await volaj<VideoJazyky>('jazyky_nacitat', (vid[0] ?? url).trim())
       video = v
       poradie = v.vybrane
       zvuky = {}
@@ -72,9 +115,9 @@
     } catch {
       text = (await skus<string>('schranka')) ?? ''
     }
-    const m = text.match(/https?:\/\/\S*(youtube\.com|youtu\.be)\S*/)
+    const m = text.match(/https?:\/\/\S*(youtube\.com|youtu\.be)\S*/g)
     if (m) {
-      url = m[0]
+      url = m.join('\n')
       nacitat()
     } else toast('V schránke nie je odkaz na YouTube.', 'info')
   }
@@ -117,6 +160,8 @@
       rezim,
       original,
       samostatne,
+      titulky,
+      titulky_auto: titulkyAuto,
       kvalita,
       kontajner,
       zvuk: zvukVsetky,
@@ -152,7 +197,7 @@
     <h1>Jazykové stopy</h1>
     <p class="tlmene">
       Z videa na YouTube s preloženým zvukom stiahne vybrané jazyky a spojí ich s obrazom do jedného súboru. Jazyk
-      prepneš v prehrávači.
+      prepneš v prehrávači. Vlož jedno video, viac odkazov naraz (každý na nový riadok) alebo celý kanál či playlist.
     </p>
   </header>
 
@@ -163,14 +208,33 @@
       nacitat()
     }}
   >
-    <label class="skryte" for="yt-url">Odkaz na video z YouTube</label>
+    <label class="skryte" for="yt-url">Odkaz na video, viac odkazov alebo kanál z YouTube</label>
     <Ikona meno="odkaz" velkost={20} />
-    <input id="yt-url" class="pole" bind:value={url} placeholder="https://www.youtube.com/watch?v=…" spellcheck="false" />
+    <textarea
+      id="yt-url"
+      class="pole odkazy"
+      bind:value={url}
+      rows={Math.min(6, Math.max(1, url.split('\n').length))}
+      placeholder="https://www.youtube.com/watch?v=… · viac odkazov · …/@kanal alebo playlist"
+      spellcheck="false"
+      onkeydown={(e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault()
+          nacitat()
+        }
+      }}
+    ></textarea>
     <button type="button" class="tl tiche" onclick={vlozit}><Ikona meno="schranka" velkost={17} /> Vložiť</button>
     <button class="tl" class:hlavne={!video} disabled={!url.trim() || nacitava}>
       {nacitava ? 'Načítavam…' : 'Načítať jazyky'}
     </button>
   </form>
+
+  {#if (viac.length || kolekcie.length) && volbyViac}
+    {#key viac.join(' ') + kolekcie.join(' ')}
+      <JazykyViac odkazy={viac} {kolekcie} bind:volby={volbyViac} />
+    {/key}
+  {/if}
 
   {#if nacitava}
     <div class="nacitavanie"><Kometa hodnota={null} popis="Načítavam video" /><p class="tlmene male">Zisťujem, aké jazyky video má…</p></div>
@@ -378,8 +442,23 @@
           <Prepinac
             nazov="Každý jazyk aj samostatne"
             bind:zapnute={samostatne}
-            popis="Popri spoločnom súbore uloží každú stopu ako vlastný zvukový súbor."
+            popis="Popri spoločnom súbore uloží každú stopu ako vlastný zvukový súbor (a titulky ako .srt)."
           />
+          <VolbaTitulkov bind:titulky bind:auto={titulkyAuto} mp4={kontajner === 'mp4'} />
+          {#if titulky === 'jazyky' && video}
+            {@const s = new Set(video.titulky ?? [])}
+            {@const k = vybrane.map((x) => x.kod.split('-')[0].toLowerCase())}
+            <p class="male tlmene">
+              {k.filter((x) => s.has(x)).length
+                ? `Titulky od autora: ${k.filter((x) => s.has(x)).map((x) => kratkyKod(x)).join(', ')}.`
+                : 'Video nemá titulky od autora k vybraným jazykom.'}
+              {video.auto_titulky
+                ? titulkyAuto
+                  ? ' Ostatné doplnia automatické.'
+                  : ' Automatické sú k dispozícii.'
+                : ''}
+            </p>
+          {/if}
         </div>
 
         {#if vysledok.length}
@@ -462,6 +541,13 @@
   }
   .adresa .pole:focus {
     box-shadow: none;
+  }
+  .adresa .odkazy {
+    height: auto;
+    min-height: 44px;
+    padding-block: 9px;
+    resize: none;
+    line-height: 1.45;
   }
   .adresa:focus-within {
     border-color: var(--accent-line);

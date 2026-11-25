@@ -1,4 +1,5 @@
 //! Spojenie stôp z viacerých súborov do jedného MKV/MKA alebo MP4/M4A – bez FFmpeg.
+//! Titulky (SRT) sa vkladajú len do Matroska; do MP4 sa nevkladajú.
 //!
 //! Vzorky sa zlučujú podľa času dekódovania, všetky stopy sa posunú na spoločný začiatok 0
 //! (vzájomný posun obrazu a zvuku ostane zachovaný). Výsledok sa zapíše do dočasného súboru,
@@ -38,11 +39,12 @@ fn vyber(vstupy: &[Vstup]) -> Vysledok<Vyber> {
         citace.iter().map(|c| vec![None; c.stopy().len()]).collect();
     let mut stopy = vec![];
     // najprv obraz (len prvý), potom zvuky v poradí vstupov (= poradie jazykov)
-    for druh in [Druh::Video, Druh::Zvuk] {
+    for druh in [Druh::Video, Druh::Zvuk, Druh::Titulky] {
         for (i, (c, v)) in citace.iter().zip(vstupy).enumerate() {
             let chcem = match druh {
                 Druh::Video => v.druh.contains("video"),
                 Druh::Zvuk => v.druh.contains("zvuk"),
+                Druh::Titulky => v.druh.contains("titulky"),
             };
             if !chcem {
                 continue;
@@ -65,12 +67,12 @@ fn vyber(vstupy: &[Vstup]) -> Vysledok<Vyber> {
                 mapa[i][k] = Some(stopy.len());
                 stopy.push(StopaVystupu {
                     info: info.clone(),
-                    jazyk: if druh == Druh::Zvuk {
+                    jazyk: if druh != Druh::Video {
                         v.jazyk.clone().or_else(|| info.jazyk.clone())
                     } else {
                         None
                     },
-                    nazov: if druh == Druh::Zvuk {
+                    nazov: if druh != Druh::Video {
                         v.nazov.clone().or_else(|| info.nazov.clone())
                     } else {
                         None
@@ -237,6 +239,9 @@ fn spoj_mkv(vstupy: &[Vstup], docasny: &Path, titul: &str) -> Vysledok<Vec<u64>>
 }
 
 fn spoj_mp4(vstupy: &[Vstup], docasny: &Path) -> Vysledok<Vec<u64>> {
+    if vstupy.iter().any(|v| v.druh.contains("titulky")) {
+        return Err(Chyba::Nepodporovane("titulky v MP4".into()));
+    }
     // 1. prechod: veľkosti a časy
     let mut v = vyber(vstupy)?;
     let mut meta = vec![];

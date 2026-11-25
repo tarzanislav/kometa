@@ -124,7 +124,7 @@
     {/if}
   </div>
   {#if app.dialog?.druh === 'playlist'}
-    <Playlist url={app.dialog.url} />
+    <Playlist url={app.dialog.url} jazyky={app.dialog.jazyky} />
   {:else if app.dialog?.druh === 'skener'}
     <Skener url={app.dialog.url} />
   {:else if app.dialog?.druh === 'zmazat'}

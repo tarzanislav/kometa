@@ -172,6 +172,7 @@ fn stsd(s: &StopaVystupu, id: u32) -> Vysledok<Vec<u8>> {
             i.frekvencia,
             &bx(b"dec3", &i.konfig),
         ),
+        Kodek::Srt => return Err(Chyba::Nepodporovane("titulky v MP4".into())),
     };
     let mut t = 1u32.to_be_bytes().to_vec();
     t.extend(vstup);

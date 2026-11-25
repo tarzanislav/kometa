@@ -79,4 +79,32 @@ export interface VolbyJazykov {
   kvalita: string
   rezim: 'video' | 'audio'
   bez_jazykov: 'povodny' | 'preskocit'
+  /** ku každému jazyku zvuku aj titulky v tom istom jazyku */
+  titulky?: 'vypnute' | 'jazyky'
+  /** aj automatické titulky YouTube, keď autor nedal vlastné */
+  titulky_auto?: boolean
+}
+
+/** Výsledok zistenia jazykov vo viacerých videách (jazyky_zistit). */
+export interface ZisteneVideo {
+  url: string
+  nazov?: string
+  dlzka?: number | null
+  nahlad?: string
+  /** základné kódy jazykov zvuku, napr. ["cs", "en", "ru"] */
+  jazyky?: string[]
+  original?: string | null
+  chyba?: string
+}
+
+export interface ZisteneJazyky {
+  preskumanych: number
+  videa: ZisteneVideo[]
+  jazyky: { kod: string; nazov: string; pocet: number; original: number }[]
+}
+
+/** Vzorka na zistenie jazykov: najviac `max` videí rovnomerne z celého výberu. */
+export function vzorka<T>(zoznam: T[], max = 10): T[] {
+  if (zoznam.length <= max) return zoznam
+  return Array.from({ length: max }, (_, i) => zoznam[Math.floor((i * zoznam.length) / max)])
 }

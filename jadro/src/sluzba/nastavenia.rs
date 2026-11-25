@@ -40,7 +40,7 @@ pub const ZVUK: [(&str, &str); 3] = [
 ];
 
 /// Kľúče, ktoré smie meniť okno.
-pub const KLUCE_OKNA: [&str; 19] = [
+pub const KLUCE_OKNA: [&str; 21] = [
     "outdir",
     "dl_preset",
     "parallel",
@@ -60,6 +60,8 @@ pub const KLUCE_OKNA: [&str; 19] = [
     "strazca",
     "strazca_rezim",
     "strazca_format",
+    "titulky",
+    "titulky_auto",
 ];
 
 /// Domovský priečinok používateľa.
@@ -389,6 +391,8 @@ fn predvolene() -> Map<String, Value> {
         "strazca": false,
         "strazca_rezim": "zachytit",
         "strazca_format": "video",
+        "titulky": "vypnute",
+        "titulky_auto": false,
     });
     match v {
         Value::Object(m) => m,
@@ -422,9 +426,9 @@ pub fn over(k: &str, v: &Value) -> Option<Value> {
         "dl_preset" => jedno_z(v, &formaty, "video"),
         "parallel" => json!(cele(v)?.clamp(1, 6)),
         "connections" => json!(cele(v)?.clamp(1, 16)),
-        "autoresume" | "include_original" | "keep_separate" | "rozbalovat" | "strazca" => {
-            json!(v.as_bool()?)
-        }
+        "autoresume" | "include_original" | "keep_separate" | "rozbalovat" | "strazca"
+        | "titulky_auto" => json!(v.as_bool()?),
+        "titulky" => jedno_z(v, &["vypnute", "jazyky"], "vypnute"),
         "po_rozbaleni" => jedno_z(v, &["nechat", "kos"], "nechat"),
         "strazca_rezim" => jedno_z(v, &["zachytit", "stiahnut"], "zachytit"),
         "strazca_format" => jedno_z(v, &formaty, "video"),

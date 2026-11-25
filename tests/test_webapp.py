@@ -3,6 +3,8 @@
 Spustenie:  python tests/test_webapp.py
 """
 import json
+import subprocess
+import shutil
 import sys
 import tempfile
 import urllib.error
@@ -59,6 +61,52 @@ def main() -> int:
         p = next(x for x in api("stav")["data"]["polozky"] if x["url"] == fs)
         assert p["format"] == "subor" and p["nazov"] == "a.loose.end.web-dl.cz.5.1.es.5.1.2024.1080p.mkv", p
         assert api("vycistit_front")["ok"] and api("stav")["data"]["polozky"] == []
+
+        # jazyky vo viacerých videách (yt-dlp nahradený – formáty s jazykmi)
+        def falosne_info(url, log=None):
+            if "zle" in url:
+                raise RuntimeError("Video is unavailable")
+            f = lambda lang, note="": {"format_id": lang, "vcodec": "none", "acodec": "mp4a.40.2", "ext": "m4a",  # noqa: E731
+                                       "language": lang, "abr": 128, "format_note": note, "url": "https://x"}
+            return {"title": f"Video {url[-1]}", "duration": 60,
+                    "formats": [f("en-US", "original, default"), f("cs"), f("sk")] if url.endswith("a") else [f("en", "original"), f("cs")]}
+        povodne = webapp.fetch_info
+        webapp.fetch_info = falosne_info
+        try:
+            z = api("jazyky_zistit", ["https://youtu.be/aaaaaaaaaaa", "https://youtu.be/bbbbbbbbbbb",
+                                      "https://youtu.be/zlezlezlezl", "https://vimeo.com/1"])["data"]
+        finally:
+            webapp.fetch_info = povodne
+        assert z["preskumanych"] == 2 and [(j["kod"], j["pocet"]) for j in z["jazyky"]] == [("cs", 2), ("en", 2), ("sk", 1)], z
+        assert len(z["videa"]) == 3 and "chyba" in z["videa"][2] and z["videa"][0]["jazyky"] == ["en", "cs", "sk"], z
+
+        # titulky: výber podľa jazyka, json3/WebVTT → SRT, vloženie cez FFmpeg
+        from kometa import jazyky as jz
+        info = {"subtitles": {"cs": [{"ext": "vtt", "url": "u-cs"}], "en-GB": [{"ext": "json3", "url": "u-en"}]},
+                "automatic_captions": {"ru-orig": [{"ext": "json3", "url": "u-ru"}], "sk": [{"ext": "vtt", "url": "u-sk"}]}}
+        assert jz.find_subtitles(info, "cs", False, False) == ("u-cs", "vtt", False)
+        assert jz.find_subtitles(info, "en-US", False, False) == ("u-en", "json3", False)
+        assert jz.find_subtitles(info, "sk", False, False) is None
+        assert jz.find_subtitles(info, "sk", False, True) == ("u-sk", "vtt", True)
+        assert jz.find_subtitles(info, "ru", True, True) == ("u-ru", "json3", True)
+        c = jz.subs_from_json3('{"events":[{"tStartMs":0,"dDurationMs":900,"wWinId":1},'
+                               '{"tStartMs":100,"dDurationMs":800,"segs":[{"utf8":"Ahoj "},{"utf8":"svet"}]}]}')
+        assert jz.to_srt(c) == "1\n00:00:00,100 --> 00:00:00,900\nAhoj svet\n\n", c
+        c = jz.subs_from_vtt("WEBVTT\n\n00:01.000 --> 00:02.000 align:start\n<c>Prvý</c> &amp; druhý\n")
+        assert c == [[1000, 2000, "Prvý & druhý"]], c
+        if shutil.which("ffmpeg") and shutil.which("ffprobe"):
+            d = TMP / "tit"
+            d.mkdir()
+            subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=160x120:rate=10", "-t", "2",
+                            "-c:v", "libx264", str(d / "v.mp4")], check=True)
+            (d / "cs.srt").write_text(jz.to_srt([[200, 1500, "Ahoj"]]), encoding="utf-8")
+            for ext in ("mkv", "mp4"):
+                jz.mux(d / f"o.{ext}", [{"path": d / "v.mp4", "kind": "video"},
+                                        {"path": d / "cs.srt", "kind": "subtitle", "lang3": "cze", "title": "Čeština"}], "t")
+                r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,codec_name:stream_tags=language",
+                                    "-of", "csv=p=0", str(d / f"o.{ext}")], capture_output=True, text=True)
+                assert ("subtitle" in r.stdout and "cze" in r.stdout
+                        and ("subrip" if ext == "mkv" else "mov_text") in r.stdout), (ext, r.stdout)
 
         # archívy: rozpoznanie častí, rozbalenie ZIP (aj rozdeleného), nič mimo priečinka
         import io

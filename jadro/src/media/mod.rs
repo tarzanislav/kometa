@@ -14,6 +14,7 @@ pub mod mkvcit;
 pub mod mp4;
 pub mod mp4zapis;
 pub mod spajac;
+pub mod srt;
 pub mod ts;
 
 use crate::chyba::Vysledok;
@@ -24,6 +25,7 @@ pub const NS: i64 = 1_000_000_000;
 pub enum Druh {
     Video,
     Zvuk,
+    Titulky,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,12 +39,15 @@ pub enum Kodek {
     Mp3,
     Ac3,
     Eac3,
+    /// titulky ako čistý text (SRT, v MKV S_TEXT/UTF8)
+    Srt,
 }
 
 impl Kodek {
     pub fn druh(self) -> Druh {
         match self {
             Kodek::H264 | Kodek::Hevc | Kodek::Av1 | Kodek::Vp9 => Druh::Video,
+            Kodek::Srt => Druh::Titulky,
             _ => Druh::Zvuk,
         }
     }
@@ -109,6 +114,12 @@ pub fn z_ns(ns: i64, mierka: u32) -> i64 {
 /// Otvorí súbor podľa obsahu (MPEG-TS alebo MP4).
 pub fn otvor(cesta: &std::path::Path) -> Vysledok<Box<dyn Citac>> {
     use std::io::Read;
+    if cesta
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("srt") || e.eq_ignore_ascii_case("vtt"))
+    {
+        return Ok(Box::new(srt::CitacSrt::otvor(cesta)?));
+    }
     let mut hlava = [0u8; 12];
     let mut f = std::fs::File::open(cesta)?;
     let n = f.read(&mut hlava)?;
