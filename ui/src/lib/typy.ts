@@ -92,6 +92,7 @@ export interface Funkcie {
   ucty: boolean
   kolekcie: boolean
   doinstalovat_ytdlp: boolean
+  doinstalovat_ffmpeg?: boolean
   /** vlastné spájanie stôp – FFmpeg treba len na MP3 a zriedkavé formáty */
   ffmpeg_volitelny: boolean
 }
@@ -100,6 +101,8 @@ export interface StavNastrojov {
   ytdlp: boolean
   ffmpeg: boolean
   instaluje: boolean
+  /** čo sa práve inštaluje: „yt-dlp“ alebo „FFmpeg“ */
+  co?: string
   text: string
   podiel: number
 }
@@ -108,6 +111,8 @@ export interface Rozpoznany {
   url: string
   zdroj: string
   kolekcia: boolean
+  /** úložisko (Webshare, Fastshare) – jeden hotový súbor, formát sa nevyberá */
+  ulozisko?: boolean
 }
 
 export interface VideoKolekcie {

@@ -27,7 +27,7 @@ from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import __version__, common, media, skener
+from . import __version__, common, hosts, media, skener
 from .common import (Cancelled, apply_settings, check_dependencies, clean_error, delete_password, get_password,
                      load_config, open_folder, safe_name, save_config, set_password)
 from .fronta import DownloadQueue
@@ -199,7 +199,8 @@ class Jadro:
         """Zdroje odkazov počas písania (štítky pod poľom na odkazy)."""
         out = []
         for u in list(dict.fromkeys(URL_RE.findall(text or "")))[:50]:
-            out.append({"url": u, "zdroj": media.source_name(u), "kolekcia": media.is_collection(u)})
+            out.append({"url": u, "zdroj": media.source_name(u), "kolekcia": media.is_collection(u),
+                        "ulozisko": bool(hosts.detect_host(u))})
         return out
 
     def kolekcia(self, url: str, karta: str = "videos") -> dict:
@@ -258,6 +259,59 @@ class Jadro:
 
     def vycistit_hotove(self) -> None:
         self.dq.clear_finished()
+
+    def vycistit_front(self) -> None:
+        """Všetko z frontu preč; stiahnuté súbory ostanú, rozpracované sa upracú."""
+        self.dq.remove(list(self.dq.order))
+
+    def _stiahnute(self, ids: list[str] | None) -> list[Path]:
+        out: list[Path] = []
+        with self.dq._lock:
+            items = [self.dq.items[i] for i in self.dq.order if i in self.dq.items]
+        for it in items:
+            if (ids is not None and it["id"] not in ids) or it["status"] != "hotovo" or not it.get("file"):
+                continue
+            f = Path(it["file"])
+            if f.is_file() and f not in out:
+                out.append(f)
+        return out
+
+    def subory_na_zmazanie(self, ids: list[str] | None = None) -> dict:
+        files = self._stiahnute(ids)
+        return {"pocet": len(files), "velkost": sum(f.stat().st_size for f in files)}
+
+    def zmazat_subory(self, ids: list[str] | None = None) -> dict:
+        """Stiahnuté súbory do Koša a položky z frontu (pri ids=None celý front). Iné súbory ostanú."""
+        try:
+            from send2trash import send2trash
+        except ImportError:
+            raise ValueError("Na presun do Koša chýba balík send2trash – spusti Instalacia.bat.") from None
+        root = Path(self._outdir()).resolve()
+        zmazane, chyby = [], []
+        for f in self._stiahnute(ids):
+            try:
+                send2trash(str(f))
+                zmazane.append(f)
+            except Exception as e:  # noqa: BLE001
+                chyby.append(f"{f.name}: {e}")
+        for f in zmazane:   # prázdne priečinky kanálov a playlistov – len vnútri priečinka sťahovania
+            d = f.parent.resolve()
+            while d != root and root in d.parents:
+                try:
+                    d.rmdir()
+                except OSError:
+                    break
+                d = d.parent
+        with self.dq._lock:
+            items = [self.dq.items[i] for i in self.dq.order if i in self.dq.items]
+        nechat = {str(f) for f in self._stiahnute(ids)}   # čo sa nepodarilo, ostane vo fronte
+        self.dq.remove([it["id"] for it in items if (ids is None or it["id"] in ids)
+                        and not (it["status"] == "hotovo" and it.get("file") in nechat)])
+        if zmazane:
+            self.dq.log(f"🗑 Do Koša: {len(zmazane)} súborov")
+        for c in chyby:
+            self.dq.log(f"Nepodarilo sa presunúť do Koša – {c}")
+        return {"zmazane": len(zmazane), "chyby": chyby}
 
     def pozastavit_vsetko(self) -> None:
         self.dq.pause_all()
@@ -472,7 +526,8 @@ class Jadro:
 
 API_METHODS = ["init", "stav", "pridat", "rozpoznat", "kolekcia", "pridat_vybrane", "skenovat", "pridat_zo_skenu",
                "pozastavit", "spustit", "odstranit", "vycistit_hotove", "pozastavit_vsetko", "spustit_vsetko",
-               "otvorit", "otvorit_subor", "schranka", "jazyky_nacitat", "jazyky_stiahnut", "jazyky_zrusit",
+               "vycistit_front", "subory_na_zmazanie", "zmazat_subory", "otvorit", "otvorit_subor", "schranka",
+               "jazyky_nacitat", "jazyky_stiahnut", "jazyky_zrusit",
                "vybrat_priecinok", "vybrat_video", "prihlasit", "odhlasit", "ulozit_nastavenia"]
 
 

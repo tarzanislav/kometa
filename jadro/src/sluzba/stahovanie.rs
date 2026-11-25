@@ -16,6 +16,7 @@ use crate::stream;
 use crate::udalosti::{Hlasic, Udalost};
 use crate::web::riesenie::{self, Ciel};
 use crate::web::vzory;
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
@@ -212,7 +213,7 @@ pub fn ciel_suboru(v: &Vnutro, p: &Polozka, meno: &str) -> PathBuf {
     }
 }
 
-fn nazov_z_adresy(url: &str) -> String {
+pub(crate) fn nazov_z_adresy(url: &str) -> String {
     let cesta = url.split(['?', '#']).next().unwrap_or("");
     let posledny = cesta.trim_end_matches('/').rsplit('/').next().unwrap_or("");
     let b = posledny.as_bytes();
@@ -670,6 +671,89 @@ pub async fn uprac(p: Polozka, uloha: Option<tokio::task::JoinHandle<()>>) {
     if p.stav != Stav::Hotovo {
         let _ = tokio::task::spawn_blocking(move || fronta::zmaz_rozpracovane(&p)).await;
     }
+}
+
+/// Stiahnuté súbory položiek (všetkých, ak `ids` je None), ktoré ešte sú na disku, a ich veľkosť.
+pub fn stiahnute_subory(v: &Vnutro, ids: Option<&[String]>) -> (Vec<PathBuf>, u64) {
+    let f = v.fronta.lock().unwrap();
+    let mut out: Vec<PathBuf> = vec![];
+    let mut spolu = 0;
+    for p in &f.polozky {
+        if ids.is_some_and(|ids| !ids.contains(&p.id))
+            || p.stav != Stav::Hotovo
+            || p.subor.is_empty()
+        {
+            continue;
+        }
+        let c = PathBuf::from(&p.subor);
+        if let Ok(m) = std::fs::metadata(&c) {
+            if m.is_file() && !out.contains(&c) {
+                spolu += m.len();
+                out.push(c);
+            }
+        }
+    }
+    (out, spolu)
+}
+
+/// Presunie stiahnuté súbory do Koša a položky odstráni z frontu (pri `ids` = None celý front).
+/// Prázdne podpriečinky (kanál, playlist) v priečinku sťahovania sa zmažú. Iné súbory ostanú.
+pub async fn zmaz_stiahnute(v: &Arc<Vnutro>, ids: Option<&[String]>) -> Value {
+    let (subory, _) = stiahnute_subory(v, ids);
+    let koren = PathBuf::from(v.priecinok_vystupu());
+    let (zmazane, chyby) = tokio::task::spawn_blocking(move || {
+        let mut zmazane = vec![];
+        let mut chyby = vec![];
+        for c in subory {
+            match trash::delete(&c) {
+                Ok(()) => zmazane.push(c),
+                Err(e) => chyby.push(format!(
+                    "{}: {e}",
+                    c.file_name().unwrap_or_default().to_string_lossy()
+                )),
+            }
+        }
+        // prázdne priečinky kanálov a playlistov (len vnútri priečinka sťahovania)
+        for c in &zmazane {
+            let mut d = c.parent();
+            while let Some(p) = d {
+                if p == koren || !p.starts_with(&koren) || std::fs::remove_dir(p).is_err() {
+                    break;
+                }
+                d = p.parent();
+            }
+        }
+        (zmazane, chyby)
+    })
+    .await
+    .unwrap_or_default();
+    let pouzite: Vec<String> = {
+        let f = v.fronta.lock().unwrap();
+        f.polozky
+            .iter()
+            .filter(|p| ids.map_or(true, |ids| ids.contains(&p.id)))
+            // položku, ktorej súbor sa nepodarilo presunúť, nechať – nech sa dá skúsiť znova
+            .filter(|p| {
+                p.stav != Stav::Hotovo
+                    || p.subor.is_empty()
+                    || zmazane.iter().any(|z| z == Path::new(&p.subor))
+                    || !Path::new(&p.subor).exists()
+            })
+            .map(|p| p.id.clone())
+            .collect()
+    };
+    let odstranene = v.fronta.lock().unwrap().odstran(&pouzite);
+    for (p, uloha) in odstranene {
+        v.rt.spawn(uprac(p, uloha));
+    }
+    v.naplanuj();
+    if !zmazane.is_empty() {
+        v.zapis(format!("🗑 Do Koša: {} súborov", zmazane.len()));
+    }
+    for c in &chyby {
+        v.zapis(format!("Nepodarilo sa presunúť do Koša – {c}"));
+    }
+    json!({"zmazane": zmazane.len(), "chyby": chyby})
 }
 
 #[cfg(test)]

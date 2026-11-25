@@ -1,6 +1,7 @@
-//! Pomocné programy: yt-dlp (YouTube a ďalšie služby) a FFmpeg (len ak je po ruke – vlastné
-//! spájanie ho väčšinou nepotrebuje). yt-dlp sa dá doinštalovať jedným klikom: stiahne sa
-//! z oficiálnych vydaní a pred použitím sa overí jeho kontrolný súčet SHA-256.
+//! Pomocné programy: yt-dlp (YouTube a ďalšie služby) a FFmpeg (vlastné spájanie ho väčšinou
+//! nepotrebuje – treba ho na MP3, prevod Opus → AAC a zriedkavé formáty). Oba sa dajú doinštalovať
+//! jedným klikom: yt-dlp z oficiálnych vydaní, FFmpeg zo zostavení BtbN/FFmpeg-Builds (Windows,
+//! Linux) – vždy sa pred použitím overí kontrolný súčet SHA-256.
 
 use crate::chyba::{Chyba, Vysledok};
 use crate::udalosti::{self, Hlasic};
@@ -49,6 +50,67 @@ fn subor_vydania() -> Option<&'static str> {
     }
 }
 
+/// Zostavenie FFmpeg pre tento systém: (časť názvu, prípona archívu).
+fn zostavenie_ffmpeg() -> Option<(&'static str, &'static str)> {
+    if cfg!(all(windows, target_arch = "x86_64")) {
+        Some(("win64", ".zip"))
+    } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        Some(("linux64", ".tar.xz"))
+    } else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
+        Some(("linuxarm64", ".tar.xz"))
+    } else {
+        None
+    }
+}
+
+/// Dá sa FFmpeg doinštalovať jedným klikom? (V macOS nie – tam cez Homebrew.)
+pub fn ffmpeg_doinstalovatelny() -> bool {
+    zostavenie_ffmpeg().is_some()
+}
+
+/// Vyberie archív z vydania: najprv „ffmpeg-master-latest-<sys>-gpl“, inak iné GPL zostavenie (nie „shared“).
+fn vyber_archiv(nazvy: &[String], sys: &str, pripona: &str) -> Option<String> {
+    let presny = format!("ffmpeg-master-latest-{sys}-gpl{pripona}");
+    nazvy.iter().find(|n| **n == presny).cloned().or_else(|| {
+        nazvy
+            .iter()
+            .find(|n| {
+                n.starts_with("ffmpeg-")
+                    && n.contains(&format!("-{sys}-gpl"))
+                    && !n.contains("shared")
+                    && n.ends_with(pripona)
+            })
+            .cloned()
+    })
+}
+
+/// Riadok „<súčet>  <názov>“ zo súboru so súčtami.
+fn sucet_v_zozname(sucty: &str, meno: &str) -> Option<String> {
+    sucty.lines().find_map(|r| {
+        let (h, n) = r.split_once(char::is_whitespace)?;
+        (n.trim().trim_start_matches('*') == meno).then(|| h.trim().to_ascii_lowercase())
+    })
+}
+
+fn najdi_subor(dir: &Path, meno: &str, hlbka: u8) -> Option<PathBuf> {
+    let rd = std::fs::read_dir(dir).ok()?;
+    let mut priecinky = vec![];
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            priecinky.push(p);
+        } else if e.file_name().to_string_lossy().eq_ignore_ascii_case(meno) {
+            return Some(p);
+        }
+    }
+    if hlbka == 0 {
+        return None;
+    }
+    priecinky
+        .iter()
+        .find_map(|d| najdi_subor(d, meno, hlbka - 1))
+}
+
 impl Nastroje {
     pub fn new(priecinok_nastaveni: &Path) -> Self {
         Nastroje {
@@ -89,6 +151,163 @@ impl Nastroje {
             return Some(l);
         }
         v_ceste("ffmpeg")
+    }
+
+    /// Stiahne FFmpeg (aj ffprobe) zo zostavení BtbN/FFmpeg-Builds do `~/.kometa/nastroje`,
+    /// overí SHA-256 a rozbalí ho systémovým `tar` (vo Windows 10/11 je súčasťou systému).
+    pub async fn doinstaluj_ffmpeg(&self, k: &Client, hlasic: &Hlasic) -> Vysledok<PathBuf> {
+        let (sys, pripona) = zostavenie_ffmpeg().ok_or_else(|| {
+            Chyba::Ine(if cfg!(target_os = "macos") {
+                "V macOS nainštaluj FFmpeg cez Homebrew: brew install ffmpeg".into()
+            } else {
+                "Pre tento systém nie je hotový FFmpeg – nainštaluj ho cez správcu balíkov.".into()
+            })
+        })?;
+        let vydanie = std::env::var("KOMETA_FFMPEG_ZAKLAD").unwrap_or_else(|_| {
+            "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest".into()
+        });
+        udalosti::info(hlasic, "Hľadám FFmpeg…");
+        let info: serde_json::Value = k
+            .get(&vydanie)
+            .header(reqwest::header::ACCEPT, "application/vnd.github+json")
+            .send()
+            .await?
+            .error_for_status()?
+            .text()
+            .await
+            .map(|t| serde_json::from_str(&t))?
+            .map_err(|_| Chyba::Format("zoznam vydaní FFmpeg sa nedá prečítať".into()))?;
+        let subory: Vec<(String, String)> = info["assets"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| {
+                        Some((
+                            x["name"].as_str()?.to_string(),
+                            x["browser_download_url"].as_str()?.to_string(),
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let nazvy: Vec<String> = subory.iter().map(|(n, _)| n.clone()).collect();
+        let adresa = |meno: &str| {
+            subory
+                .iter()
+                .find(|(n, _)| n == meno)
+                .map(|(_, u)| u.clone())
+        };
+        let archiv = vyber_archiv(&nazvy, sys, pripona)
+            .ok_or_else(|| Chyba::Format(format!("vo vydaní FFmpeg chýba zostavenie {sys}")))?;
+        let sucty_url = adresa("checksums.sha256")
+            .ok_or_else(|| Chyba::Format("vo vydaní FFmpeg chýbajú kontrolné súčty".into()))?;
+        let sucty = k
+            .get(sucty_url)
+            .send()
+            .await?
+            .error_for_status()?
+            .text()
+            .await?;
+        let ocakavany = sucet_v_zozname(&sucty, &archiv)
+            .ok_or_else(|| Chyba::Format(format!("v kontrolných súčtoch chýba {archiv}")))?;
+
+        tokio::fs::create_dir_all(&self.priecinok).await?;
+        let docasny = self.priecinok.join(format!("ffmpeg-stahuje{pripona}"));
+        let rozbal = self.priecinok.join("ffmpeg-rozbaluje");
+        let vysledok = async {
+            let r = k
+                .get(adresa(&archiv).unwrap_or_default())
+                .send()
+                .await?
+                .error_for_status()?;
+            let celkom = r.content_length();
+            let mut subor = tokio::fs::File::create(&docasny).await?;
+            let mut hash = Sha256::new();
+            let mut stiahnute = 0u64;
+            let mut s = r.bytes_stream();
+            let zaciatok = std::time::Instant::now();
+            while let Some(c) = s.next().await {
+                let c = c?;
+                hash.update(&c);
+                tokio::io::AsyncWriteExt::write_all(&mut subor, &c).await?;
+                stiahnute += c.len() as u64;
+                hlasic(udalosti::Udalost::Priebeh {
+                    stiahnute,
+                    celkom,
+                    rychlost: stiahnute as f64 / zaciatok.elapsed().as_secs_f64().max(0.001),
+                    cast: Some("FFmpeg".into()),
+                });
+            }
+            tokio::io::AsyncWriteExt::flush(&mut subor).await?;
+            drop(subor);
+            let sucet: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
+            if sucet != ocakavany {
+                return Err(Chyba::Format(
+                    "stiahnutý FFmpeg nesedí s kontrolným súčtom – neuložil som ho".into(),
+                ));
+            }
+            udalosti::info(hlasic, "Rozbaľujem FFmpeg…");
+            let _ = tokio::fs::remove_dir_all(&rozbal).await;
+            tokio::fs::create_dir_all(&rozbal).await?;
+            // systémový tar (vo Windows priamo zo System32, nie hocijaký z PATH)
+            let tar = if cfg!(windows) {
+                std::env::var_os("SystemRoot")
+                    .map(|r| PathBuf::from(r).join("System32").join("tar.exe"))
+                    .unwrap_or_else(|| PathBuf::from("tar"))
+            } else {
+                PathBuf::from("tar")
+            };
+            let mut prikaz = tokio::process::Command::new(&tar);
+            prikaz.arg("-xf").arg(&docasny).arg("-C").arg(&rozbal);
+            #[cfg(windows)]
+            prikaz.creation_flags(0x0800_0000); // bez čierneho okna
+            let o = prikaz
+                .output()
+                .await
+                .map_err(|e| Chyba::Ine(format!("archív FFmpeg sa nedá rozbaliť (tar): {e}")))?;
+            if !o.status.success() {
+                return Err(Chyba::Ine(format!(
+                    "archív FFmpeg sa nedá rozbaliť: {}",
+                    String::from_utf8_lossy(&o.stderr).trim()
+                )));
+            }
+            let mut ciel = None;
+            for meno in ["ffmpeg", "ffprobe"] {
+                let subor = if cfg!(windows) {
+                    format!("{meno}.exe")
+                } else {
+                    meno.into()
+                };
+                let Some(z) = najdi_subor(&rozbal, &subor, 3) else {
+                    if meno == "ffmpeg" {
+                        return Err(Chyba::Format(
+                            "v archíve FFmpeg chýba program ffmpeg".into(),
+                        ));
+                    }
+                    continue;
+                };
+                let c = self.lokalny(meno);
+                let tmp = c.with_extension("novy");
+                tokio::fs::copy(&z, &tmp).await?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    tokio::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))
+                        .await?;
+                }
+                tokio::fs::rename(&tmp, &c).await?;
+                if meno == "ffmpeg" {
+                    ciel = Some(c);
+                }
+            }
+            ciel.ok_or_else(|| Chyba::Format("v archíve FFmpeg chýba program ffmpeg".into()))
+        }
+        .await;
+        let _ = tokio::fs::remove_file(&docasny).await;
+        let _ = tokio::fs::remove_dir_all(&rozbal).await;
+        let ciel = vysledok?;
+        udalosti::info(hlasic, "FFmpeg je pripravený.");
+        Ok(ciel)
     }
 
     /// Stiahne yt-dlp z oficiálnych vydaní do `~/.kometa/nastroje` a overí SHA-256.
@@ -156,5 +375,38 @@ impl Nastroje {
         tokio::fs::rename(&tmp, &ciel).await?;
         udalosti::info(hlasic, "yt-dlp je pripravený.");
         Ok(ciel)
+    }
+}
+
+#[cfg(test)]
+mod testy {
+    use super::*;
+
+    #[test]
+    fn vyber_archivu_ffmpeg() {
+        let n: Vec<String> = [
+            "checksums.sha256",
+            "ffmpeg-master-latest-win64-gpl-shared.zip",
+            "ffmpeg-master-latest-win64-gpl.zip",
+            "ffmpeg-master-latest-linux64-gpl.tar.xz",
+            "ffmpeg-n7.1-latest-linuxarm64-gpl-7.1.tar.xz",
+        ]
+        .map(String::from)
+        .to_vec();
+        assert_eq!(
+            vyber_archiv(&n, "win64", ".zip").as_deref(),
+            Some("ffmpeg-master-latest-win64-gpl.zip")
+        );
+        assert_eq!(
+            vyber_archiv(&n, "linuxarm64", ".tar.xz").as_deref(),
+            Some("ffmpeg-n7.1-latest-linuxarm64-gpl-7.1.tar.xz")
+        );
+        assert_eq!(vyber_archiv(&n, "win32", ".zip"), None);
+        let sucty = "abc  ffmpeg-master-latest-win64-gpl.zip\nDEF *ine.zip\n";
+        assert_eq!(
+            sucet_v_zozname(sucty, "ffmpeg-master-latest-win64-gpl.zip").as_deref(),
+            Some("abc")
+        );
+        assert_eq!(sucet_v_zozname(sucty, "ine.zip").as_deref(), Some("def"));
     }
 }

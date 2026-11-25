@@ -84,10 +84,13 @@ Okno aplikácie používa vo Windows WebView2 (súčasť Windows 10/11), v macOS
 
 ### Sťahovanie
 1. Vlož jeden alebo viac odkazov (každý na nový riadok), klikni na **Vložiť zo schránky**, stlač `Ctrl+V` kdekoľvek v okne alebo odkaz pretiahni z prehliadača. Pod poľom vidíš, čo Kometa v odkazoch rozpoznala.
-2. Vyber formát a klikni na **Stiahnuť** (alebo `Enter`). Odkaz môže byť aj na bežnú stránku (kurz, článok): ak ju yt-dlp nepozná, Kometa ju prehľadá skenerom – jedno video stiahne hneď, viac videí pridá do frontu.
+2. Vyber formát a klikni na **Stiahnuť** (alebo `Enter`). Formát platí len pre videostránky (YouTube, Vimeo…); súbory z Webshare a Fastshare sa stiahnu tak, ako sú na úložisku – s pôvodným názvom a príponou. Odkaz môže byť aj na bežnú stránku (kurz, článok): ak ju yt-dlp nepozná, Kometa ju prehľadá skenerom – jedno video stiahne hneď, viac videí pridá do frontu.
    - **Playlist alebo kanál** ukáže mriežku videí; vyber všetky, žiadne, najnovších N alebo hľadaj v názvoch. Pri YouTube zvoľ dole formát **Video s jazykovými stopami** a nad videami sa ukáže výber jazykov pre všetky vybrané videá naraz (viac nižšie).
    - **Prehľadať stránku** ukáže všetko, čo sa na stránke našlo (prehrávače, streamy, videá, súbory); odporúčané sú vybrané. Pri videu chránenom heslom (Vimeo) ho zadaj dole v okne.
-3. Front je rozdelený na *Sťahuje sa*, *V poradí*, *Nepodarilo sa* a *Hotové*. Pri každej položke je pauza alebo pokračovanie, kopírovanie odkazu a odstránenie; pri hotovej otvorenie priečinka, pri chybe vysvetlenie a **Skúsiť znova**.
+3. Front je rozdelený na *Sťahuje sa*, *V poradí*, *Nepodarilo sa* a *Hotové*. Pri každej položke je pauza alebo pokračovanie, kopírovanie odkazu a odstránenie; pri hotovej otvorenie priečinka, pri chybe vysvetlenie a **Skúsiť znova**. Hotovú položku odstrániš len zo zoznamu, alebo aj so súborom.
+4. Tlačidlo **⋯** vedľa *Priečinok*:
+   - **Vyčistiť front** – odstráni všetky položky (aj rozpracované); stiahnuté súbory ostanú na disku.
+   - **Vymazať stiahnuté súbory…** – po potvrdení presunie do **Koša** súbory, ktoré stiahla Kometa, a vyčistí front. Iné súbory v priečinku ostanú; z Koša sa dajú obnoviť.
 
 ### Jazykové stopy (YouTube)
 Pre videá, ktoré majú na YouTube viac zvukových stôp (preklad či dabing). Vlož odkaz a klikni na **Načítať jazyky**. Predvolené jazyky sú vybrané v poradí CZ, SK, EN, PL, HU, RU; poradie zmeníš ťahaním alebo šípkami, ďalšie jazyky pridáš kliknutím (zaradia sa za ne). Prvá stopa bude predvolená. Vyber, čo vytvoriť – **video s jazykmi**, **jazyky k tvojmu stiahnutému videu** alebo **len zvuk** – a formát **MKV** alebo **MP4**.
@@ -118,6 +121,7 @@ Formát **Video s jazykmi** je aj v bežnom zozname formátov – vtedy sa pre k
 - **Súčasne sťahovať** (1–6 súborov naraz) a **Spojenia na jeden súbor** (1–16, predvolene 4).
 - **Zvuk vo videách z YouTube** (AAC + Opus, len AAC, len Opus) a **pokračovanie nedokončených sťahovaní po spustení**.
 - **Priečinok na sťahovanie.**
+- **Pomocníci** (aplikácia): yt-dlp a FFmpeg sa dajú doinštalovať jedným klikom. FFmpeg sa stiahne zo zostavení [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) (Windows, Linux) a pred použitím sa overí kontrolný súčet; v macOS ho nainštaluješ cez Homebrew (`brew install ffmpeg`).
 
 ## Ako funguje pokračovanie sťahovania
 

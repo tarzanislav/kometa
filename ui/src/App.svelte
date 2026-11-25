@@ -8,6 +8,7 @@
   import Toasty from './components/Toasty.svelte'
   import Playlist from './dialogy/Playlist.svelte'
   import Skener from './dialogy/Skener.svelte'
+  import Zmazat from './dialogy/Zmazat.svelte'
   import Jazyky from './stranky/Jazyky.svelte'
   import Pribudne from './stranky/Pribudne.svelte'
   import Nastavenia from './stranky/Nastavenia.svelte'
@@ -118,6 +119,8 @@
     <Playlist url={app.dialog.url} />
   {:else if app.dialog?.druh === 'skener'}
     <Skener url={app.dialog.url} />
+  {:else if app.dialog?.druh === 'zmazat'}
+    <Zmazat co={app.dialog.co} ids={app.dialog.ids} />
   {/if}
   <Toasty />
 {:else}

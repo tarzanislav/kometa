@@ -36,6 +36,7 @@ BASE = ""
 VELKY = bytes((i * 7 + (i >> 9)) & 0xFF for i in range(24 << 20))
 FALOSNY_YTDLP = b"#!/bin/sh\necho 2099.01.01\n" + b"#" * 4096
 WS_SUBOR = os.urandom(3 << 20)
+FF_ARCHIV: list[bytes] = []   # [archív tar.xz, program ffmpeg] – vytvorí priprav_ffmpeg()
 WS_SOL, WS_HESLO = "AbCd1234", "tajné heslo"
 op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -112,6 +113,32 @@ class Server(http.server.SimpleHTTPRequestHandler):
             return self.posli(200, f"{'1' * 64}  yt-dlp_linux\n", "text/plain")
         if u.path == "/zle-vydania/yt-dlp_linux":
             return self.posli(200, FALOSNY_YTDLP, "application/octet-stream")
+        # Fastshare: stránka súboru rovno presmeruje na súbor (s kreditom) – s názvom v hlavičke aj bez neho
+        if u.path == "/fastshare/1/a.loose.end.web-dl.cz.5.1.es.5.1.2024.1080p.mkv":
+            return self.posli(302, "", hlavicky=[("Location", "/fastshare/dl/1")])
+        if u.path == "/fastshare/2/druhy.film.2024.mkv":
+            return self.posli(302, "", hlavicky=[("Location", "/fastshare/download.php?id=2")])
+        if u.path == "/fastshare/dl/1":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Disposition", 'attachment; filename="A.Loose.End.2024.1080p.mkv"')
+            self.send_header("Content-Length", str(len(WS_SUBOR)))
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(WS_SUBOR)
+            return
+        if u.path == "/fastshare/download.php":
+            return self.rozsah(WS_SUBOR)
+        if u.path == "/ff-vydanie":
+            return self.posli(200, json.dumps({"assets": [
+                {"name": n, "browser_download_url": f"{BASE}/ff/{n}"}
+                for n in ("checksums.sha256", "ffmpeg-master-latest-linux64-gpl-shared.tar.xz",
+                          "ffmpeg-master-latest-linux64-gpl.tar.xz")]}), "application/json")
+        if u.path == "/ff/checksums.sha256":
+            return self.posli(200, f"{hashlib.sha256(FF_ARCHIV[0]).hexdigest()}  ffmpeg-master-latest-linux64-gpl.tar.xz\n",
+                              "text/plain")
+        if u.path == "/ff/ffmpeg-master-latest-linux64-gpl.tar.xz":
+            return self.posli(200, FF_ARCHIV[0], "application/octet-stream")
         if u.path == "/fastshare/user":
             prihlaseny = "fs=ok" in (self.headers.get("Cookie") or "")
             telo = '<a href="/logout.php">x</a><table><td>12,5 GB</td></table>' if prihlaseny else "<form></form>"
@@ -215,7 +242,25 @@ def stopy(p: Path):
     return r.stdout.split()
 
 
+def priprav_ffmpeg():
+    """Archív ako zo zostavení BtbN: ffmpeg-master-latest-linux64-gpl/bin/{ffmpeg,ffprobe}."""
+    import io
+    import tarfile
+    program = b"#!/bin/sh\necho falosny ffmpeg\n"
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:xz") as t:
+        for meno in ("ffmpeg", "ffprobe", "ffplay"):
+            ti = tarfile.TarInfo(f"ffmpeg-master-latest-linux64-gpl/bin/{meno}")
+            ti.size, ti.mode = len(program), 0o755
+            t.addfile(ti, io.BytesIO(program))
+        ti = tarfile.TarInfo("ffmpeg-master-latest-linux64-gpl/LICENSE.txt")
+        ti.size = 3
+        t.addfile(ti, io.BytesIO(b"GPL"))
+    FF_ARCHIV[:] = [buf.getvalue(), program]
+
+
 def priprav():
+    priprav_ffmpeg()
     m = D / "web" / "media"
     m.mkdir(parents=True)
     ff = lambda *a: subprocess.run([FF, "-hide_banner", "-loglevel", "error", "-y", *a], cwd=m, check=True)  # noqa: E731
@@ -328,6 +373,20 @@ def ucty(o: Okno, out: Path):
                and f.read_bytes() == WS_SUBOR, polozka(s, uw))
     fs = o.data("prihlasit", "fastshare", "ja", "fs-heslo")
     skontroluj("Fastshare: prihlásenie a kredit", fs["stav"] == "ok" and fs["text"] == "kredit 12,5 GB", fs)
+    f1 = "https://fastshare.cloud/1/a.loose.end.web-dl.cz.5.1.es.5.1.2024.1080p.mkv"
+    f2 = "https://fastshare.cz/2/druhy.film.2024.mkv"
+    o.data("pridat", f"{f1}\n{f2}", "mp3")
+    s = o.data("stav")
+    skontroluj("úložisko: položka je „súbor“ (nie zvolený formát) a má názov z odkazu",
+               polozka(s, f1)["format"] == "subor" and polozka(s, f2)["format"] == "subor"
+               and polozka(s, f2)["nazov"] == "druhy.film.2024.mkv", [polozka(s, f1), polozka(s, f2)])
+    s = o.cakaj(lambda s: all(polozka(s, x)["stav"] in ("hotovo", "chyba") for x in (f1, f2)), 40)
+    skontroluj("Fastshare: názov od servera (Content-Disposition)", polozka(s, f1)["stav"] == "hotovo"
+               and (out / "A.Loose.End.2024.1080p.mkv").read_bytes() == WS_SUBOR, polozka(s, f1))
+    skontroluj("Fastshare: bez názvu od servera – názov z odkazu, prípona ostane", polozka(s, f2)["stav"] == "hotovo"
+               and (out / "druhy.film.2024.mkv").read_bytes() == WS_SUBOR, polozka(s, f2))
+    r = o.data("rozpoznat", f"{f1} https://youtu.be/dQw4w9WgXcQ")
+    skontroluj("rozpoznanie: úložisko vs. videostránka", [x["ulozisko"] for x in r] == [True, False], r)
     o.data("odhlasit", "webshare")
     s = o.data("stav")
     skontroluj("odhlásenie", s["ucty"]["webshare"]["stav"] == "neprihlaseny" and s["ucty"]["fastshare"]["stav"] == "ok", s["ucty"])
@@ -368,6 +427,39 @@ def ytdlp_plny(out: Path):
         o.zatvor()
 
 
+def mazanie(o: Okno, out: Path):
+    print("Vyčistenie frontu a mazanie stiahnutých súborov")
+    s = o.data("stav")
+    hotove = [x for x in s["polozky"] if x["stav"] == "hotovo" and x["subor"]]
+    jeden = next(x for x in hotove if x["subor"] == "druhy.film.2024.mkv")
+    i = o.data("subory_na_zmazanie", [jeden["id"]])
+    skontroluj("jedna položka: 1 súbor a jeho veľkosť", i == {"pocet": 1, "velkost": len(WS_SUBOR)}, i)
+    (out / "cudzi.txt").write_text("nie je z Komety")
+    r = o.data("zmazat_subory", [jeden["id"]])
+    s = o.data("stav")
+    skontroluj("odstrániť aj súbor: súbor v Koši, položka preč, ostatné ostali", r == {"zmazane": 1, "chyby": []}
+               and not (out / "druhy.film.2024.mkv").exists() and polozka(s, jeden["url"]) is None
+               and (out / "A.Loose.End.2024.1080p.mkv").exists(), (r, [x["subor"] for x in s["polozky"]]))
+    vsetky = o.data("subory_na_zmazanie", None)
+    na_disku = [x for x in s["polozky"] if x["stav"] == "hotovo" and x["subor"] and (out / x["subor"]).exists()]
+    skontroluj("všetko: počet súborov z frontu", vsetky["pocet"] == len({x["subor"] for x in na_disku}) > 0,
+               (vsetky, [x["subor"] for x in na_disku]))
+    r = o.data("zmazat_subory", None)
+    s = o.data("stav")
+    zostalo = [x for x in na_disku if (out / x["subor"]).exists()]
+    skontroluj("vymazať stiahnuté súbory: front prázdny, súbory v Koši, cudzí súbor ostal",
+               not s["polozky"] and not zostalo and r["chyby"] == [] and (out / "cudzi.txt").exists(),
+               (r, zostalo, s["polozky"]))
+    o.data("pridat", BASE + "/velky.bin", "video")
+    o.cakaj(lambda s: s["polozky"] and s["polozky"][0]["hotovo"] > (1 << 20), 30)
+    o.data("vycistit_front")
+    time.sleep(2)
+    s = o.data("stav")
+    skontroluj("vyčistiť front: všetko preč aj počas sťahovania, rozpracované upratané",
+               not s["polozky"] and not [x for x in out.iterdir() if x.name.startswith("velky.bin")]
+               and (out / "cudzi.txt").exists(), s["polozky"])
+
+
 def doinstalovanie():
     print("Doinštalovanie yt-dlp")
     cesta = "/usr/bin:/bin"  # bez /usr/local/bin – yt-dlp „chýba“
@@ -380,13 +472,23 @@ def doinstalovanie():
                    and not (D / "cfg-inst-zly/nastroje/yt-dlp").exists(), s["nastroje"])
     finally:
         zly.zatvor()
-    o = Okno(D / "cfg-inst", PATH=cesta, KOMETA_YTDLP_ZAKLAD=BASE + "/vydania")
+    o = Okno(D / "cfg-inst", PATH=cesta, KOMETA_YTDLP_ZAKLAD=BASE + "/vydania", KOMETA_FFMPEG_ZAKLAD=BASE + "/ff-vydanie")
     try:
         o.data("doinstalovat_ytdlp")
         s = o.cakaj(lambda s: not s["nastroje"]["instaluje"], 20)
         f = D / "cfg-inst/nastroje/yt-dlp"
         skontroluj("doinštalovaný a overený yt-dlp", s["nastroje"]["ytdlp"] and f.read_bytes() == FALOSNY_YTDLP
                    and os.access(f, os.X_OK), s["nastroje"])
+        i = o.data("init")
+        skontroluj("FFmpeg sa dá doinštalovať", i["funkcie"]["doinstalovat_ffmpeg"] is True, i["funkcie"])
+        o.data("doinstalovat_ffmpeg")
+        s = o.cakaj(lambda s: not s["nastroje"]["instaluje"], 30)
+        n = D / "cfg-inst/nastroje"
+        skontroluj("doinštalovaný a overený FFmpeg (aj ffprobe), bez zvyškov archívu",
+                   s["nastroje"]["ffmpeg"] and s["nastroje"]["co"] == "FFmpeg"
+                   and (n / "ffmpeg").read_bytes() == FF_ARCHIV[1] and os.access(n / "ffmpeg", os.X_OK)
+                   and (n / "ffprobe").exists() and sorted(x.name for x in n.iterdir()) == ["ffmpeg", "ffprobe", "yt-dlp"],
+                   (s["nastroje"], sorted(x.name for x in n.iterdir())))
     finally:
         o.zatvor()
 
@@ -646,6 +748,7 @@ def main() -> int:
         front(o, out)
         ucty(o, out)
         rozhranie(o, out)
+        mazanie(o, out)
     finally:
         o.zatvor()
     try:

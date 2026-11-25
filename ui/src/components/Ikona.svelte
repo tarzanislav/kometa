@@ -10,7 +10,7 @@
   viewBox="0 0 24 24"
   fill="none"
   stroke="currentColor"
-  stroke-width={meno === 'uchop' ? 3 : hrubka}
+  stroke-width={meno === 'uchop' || meno === 'viac' ? 3 : hrubka}
   stroke-linecap="round"
   stroke-linejoin="round"
   aria-hidden="true"

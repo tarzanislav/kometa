@@ -307,6 +307,58 @@ fn medzi<'a>(t: &'a str, zac: &str, kon: &str) -> Option<&'a str> {
     Some(&t[i..i + j])
 }
 
+/// Vyzerá ako názov súboru s príponou („film.2024.1080p.mkv“)?
+pub fn je_nazov_suboru(n: &str) -> bool {
+    let n = n.trim();
+    match n.rsplit_once('.') {
+        Some((a, b)) => {
+            !a.trim().is_empty()
+                && (1..=5).contains(&b.len())
+                && b.chars().all(|c| c.is_ascii_alphanumeric())
+                && b.chars().any(|c| c.is_ascii_alphabetic())
+                && !n.contains(['/', '\\', '<', '>', '"'])
+                // nie stránka ani doména („FastShare.cloud“, „download.php“)
+                && !["php", "html", "htm", "asp", "cz", "sk", "com", "cloud", "net", "org", "eu"]
+                    .iter()
+                    .any(|x| b.eq_ignore_ascii_case(x))
+        }
+        None => false,
+    }
+}
+
+/// Názov z hlavičky Content-Disposition (filename*=UTF-8''… má prednosť pred filename=…).
+pub fn nazov_z_hlavicky(h: &str) -> Option<String> {
+    let mut obycajny = None;
+    for cast in h.split(';') {
+        let Some((k, hod)) = cast.trim().split_once('=') else {
+            continue;
+        };
+        let k = k.trim().to_ascii_lowercase();
+        let hod = hod.trim().trim_matches('"');
+        if k == "filename*" {
+            let kod = hod.rsplit_once("''").map_or(hod, |(_, x)| x);
+            let n = super::stahovanie::nazov_z_adresy(&format!("x/{}", kod.replace('+', "%2B")));
+            if !n.is_empty() && n != "kometa" {
+                return Some(n);
+            }
+        } else if k == "filename" && !hod.is_empty() {
+            // servery často posielajú UTF-8 ako „latin-1“ bajty
+            let b: Option<Vec<u8>> = hod.chars().map(|c| u8::try_from(c as u32).ok()).collect();
+            obycajny = Some(
+                b.and_then(|b| String::from_utf8(b).ok())
+                    .unwrap_or_else(|| hod.to_string()),
+            );
+        }
+    }
+    obycajny.map(|n| n.rsplit(['/', '\\']).next().unwrap_or(&n).to_string())
+}
+
+/// Názov z odkazu Fastshare – adresa má tvar …/12345/nazov.suboru.mkv.
+pub fn nazov_z_odkazu_fastshare(url: &str) -> Option<String> {
+    let n = super::stahovanie::nazov_z_adresy(url);
+    je_nazov_suboru(&n).then_some(n)
+}
+
 /// Rozoberie stránku súboru (bez regulárnych výrazov – presne ako ju Fastshare píše).
 pub fn rozober_fastshare(html: &str) -> Vysledok<SuborFastshare> {
     for x in [
@@ -318,8 +370,29 @@ pub fn rozober_fastshare(html: &str) -> Vysledok<SuborFastshare> {
             return Err(chyba("Súbor na Fastshare už neexistuje."));
         }
     }
-    let nazov =
-        medzi(html, "<h2 title=\"", "\" class=\"section_title").map(crate::web::html::entity);
+    let nazov = medzi(html, "<h2 title=\"", "\" class=\"section_title")
+        .map(crate::web::html::entity)
+        .or_else(|| {
+            // náhradné miesta, ak sa vzhľad stránky zmení – len ak to naozaj vyzerá ako názov súboru
+            [
+                ("property=\"og:title\" content=\"", "\""),
+                ("<title>", "</title>"),
+            ]
+            .iter()
+            .filter_map(|(z, k)| medzi(html, z, k))
+            .map(|t| crate::web::html::entity(t.trim()))
+            .map(|t| {
+                t.split(" | ")
+                    .next()
+                    .unwrap_or(&t)
+                    .split(" - FastShare")
+                    .next()
+                    .unwrap_or(&t)
+                    .trim()
+                    .to_string()
+            })
+            .find(|t| je_nazov_suboru(t))
+        });
     let velkost = html.find("<i class=\"fa fa-bars\"></i>").and_then(|i| {
         let t = html[i + 26..].trim_start().replace("&nbsp;", " ");
         let cislo: String = t
@@ -466,9 +539,18 @@ impl Fastshare {
     }
 
     pub async fn subor(&self, url: &str) -> Vysledok<SuborFastshare> {
+        let url = url.split('#').next().unwrap_or(url);
+        // pre skúšky: stránka súboru z napodobeného servera (cesta ostane rovnaká)
+        let url = match std::env::var("KOMETA_FASTSHARE_ZAKLAD") {
+            Ok(z) if !z.is_empty() => match url::Url::parse(url) {
+                Ok(u) => format!("{}{}", z.trim_end_matches('/'), u.path()),
+                Err(_) => url.to_string(),
+            },
+            _ => url.to_string(),
+        };
         let r = self
             .k
-            .get(url.split('#').next().unwrap_or(url))
+            .get(&url)
             .send()
             .await
             .map_err(|e| chyba(format!("Fastshare nie je dostupný: {e}")))?;
@@ -485,11 +567,14 @@ impl Fastshare {
             // s kreditom niekedy presmeruje rovno na súbor
             let odkaz = r.url().to_string();
             let velkost = r.content_length();
-            let nazov = odkaz
-                .split(['?', '#'])
-                .next()
-                .and_then(|c| c.rsplit('/').next())
-                .map(str::to_string);
+            let nazov = r
+                .headers()
+                .get(reqwest::header::CONTENT_DISPOSITION)
+                .and_then(|h| nazov_z_hlavicky(&String::from_utf8_lossy(h.as_bytes())))
+                .or_else(|| {
+                    let n = super::stahovanie::nazov_z_adresy(&odkaz);
+                    je_nazov_suboru(&n).then_some(n)
+                });
             return Ok(SuborFastshare {
                 nazov,
                 velkost,
@@ -497,6 +582,19 @@ impl Fastshare {
             });
         }
         rozober_fastshare(&r.text().await?)
+    }
+
+    /// Názov, ktorý pošle server pri sťahovaní (Content-Disposition) – stiahne sa len 1 bajt.
+    pub async fn nazov_zo_servera(&self, odkaz: &str) -> Option<String> {
+        let r = self
+            .k
+            .get(odkaz)
+            .header(reqwest::header::RANGE, "bytes=0-0")
+            .send()
+            .await
+            .ok()?;
+        let h = r.headers().get(reqwest::header::CONTENT_DISPOSITION)?;
+        nazov_z_hlavicky(&String::from_utf8_lossy(h.as_bytes())).filter(|n| !n.trim().is_empty())
     }
 }
 
@@ -935,11 +1033,14 @@ pub async fn stiahni(
     }
     let f = fastshare(v, false).await?;
     let s = f.subor(&p.url).await?;
-    let nazov = s
-        .nazov
-        .clone()
-        .filter(|n| !n.is_empty())
-        .unwrap_or_else(|| "fastshare_subor".into());
+    // názov: zo stránky → od servera pri sťahovaní → z konca odkazu → náhradný
+    let nazov = match s.nazov.clone().filter(|n| !n.trim().is_empty()) {
+        Some(n) => n,
+        None => match f.nazov_zo_servera(&s.odkaz).await {
+            Some(n) => n,
+            None => nazov_z_odkazu_fastshare(&p.url).unwrap_or_else(|| "fastshare_subor".into()),
+        },
+    };
     v.zapis(format!("⬇ Fastshare: {nazov}"));
     v.fronta.lock().unwrap().uprav(&p.id, |x| {
         x.nazov = nazov.clone();
@@ -982,6 +1083,46 @@ mod testy {
             md5_crypt("dlhé heslo s diakritikou 123", "Ws0Lt12345"),
             "$1$Ws0Lt123$sb4oeW6sW1EzBBwvGWXMr/"
         );
+    }
+
+    #[test]
+    fn nazvy_suborov_fastshare() {
+        assert_eq!(
+            nazov_z_odkazu_fastshare(
+                "https://fastshare.cloud/35565309/a.loose.end.web-dl.cz.5.1.es.5.1.2024.1080p.mkv"
+            )
+            .as_deref(),
+            Some("a.loose.end.web-dl.cz.5.1.es.5.1.2024.1080p.mkv")
+        );
+        assert_eq!(
+            nazov_z_odkazu_fastshare("https://fastshare.cz/123/Letn%C3%AD%20film.avi#x").as_deref(),
+            Some("Letní film.avi")
+        );
+        assert_eq!(nazov_z_odkazu_fastshare("https://fastshare.cz/123/"), None);
+        assert_eq!(
+            nazov_z_odkazu_fastshare("https://x.fastshare.cz/download.php?id=5"),
+            None
+        );
+        assert_eq!(
+            nazov_z_hlavicky("attachment; filename=\"A.Loose.End.mkv\"").as_deref(),
+            Some("A.Loose.End.mkv")
+        );
+        assert_eq!(
+            nazov_z_hlavicky(
+                "attachment; filename=\"x.mkv\"; filename*=UTF-8''Letn%C3%AD%20film.mkv"
+            )
+            .as_deref(),
+            Some("Letní film.mkv")
+        );
+        assert_eq!(nazov_z_hlavicky("inline"), None);
+        // stránka bez nadpisu h2 – názov z <title>, ak vyzerá ako súbor
+        let html = format!(
+            "<title>Film.2024.1080p.mkv | FastShare</title>{PRIHLASENY}<a href=\"https://d1.fastshare.cloud/download.php?id=77&h=1\">"
+        );
+        let s = rozober_fastshare(&html).unwrap();
+        assert_eq!(s.nazov.as_deref(), Some("Film.2024.1080p.mkv"));
+        let html = format!("<title>FastShare.cloud</title>{PRIHLASENY}<a href=\"https://d1.fastshare.cloud/download.php?id=77&h=1\">");
+        assert_eq!(rozober_fastshare(&html).unwrap().nazov, None);
     }
 
     #[test]

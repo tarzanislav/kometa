@@ -19,9 +19,11 @@
   const nastroje = $derived(app.stav?.nastroje)
   const jadroRust = $derived(app.init?.jadro === 'rust')
 
-  async function doinstalovat() {
-    await skus('doinstalovat_ytdlp')
+  async function doinstalovat(co: 'ytdlp' | 'ffmpeg') {
+    await skus(co === 'ffmpeg' ? 'doinstalovat_ffmpeg' : 'doinstalovat_ytdlp')
   }
+  // priebeh a výsledok poslednej inštalácie patria k tomu pomocníkovi, ktorý sa inštaloval
+  const instalujeFfmpeg = $derived(nastroje?.co === 'FFmpeg')
 
   async function zmenitPriecinok() {
     const p = await skus<string>('vybrat_priecinok')
@@ -147,19 +149,19 @@
         <div>
           <p class="pomocnik-nazov">yt-dlp</p>
           <p class="male tlmene">YouTube, Instagram, TikTok, Facebook, playlisty a stovky ďalších stránok. Stránky, prehrávače, streamy a súbory zvláda Kometa aj bez neho.</p>
-          {#if nastroje?.instaluje}
+          {#if nastroje?.instaluje && !instalujeFfmpeg}
             <div class="lista" role="progressbar" aria-label="Sťahovanie yt-dlp" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round((nastroje.podiel ?? 0) * 100)}>
               <span style:width="{Math.round((nastroje.podiel ?? 0) * 100)}%"></span>
             </div>
-          {:else if nastroje?.text}
+          {:else if nastroje?.text && !instalujeFfmpeg}
             <p class="male tlmene">{nastroje.text}</p>
           {/if}
         </div>
         {#if nastroje?.ytdlp}
           <span class="stav-ok"><Ikona meno="fajka" velkost={16} /> Pripravený</span>
         {:else}
-          <button class="tl" onclick={doinstalovat} disabled={nastroje?.instaluje}>
-            {nastroje?.instaluje ? 'Sťahujem…' : 'Doinštalovať yt-dlp'}
+          <button class="tl" onclick={() => doinstalovat('ytdlp')} disabled={nastroje?.instaluje}>
+            {nastroje?.instaluje && !instalujeFfmpeg ? 'Sťahujem…' : 'Doinštalovať yt-dlp'}
           </button>
         {/if}
       </div>
@@ -167,9 +169,22 @@
         <div>
           <p class="pomocnik-nazov">FFmpeg</p>
           <p class="male tlmene">Kometa spája obraz a zvuk sama. FFmpeg treba len na prevod do MP3, zvuk Opus z YouTube a zriedkavé formáty.</p>
+          {#if nastroje?.instaluje && instalujeFfmpeg}
+            <div class="lista" role="progressbar" aria-label="Sťahovanie FFmpeg" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round((nastroje.podiel ?? 0) * 100)}>
+              <span style:width="{Math.round((nastroje.podiel ?? 0) * 100)}%"></span>
+            </div>
+          {:else if nastroje?.text && instalujeFfmpeg}
+            <p class="male tlmene">{nastroje.text}</p>
+          {:else if !nastroje?.ffmpeg && !app.init?.funkcie?.doinstalovat_ffmpeg}
+            <p class="male tlmene">V macOS ho nainštaluješ cez Homebrew: <code>brew install ffmpeg</code></p>
+          {/if}
         </div>
         {#if nastroje?.ffmpeg}
           <span class="stav-ok"><Ikona meno="fajka" velkost={16} /> Nájdený</span>
+        {:else if app.init?.funkcie?.doinstalovat_ffmpeg}
+          <button class="tl" onclick={() => doinstalovat('ffmpeg')} disabled={nastroje?.instaluje}>
+            {nastroje?.instaluje && instalujeFfmpeg ? 'Sťahujem…' : 'Doinštalovať FFmpeg'}
+          </button>
         {:else}
           <span class="male tlmene">Nenájdený</span>
         {/if}

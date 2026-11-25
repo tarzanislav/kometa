@@ -15,7 +15,7 @@ import uuid
 from pathlib import Path
 
 from .common import QUEUE_PATH, Paused, clean_error, safe_name, unique_path
-from . import httpdl, media, skener
+from . import hosts, httpdl, media, skener
 from .hosts import WEBSHARE_RE, Accounts, HostError, detect_host
 
 _FRIENDLY = [
@@ -132,12 +132,15 @@ class DownloadQueue:
                 source = media.source_name(url)
                 if providers and providers[n] and source == "Web":
                     source = providers[n]
-                self.items[iid] = {"id": iid, "url": url, "source": source, "preset": preset,
-                                   "outdir": outdir, "title": (titles[n] if titles else "") or "", "status": "caka",
+                host = hosts.detect_host(url)   # úložisko: jeden hotový súbor, formát sa nevyberá
+                title = (titles[n] if titles else "") or (hosts.fastshare_name_from_url(url) if host == "fastshare"
+                                                          else "") or ""
+                self.items[iid] = {"id": iid, "url": url, "source": source, "preset": "subor" if host else preset,
+                                   "outdir": outdir, "title": title, "status": "caka",
                                    "done": 0, "total": None, "speed": 0, "file": "", "dest": "", "tmp": [],
                                    "error": "", "added": time.time(), "referer": referer or "",
                                    "password": password or "", "from_scan": from_scan}
-                if jazyky:
+                if jazyky and not host:
                     self.items[iid]["jazyky"] = dict(jazyky)
                 self.order.append(iid)
                 new.append(iid)
@@ -319,7 +322,9 @@ class DownloadQueue:
         if host == "fastshare":
             client = self.accounts.fastshare()
             res = client.resolve(url)
-            name = res["name"] or httpdl.filename_from_response({}, res["link"]) or "fastshare_subor"
+            # názov: zo stránky → od servera pri sťahovaní → z konca odkazu → náhradný
+            name = (res["name"] or client.server_name(res["link"]) or hosts.fastshare_name_from_url(url)
+                    or "fastshare_subor")
             dest = self._dest(iid, it, outdir, name)
             self._update(iid, title=name, total=res["size"])
             self.log(f"⬇ Fastshare: {name}")

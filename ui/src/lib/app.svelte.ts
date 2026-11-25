@@ -4,7 +4,11 @@ import { volaj, ChybaJadra } from './api'
 import type { Init, Nastavenia, Stav } from './typy'
 
 export type Stranka = 'stahovanie' | 'jazyky' | 'ucty' | 'nastavenia'
-export type Dialog = { druh: 'playlist'; url: string } | { druh: 'skener'; url: string } | null
+export type Dialog =
+  | { druh: 'playlist'; url: string }
+  | { druh: 'skener'; url: string }
+  | { druh: 'zmazat'; co: 'front' | 'subory'; ids?: string[] | null }
+  | null
 
 export interface Toast {
   id: number

@@ -42,6 +42,13 @@ pub fn nazov_zdroja(adresa: &str) -> &'static str {
         .unwrap_or("Web")
 }
 
+/// Úložiská súborov – odkaz vedie na jeden hotový súbor, formát ani kvalita sa nevyberajú.
+pub const ULOZISKA: [&str; 2] = ["Webshare", "Fastshare"];
+
+pub fn je_ulozisko(adresa: &str) -> bool {
+    ULOZISKA.contains(&nazov_zdroja(adresa))
+}
+
 /// Kanál YouTube: (základ kanála, karta) – napr. ("https://www.youtube.com/@ucitel", Some("videos")).
 fn kanal_youtube(adresa: &str) -> Option<(String, Option<String>)> {
     let (h, u) = hostitel(adresa)?;

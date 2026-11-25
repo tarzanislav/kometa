@@ -5,12 +5,18 @@
   import type { Polozka } from '../lib/typy'
   import Ikona from '../components/Ikona.svelte'
   import Kometa from '../components/Kometa.svelte'
+  import Menu from '../components/Menu.svelte'
 
   let { p }: { p: Polozka } = $props()
   let podrobnosti = $state(false)
   let bezObrazka = $state(false)
 
-  const formatNazov = $derived(app.init?.formaty.find((f) => f.id === p.format)?.nazov ?? '')
+  const ULOZISKA = ['Webshare', 'Fastshare']
+  const formatNazov = $derived(
+    p.format === 'subor' || ULOZISKA.includes(p.zdroj)
+      ? 'Súbor'
+      : (app.init?.formaty.find((f) => f.id === p.format)?.nazov ?? ''),
+  )
   const podiel = $derived(p.podiel ?? (p.celkom ? p.hotovo / p.celkom : null))
   const kometaStav = $derived(
     p.stav === 'stahuje' ? 'bezi' : p.stav === 'pauza' ? 'pauza' : p.stav === 'chyba' ? 'chyba' : 'caka',
@@ -110,14 +116,31 @@
     <button class="tl ikona" title="Kopírovať odkaz" aria-label="Kopírovať odkaz" onclick={kopirovat}>
       <Ikona meno="kopirovat" />
     </button>
-    <button
-      class="tl ikona nebezpecne"
-      title={p.stav === 'hotovo' ? 'Odstrániť zo zoznamu (súbor ostane)' : 'Zrušiť a odstrániť'}
-      aria-label={p.stav === 'hotovo' ? 'Odstrániť zo zoznamu' : 'Zrušiť a odstrániť'}
-      onclick={() => skus('odstranit', [p.id])}
-    >
-      <Ikona meno={p.stav === 'hotovo' ? 'zavriet' : 'kos'} />
-    </button>
+    {#if p.stav === 'hotovo'}
+      <Menu
+        popis="Odstrániť"
+        ikona="kos"
+        trieda="tl ikona nebezpecne"
+        polozky={[
+          { text: 'Odstrániť zo zoznamu (súbor ostane)', ikona: 'zavriet', akcia: () => skus('odstranit', [p.id]) },
+          {
+            text: 'Odstrániť aj súbor…',
+            ikona: 'kos',
+            nebezpecne: true,
+            akcia: () => (app.dialog = { druh: 'zmazat', co: 'subory', ids: [p.id] }),
+          },
+        ]}
+      />
+    {:else}
+      <button
+        class="tl ikona nebezpecne"
+        title="Zrušiť a odstrániť"
+        aria-label="Zrušiť a odstrániť"
+        onclick={() => skus('odstranit', [p.id])}
+      >
+        <Ikona meno="kos" />
+      </button>
+    {/if}
   </div>
 </article>
 

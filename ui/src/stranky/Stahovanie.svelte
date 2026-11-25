@@ -4,6 +4,7 @@
   import { ikonaZdroja } from '../lib/ikony'
   import type { Polozka, Rozpoznany } from '../lib/typy'
   import Ikona from '../components/Ikona.svelte'
+  import Menu from '../components/Menu.svelte'
   import Prazdne from '../components/Prazdne.svelte'
   import Segment from '../components/Segment.svelte'
   import PolozkaFronty from './PolozkaFronty.svelte'
@@ -15,6 +16,11 @@
   let filter = $state<Filter>('vsetko')
   let pridava = $state(false)
   let pole: HTMLTextAreaElement | undefined = $state()
+
+  // úložiská (Webshare, Fastshare) majú jeden hotový súbor – formát sa týka len videostránok
+  const suborov = $derived(rozpoznane.filter((r) => r.ulozisko).length)
+  const videi = $derived(rozpoznane.length - suborov)
+  const lenSubory = $derived(suborov > 0 && videi === 0)
 
   const riadky = $derived(Math.min(6, Math.max(1, app.prikaz.split('\n').length)))
 
@@ -159,24 +165,43 @@
         </button>
       </div>
       <div class="spustit">
-        <label class="skryte" for="format">Formát</label>
-        <select id="format" class="vyber" bind:value={format} onchange={() => nastav({ dl_preset: format })}>
-          <optgroup label="Video">
-            {#each app.init?.formaty.filter((f) => f.nazov.startsWith('Video')) ?? [] as f (f.id)}
-              <option value={f.id}>{f.nazov}</option>
-            {/each}
-          </optgroup>
-          <optgroup label="Len zvuk">
-            {#each app.init?.formaty.filter((f) => f.nazov.startsWith('Zvuk')) ?? [] as f (f.id)}
-              <option value={f.id}>{f.nazov}</option>
-            {/each}
-          </optgroup>
-        </select>
+        {#if lenSubory}
+          <p class="len-subor" id="format-popis">
+            <Ikona meno="info" velkost={16} />
+            {suborov === 1 ? 'Súbor sa stiahne tak, ako je na úložisku' : 'Súbory sa stiahnu tak, ako sú na úložisku'}
+          </p>
+        {:else}
+          <label class="skryte" for="format">Formát</label>
+          <select
+            id="format"
+            class="vyber"
+            bind:value={format}
+            onchange={() => nastav({ dl_preset: format })}
+            aria-describedby={suborov ? 'format-popis' : undefined}
+          >
+            <optgroup label="Video">
+              {#each app.init?.formaty.filter((f) => f.nazov.startsWith('Video')) ?? [] as f (f.id)}
+                <option value={f.id}>{f.nazov}</option>
+              {/each}
+            </optgroup>
+            <optgroup label="Len zvuk">
+              {#each app.init?.formaty.filter((f) => f.nazov.startsWith('Zvuk')) ?? [] as f (f.id)}
+                <option value={f.id}>{f.nazov}</option>
+              {/each}
+            </optgroup>
+          </select>
+        {/if}
         <button class="tl hlavne velke" onclick={stiahnut} disabled={!app.prikaz.trim() || pridava}>
           <Ikona meno="stiahnut" velkost={18} hrubka={2} /> Stiahnuť
         </button>
       </div>
     </div>
+    {#if suborov && videi}
+      <p class="male tlmene poznamka-formatu" id="format-popis">
+        Formát platí pre {pocet(videi, 'video', 'videá', 'videí')}, {pocet(suborov, 'súbor', 'súbory', 'súborov')} z úložísk
+        sa {suborov === 1 ? 'stiahne' : 'stiahnu'} bez zmeny.
+      </p>
+    {/if}
   </section>
 
   {#if polozky.length}
@@ -202,6 +227,25 @@
           <button class="tl tiche" onclick={() => skus('vycistit_hotove')}><Ikona meno="vycistit" velkost={16} /> Vyčistiť hotové</button>
         {/if}
         <button class="tl tiche" onclick={() => skus('otvorit')}><Ikona meno="priecinok" velkost={16} /> Priečinok</button>
+        <Menu
+          popis="Ďalšie možnosti frontu"
+          polozky={[
+            {
+              text: 'Vyčistiť front',
+              ikona: 'vycistit',
+              akcia: () => {
+                if (aktivnych) app.dialog = { druh: 'zmazat', co: 'front' }
+                else skus('vycistit_front').then(() => toast('Front je prázdny. Stiahnuté súbory ostali na disku.', 'ok'))
+              },
+            },
+            {
+              text: 'Vymazať stiahnuté súbory…',
+              ikona: 'kos',
+              nebezpecne: true,
+              akcia: () => (app.dialog = { druh: 'zmazat', co: 'subory', ids: null }),
+            },
+          ]}
+        />
       </div>
     </div>
 
@@ -239,6 +283,17 @@
   }
   .hlavicka p {
     margin-top: var(--s1);
+  }
+  .len-subor {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    min-height: 44px;
+    padding: 0 var(--s3);
+    color: var(--ink-2);
+  }
+  .poznamka-formatu {
+    margin: var(--s2) var(--s1) 0;
   }
   .prikaz {
     padding: var(--s3);

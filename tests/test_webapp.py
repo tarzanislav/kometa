@@ -49,7 +49,31 @@ def main() -> int:
         r = api("rozpoznat", "https://www.youtube.com/watch?v=uL9-e9OlLfw\nhttps://webshare.cz/#/file/abc\n"
                              "https://www.youtube.com/@kanal")["data"]
         assert [x["zdroj"] for x in r] == ["YouTube", "Webshare", "YouTube"] and r[2]["kolekcia"], r
+        assert [x["ulozisko"] for x in r] == [False, True, False], r
         assert not api("pridat", "bez odkazu")["ok"]
+
+        # úložisko: hotový súbor (nie zvolený formát), názov z odkazu Fastshare
+        fs = "https://fastshare.cloud/35565309/a.loose.end.web-dl.cz.5.1.es.5.1.2024.1080p.mkv"
+        jadro.dq.pause_all()
+        api("pridat", fs, "mp3")
+        p = next(x for x in api("stav")["data"]["polozky"] if x["url"] == fs)
+        assert p["format"] == "subor" and p["nazov"] == "a.loose.end.web-dl.cz.5.1.es.5.1.2024.1080p.mkv", p
+        assert api("vycistit_front")["ok"] and api("stav")["data"]["polozky"] == []
+
+        # vymazať stiahnuté súbory: len súbory z frontu, do Koša; prázdny priečinok kanála zmizne
+        out = TMP / "Kometa" / "Kanál"
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "video.mp4").write_bytes(b"x" * 1000)
+        (TMP / "Kometa" / "cudzi.txt").write_text("ostane")
+        jadro.dq.items["h1"] = {"id": "h1", "url": "https://example.com/v", "source": "Web", "preset": "video",
+                                "outdir": str(out), "title": "video", "status": "hotovo", "done": 1000, "total": 1000,
+                                "speed": 0, "file": str(out / "video.mp4"), "dest": "", "tmp": [], "error": ""}
+        jadro.dq.order.append("h1")
+        assert api("subory_na_zmazanie", None)["data"] == {"pocet": 1, "velkost": 1000}
+        r = api("zmazat_subory", ["h1"])["data"]
+        assert r == {"zmazane": 1, "chyby": []}, r
+        assert not out.exists() and (TMP / "Kometa" / "cudzi.txt").exists() and api("stav")["data"]["polozky"] == []
+        jadro.dq.start_all()
         nast = api("ulozit_nastavenia", {"tema": "les", "rezim": "noc", "parallel": 99, "neznamy": 1})["data"]
         assert nast["tema"] == "les" and nast["rezim"] == "noc" and nast["parallel"] == 6 and "neznamy" not in nast
         assert api("ulozit_nastavenia", {"tema": "neexistuje"})["data"]["tema"] == "kometa"

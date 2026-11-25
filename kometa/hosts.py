@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from html import unescape as html_unescape
 import threading
 import time
 import xml.etree.ElementTree as ET
@@ -32,6 +33,33 @@ def detect_host(url: str) -> str | None:
     if FASTSHARE_RE.match(url.strip()):
         return "fastshare"
     return None
+
+
+_NOT_FILE_EXT = {"php", "html", "htm", "asp", "cz", "sk", "com", "cloud", "net", "org", "eu"}
+
+
+def looks_like_file_name(name: str | None) -> bool:
+    """„film.2024.1080p.mkv“ áno; „download.php“ či „FastShare.cloud“ nie."""
+    name = (name or "").strip()
+    stem, dot, ext = name.rpartition(".")
+    return bool(dot and stem.strip() and re.fullmatch(r"[A-Za-z0-9]{1,5}", ext) and re.search(r"[A-Za-z]", ext)
+                and ext.lower() not in _NOT_FILE_EXT and not re.search(r'[/\\<>"]', name))
+
+
+def name_from_disposition(headers) -> str | None:
+    """Názov len z hlavičky Content-Disposition (nie z adresy)."""
+    if not (headers.get("Content-Disposition") or "").strip():
+        return None
+    from .httpdl import filename_from_response
+    name = filename_from_response(headers, "")
+    return name.replace("\\", "/").rsplit("/", 1)[-1] if name else None
+
+
+def fastshare_name_from_url(url: str) -> str | None:
+    """Fastshare má názov v adrese: …/12345/nazov.suboru.mkv"""
+    from urllib.parse import unquote, urlparse
+    name = unquote(urlparse(url.strip()).path.rstrip("/").rsplit("/", 1)[-1])
+    return name if looks_like_file_name(name) else None
 
 
 # --------------------------------------------------------------------------- #
@@ -210,13 +238,21 @@ class FastshareClient:
             from .httpdl import filename_from_response
             size = r.headers.get("Content-Length")
             r.close()
-            return {"name": filename_from_response(r.headers, r.url), "link": r.url,
-                    "size": int(size) if size and size.isdigit() else None}
+            name = name_from_disposition(r.headers) or filename_from_response({}, r.url)
+            return {"name": name if looks_like_file_name(name) or name_from_disposition(r.headers) else None,
+                    "link": r.url, "size": int(size) if size and size.isdigit() else None}
         html = r.text
         if self.OFFLINE_RE.search(html):
             raise HostError("Súbor na Fastshare už neexistuje.")
         m = self.NAME_RE.search(html)
-        name = m.group(1) if m else None
+        name = html_unescape(m.group(1)) if m else None
+        if not name:  # náhradné miesta, ak sa vzhľad stránky zmení – len ak to vyzerá ako názov súboru
+            for pat in (r'property="og:title" content="([^"]*)"', r"<title>(.*?)</title>"):
+                m = re.search(pat, html, re.I | re.S)
+                t = html_unescape(m.group(1).strip()).split(" | ")[0].split(" - FastShare")[0].strip() if m else ""
+                if looks_like_file_name(t):
+                    name = t
+                    break
         size = None
         m = self.SIZE_RE.search(html)
         if m:
@@ -230,6 +266,14 @@ class FastshareClient:
         if self.LOGGED_IN not in html:
             raise HostError("Na Fastshare nie si prihlásený – zadaj účet v karte Účty.")
         raise HostError("Na stránke Fastshare sa nenašiel odkaz na stiahnutie (stránka sa mohla zmeniť).")
+
+    def server_name(self, link: str) -> str | None:
+        """Názov, ktorý pošle server pri sťahovaní – stiahne sa len 1 bajt."""
+        try:
+            with self.session.get(link, headers={"Range": "bytes=0-0"}, stream=True, timeout=(20, 30)) as r:
+                return name_from_disposition(r.headers)
+        except requests.RequestException:
+            return None
 
 
 # --------------------------------------------------------------------------- #

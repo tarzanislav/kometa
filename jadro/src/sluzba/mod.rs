@@ -44,6 +44,9 @@ pub const METODY: &[&str] = &[
     "spustit",
     "odstranit",
     "vycistit_hotove",
+    "vycistit_front",
+    "subory_na_zmazanie",
+    "zmazat_subory",
     "pozastavit_vsetko",
     "spustit_vsetko",
     "otvorit",
@@ -58,6 +61,7 @@ pub const METODY: &[&str] = &[
     "odhlasit",
     "ulozit_nastavenia",
     "doinstalovat_ytdlp",
+    "doinstalovat_ffmpeg",
 ];
 
 /// Graf rýchlosti: jeden bod za sekundu, posledných 90 s.
@@ -68,6 +72,8 @@ struct Graf {
 
 #[derive(Default, Clone)]
 struct Instalacia {
+    /// čo sa inštaluje: „yt-dlp“ alebo „FFmpeg“
+    co: &'static str,
     bezi: bool,
     text: String,
     podiel: f64,
@@ -139,6 +145,18 @@ impl Vnutro {
         }
         let _ = std::fs::create_dir_all(&o);
         o
+    }
+}
+
+/// Formát položky podľa stránky: z úložiska sa stiahne hotový súbor („subor“),
+/// „Video s jazykmi“ ide len pri YouTube – ostatné stránky dostanú bežné video.
+fn format_pre(url: &str, preset: &str) -> String {
+    if zdroje::je_ulozisko(url) {
+        "subor".into()
+    } else if preset == "jazyky" && zdroje::nazov_zdroja(url) != "YouTube" {
+        "video".into()
+    } else {
+        preset.into()
     }
 }
 
@@ -280,7 +298,7 @@ impl Sluzba {
                 zdroje::odkazy(&arg::<String>(a, 0)?)
                     .into_iter()
                     .take(50)
-                    .map(|u| json!({"zdroj": zdroje::nazov_zdroja(&u), "kolekcia": zdroje::je_kolekcia(&u), "url": u}))
+                    .map(|u| json!({"zdroj": zdroje::nazov_zdroja(&u), "kolekcia": zdroje::je_kolekcia(&u), "ulozisko": zdroje::je_ulozisko(&u), "url": u}))
                     .collect(),
             ),
             "kolekcia" => self.kolekcia(&arg::<String>(a, 0)?, &arg::<String>(a, 1)?).await?,
@@ -313,6 +331,24 @@ impl Sluzba {
             "vycistit_hotove" => {
                 v.fronta.lock().unwrap().vycisti_hotove();
                 Value::Null
+            }
+            "vycistit_front" => {
+                // všetko z frontu preč; stiahnuté súbory ostanú, rozpracované sa uprace
+                let mut f = v.fronta.lock().unwrap();
+                let ids = f.ids();
+                for (p, uloha) in f.odstran(&ids) {
+                    v.rt.spawn(stahovanie::uprac(p, uloha));
+                }
+                Value::Null
+            }
+            "subory_na_zmazanie" => {
+                let ids = arg::<Option<Vec<String>>>(a, 0)?;
+                let (subory, velkost) = stahovanie::stiahnute_subory(v, ids.as_deref());
+                json!({"pocet": subory.len(), "velkost": velkost})
+            }
+            "zmazat_subory" => {
+                let ids = arg::<Option<Vec<String>>>(a, 0)?;
+                stahovanie::zmaz_stiahnute(v, ids.as_deref()).await
             }
             "pozastavit_vsetko" => {
                 let mut f = v.fronta.lock().unwrap();
@@ -389,8 +425,12 @@ impl Sluzba {
                 v.naplanuj();
                 out
             }
+            "doinstalovat_ffmpeg" => {
+                self.doinstalovat("FFmpeg");
+                Value::Null
+            }
             "doinstalovat_ytdlp" => {
-                self.doinstalovat_ytdlp();
+                self.doinstalovat("yt-dlp");
                 Value::Null
             }
             _ => return Err(chyba("Neznáma akcia.")),
@@ -429,6 +469,7 @@ impl Sluzba {
                 "ucty": true,
                 "kolekcie": ytdlp,
                 "doinstalovat_ytdlp": true,
+                "doinstalovat_ffmpeg": nastroje::ffmpeg_doinstalovatelny(),
                 "ffmpeg_volitelny": true,
             },
         })
@@ -464,6 +505,7 @@ impl Sluzba {
                 "ytdlp": self.v.nastroje.ytdlp().is_some(),
                 "ffmpeg": self.v.nastroje.ffmpeg().is_some(),
                 "instaluje": i.bezi,
+                "co": i.co,
                 "text": i.text,
                 "podiel": i.podiel,
             },
@@ -490,20 +532,17 @@ impl Sluzba {
         let nove = self.v.fronta.lock().unwrap().pridaj(
             jednotlive
                 .into_iter()
-                .map(|url| {
-                    // „Video s jazykmi“ ide len pri YouTube; ostatné stránky sa stiahnu ako video
-                    let youtube = zdroje::nazov_zdroja(&url) == "YouTube";
-                    Nova {
-                        format: if preset == "jazyky" && !youtube {
-                            "video".into()
-                        } else {
-                            preset.clone()
-                        },
-                        jazyky: jazyky.clone().filter(|_| youtube),
-                        url,
-                        priecinok: priecinok.clone(),
-                        ..Default::default()
-                    }
+                .map(|url| Nova {
+                    format: format_pre(&url, &preset),
+                    jazyky: jazyky
+                        .clone()
+                        .filter(|_| zdroje::nazov_zdroja(&url) == "YouTube"),
+                    nazov: ucty::nazov_z_odkazu_fastshare(&url)
+                        .filter(|_| zdroje::nazov_zdroja(&url) == "Fastshare")
+                        .unwrap_or_default(),
+                    url,
+                    priecinok: priecinok.clone(),
+                    ..Default::default()
                 })
                 .collect(),
         );
@@ -591,11 +630,7 @@ impl Sluzba {
                         .and_then(Value::as_str)
                         .unwrap_or("")
                         .to_string(),
-                    format: if preset == "jazyky" && !youtube {
-                        "video".into()
-                    } else {
-                        preset.clone()
-                    },
+                    format: format_pre(&url, &preset),
                     jazyky: jazyky.clone().filter(|_| youtube),
                     url,
                     priecinok: out.clone(),
@@ -666,15 +701,17 @@ impl Sluzba {
         json!({"pridane": n})
     }
 
-    fn doinstalovat_ytdlp(&self) {
+    /// Doinštaluje pomocníka („yt-dlp“ alebo „FFmpeg“) na pozadí; naraz beží len jedna inštalácia.
+    fn doinstalovat(&self, co: &'static str) {
         {
             let mut i = self.v.instalacia.lock().unwrap();
             if i.bezi {
                 return;
             }
             *i = Instalacia {
+                co,
                 bezi: true,
-                text: "Sťahujem yt-dlp…".into(),
+                text: format!("Sťahujem {co}…"),
                 podiel: 0.0,
             };
         }
@@ -696,6 +733,7 @@ impl Sluzba {
             });
             let k = crate::klient::klient(&crate::klient::Nastavenia::default());
             let r = match k {
+                Ok(k) if co == "FFmpeg" => v.nastroje.doinstaluj_ffmpeg(&k, &h).await,
                 Ok(k) => v.nastroje.doinstaluj_ytdlp(&k, &h).await,
                 Err(e) => Err(e),
             };
@@ -703,8 +741,8 @@ impl Sluzba {
             i.bezi = false;
             i.podiel = 1.0;
             i.text = match r {
-                Ok(_) => "yt-dlp je pripravený.".into(),
-                Err(e) => format!("yt-dlp sa nepodarilo doinštalovať: {e}"),
+                Ok(_) => format!("{co} je pripravený."),
+                Err(e) => format!("{co} sa nepodarilo doinštalovať: {e}"),
             };
             drop(i);
             v.zapis(v.instalacia.lock().unwrap().text.clone());

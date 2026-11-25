@@ -20,6 +20,9 @@ Kód Komety je vlastný a pôvodný. Tieto cudzie súčasti používa – každ�
 | [Tauri](https://tauri.app) 2 + pluginy dialog, clipboard-manager, single-instance | MIT / Apache-2.0 | aplikácia | natívne okno, dialógy, schránka, jedno spustenie |
 | WebView2 (Windows), WebKit (macOS), WebKitGTK (Linux) | súčasť systému | aplikácia | zobrazenie rozhrania |
 | yt-dlp (vydania na GitHube) | Unlicense | aplikácia ho na požiadanie stiahne do `~/.kometa/nastroje` | YouTube a ďalšie služby; overuje sa SHA-256 z vydania |
+| FFmpeg ([BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds), GPL zostavenie) | GPL-3.0 | aplikácia ho na požiadanie stiahne do `~/.kometa/nastroje` (samostatný program, nie súčasť Komety) | MP3, prevod Opus → AAC, zriedkavé formáty; overuje sa SHA-256 z vydania |
+| Rust: [trash](https://github.com/Byron/trash-rs) | MIT | jadro v Ruste | presun stiahnutých súborov do Koša |
+| [Send2Trash](https://github.com/arsenetar/send2trash) | BSD-3-Clause | program (Python) | presun stiahnutých súborov do Koša |
 
 Pravidlá pre nové súčasti: len slobodné licencie, ktoré dovoľujú použitie v projekte pod MIT;
 súčasť musí byť nahraditeľná a zapísaná v tejto tabuľke. Modely a dátové sady pre AI (titulky,
