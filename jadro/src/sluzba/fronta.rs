@@ -101,6 +101,29 @@ pub struct Polozka {
     /// čo sa práve robí (napr. „Sťahujem: Čeština (2/3)“)
     #[serde(skip)]
     pub krok: String,
+    /// „subor“ = úložisko chce heslo k súboru (zadá sa pri položke)
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub treba_heslo: String,
+    /// rozbaľovanie archívu po stiahnutí
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rozbalenie: Option<Rozbalenie>,
+    /// stránka po prihlásení (kurz) – pošlú sa cookies z prehliadača kurzov
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub prihlasenie: bool,
+}
+
+/// Stav rozbaľovania: „caka“ (na ďalšie časti), „bezi“, „hotovo“, „heslo“, „chyba“, „cast“
+/// (časť rozdeleného archívu – rozbaľuje sa pri prvej časti), „vypnute“ (dá sa spustiť ručne).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct Rozbalenie {
+    pub stav: String,
+    #[serde(default)]
+    pub text: String,
+    /// výsledný súbor alebo priečinok
+    #[serde(default)]
+    pub ciel: String,
+    #[serde(skip)]
+    pub podiel: Option<f64>,
 }
 
 /// Čo pridať do frontu.
@@ -115,6 +138,7 @@ pub struct Nova {
     pub heslo: String,
     pub zo_skenu: bool,
     pub jazyky: Option<VolbyJazykov>,
+    pub prihlasenie: bool,
 }
 
 pub struct Beh {
@@ -137,7 +161,7 @@ pub fn teraz() -> f64 {
         .unwrap_or(0.0)
 }
 
-fn nove_id() -> String {
+pub fn nove_id() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static POCITADLO: AtomicU64 = AtomicU64::new(0);
     let n = POCITADLO.fetch_add(1, Ordering::Relaxed);
@@ -164,6 +188,10 @@ impl Fronta {
         for p in &mut polozky {
             if p.stav == Stav::Stahuje {
                 p.stav = if pokracovat { Stav::Caka } else { Stav::Pauza };
+            }
+            if let Some(r) = p.rozbalenie.as_mut().filter(|r| r.stav == "bezi") {
+                r.stav = "chyba".into();
+                r.text = "Rozbaľovanie sa prerušilo – klikni na Rozbaliť.".into();
             }
         }
         Fronta {
@@ -247,6 +275,9 @@ impl Fronta {
                 jazyky: n.jazyky,
                 podiel: None,
                 krok: String::new(),
+                treba_heslo: String::new(),
+                rozbalenie: None,
+                prihlasenie: n.prihlasenie,
             });
             pridane.push(id);
         }
@@ -260,6 +291,7 @@ impl Fronta {
                 p.stav = Stav::Caka;
                 p.chyba.clear();
                 p.podrobnosti.clear();
+                p.treba_heslo.clear();
             }
         }
         self.uloz(true);

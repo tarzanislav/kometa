@@ -15,6 +15,9 @@
   let rozpoznane = $state<Rozpoznany[]>([])
   let filter = $state<Filter>('vsetko')
   let pridava = $state(false)
+  // heslo k súborom na úložisku alebo k archívom (zadá sa vopred, platí pre vložené odkazy)
+  let sHeslom = $state(false)
+  let heslo = $state('')
   let pole: HTMLTextAreaElement | undefined = $state()
 
   // úložiská (Webshare, Fastshare) majú jeden hotový súbor – formát sa týka len videostránok
@@ -66,10 +69,17 @@
   async function stiahnut() {
     if (!app.prikaz.trim() || pridava) return
     pridava = true
-    const r = await skus<{ pridane: number; uz_vo_fronte: number; kolekcie: string[] }>('pridat', app.prikaz, format)
+    const r = await skus<{ pridane: number; uz_vo_fronte: number; kolekcie: string[] }>(
+      'pridat',
+      app.prikaz,
+      format,
+      sHeslom ? heslo : '',
+    )
     pridava = false
     if (!r) return
     app.prikaz = ''
+    heslo = ''
+    sHeslom = false
     if (r.pridane) toast(`Pridané do sťahovania: ${pocet(r.pridane, 'položka', 'položky', 'položiek')}.`, 'ok')
     else if (r.uz_vo_fronte) toast('Tento odkaz už vo fronte je.', 'info')
     if (r.kolekcie.length) {
@@ -120,7 +130,7 @@
             .filter(Boolean)
             .join(', ')}
         {:else}
-          YouTube, Facebook, Instagram, TikTok, Vimeo, Webshare, Fastshare a stránky s videom
+          YouTube, Facebook, Instagram, TikTok, Vimeo, Webshare, Fastshare, Datoid a stránky s videom
         {/if}
       </p>
     </div>
@@ -163,6 +173,21 @@
         <button class="tl tiche" onclick={() => (app.dialog = { druh: 'skener', url: prvyOdkaz() })}>
           <Ikona meno="skener" velkost={17} /> Prehľadať stránku
         </button>
+        <button class="tl tiche" aria-pressed={sHeslom} onclick={() => (sHeslom = !sHeslom)}>
+          <Ikona meno="zamok" velkost={17} /> Heslo
+        </button>
+        {#if sHeslom}
+          <!-- svelte-ignore a11y_autofocus -->
+          <input
+            class="pole heslo-pole"
+            type="password"
+            bind:value={heslo}
+            placeholder="Heslo k súboru alebo archívu"
+            aria-label="Heslo k súboru alebo archívu"
+            autocomplete="off"
+            autofocus
+          />
+        {/if}
       </div>
       <div class="spustit">
         {#if lenSubory}
@@ -283,6 +308,10 @@
   }
   .hlavicka p {
     margin-top: var(--s1);
+  }
+  .heslo-pole {
+    width: 260px;
+    height: 34px;
   }
   .len-subor {
     display: flex;

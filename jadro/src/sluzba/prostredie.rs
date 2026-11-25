@@ -13,10 +13,48 @@ pub trait Prostredie: Send + Sync {
     fn schranka(&self) -> String;
     /// Otvorí priečinok, prípadne v ňom označí súbor.
     fn otvor(&self, priecinok: &Path, oznac: Option<&Path>);
+
+    /// Dá sa schránka sledovať na pozadí? (Len aplikácia – lacné čítanie schránky.)
+    fn sleduje_schranku(&self) -> bool {
+        false
+    }
+    /// Krátke systémové oznámenie (aj keď je okno v pozadí).
+    fn oznam(&self, _nadpis: &str, _text: &str) {}
+
+    /// Má prostredie vlastné okno prehliadača (na kurzy po prihlásení)?
+    fn ma_prehliadac(&self) -> bool {
+        false
+    }
+    /// Otvorí (alebo prenesie na adresu) okno prehliadača kurzov.
+    fn prehliadac_otvor(&self, _url: &str) -> Result<(), String> {
+        Err("Prehliadač kurzov je len v aplikácii Kometa.".into())
+    }
+    /// Adresa a titulok stránky v okne prehliadača (None = okno je zatvorené).
+    fn prehliadac_stranka(&self) -> Option<(String, String)> {
+        None
+    }
+    /// Spustí skript na stránke v prehliadači a vráti jeho výsledok ako JSON (najviac ~15 s).
+    fn prehliadac_skript(&self, _js: &str) -> Result<String, String> {
+        Err("Prehliadač kurzov nie je otvorený.".into())
+    }
+    /// Cookies prehliadača pre adresu: (adresa, „meno=hodnota; Domain=…; Path=…“).
+    fn prehliadac_cookies(&self, _url: &str) -> Vec<(String, String)> {
+        vec![]
+    }
 }
 
 /// Nástroje operačného systému (okno v prehliadači, príkazový riadok).
 pub struct Systemove;
+
+/// Pre skúšky: schránka zo súboru (`KOMETA_SKUSKA_SCHRANKA`) a „prehliadač“ z priečinka
+/// (`KOMETA_SKUSKA_PREHLIADAC`: adresa.txt, zber.json, cookies.json).
+fn skuska(k: &str) -> Option<String> {
+    std::env::var(k).ok().filter(|v| !v.is_empty())
+}
+
+fn skuska_prehliadaca(subor: &str) -> Option<std::path::PathBuf> {
+    skuska("KOMETA_SKUSKA_PREHLIADAC").map(|d| Path::new(&d).join(subor))
+}
 
 fn spusti(prikaz: &str, argumenty: &[&str]) -> Option<String> {
     let mut c = Command::new(prikaz);
@@ -54,6 +92,48 @@ fn as_retazec(s: &str) -> String {
 }
 
 impl Prostredie for Systemove {
+    fn sleduje_schranku(&self) -> bool {
+        skuska("KOMETA_SKUSKA_SCHRANKA").is_some()
+    }
+
+    fn ma_prehliadac(&self) -> bool {
+        skuska("KOMETA_SKUSKA_PREHLIADAC").is_some()
+    }
+
+    fn prehliadac_otvor(&self, url: &str) -> Result<(), String> {
+        let f = skuska_prehliadaca("adresa.txt")
+            .ok_or("Prehliadač kurzov je len v aplikácii Kometa.")?;
+        std::fs::write(f, url).map_err(|e| e.to_string())
+    }
+
+    fn prehliadac_stranka(&self) -> Option<(String, String)> {
+        let a = std::fs::read_to_string(skuska_prehliadaca("adresa.txt")?).ok()?;
+        Some((a, "Skúška".into()))
+    }
+
+    fn prehliadac_skript(&self, _js: &str) -> Result<String, String> {
+        let f = skuska_prehliadaca("zber.json").ok_or("Prehliadač kurzov nie je otvorený.")?;
+        std::fs::read_to_string(f).map_err(|e| e.to_string())
+    }
+
+    fn prehliadac_cookies(&self, url: &str) -> Vec<(String, String)> {
+        let Some(t) =
+            skuska_prehliadaca("cookies.json").and_then(|f| std::fs::read_to_string(f).ok())
+        else {
+            return vec![];
+        };
+        let vsetky: Vec<(String, String)> = serde_json::from_str(&t).unwrap_or_default();
+        let host = |u: &str| {
+            url::Url::parse(u)
+                .ok()
+                .and_then(|x| x.host_str().map(str::to_string))
+        };
+        vsetky
+            .into_iter()
+            .filter(|(u, _)| host(u) == host(url))
+            .collect()
+    }
+
     fn vyber_priecinok(&self, zaciatok: &str) -> String {
         #[cfg(windows)]
         {
@@ -149,6 +229,9 @@ impl Prostredie for Systemove {
     }
 
     fn schranka(&self) -> String {
+        if let Some(f) = skuska("KOMETA_SKUSKA_SCHRANKA") {
+            return std::fs::read_to_string(f).unwrap_or_default();
+        }
         #[cfg(windows)]
         {
             powershell("Get-Clipboard -Raw").unwrap_or_default()

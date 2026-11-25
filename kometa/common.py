@@ -294,6 +294,10 @@ DEFAULT_CONFIG = {
     "webshare_user": "",
     "webshare_token": "",
     "fastshare_user": "",
+    "datoid_user": "",
+    # archívy po stiahnutí
+    "rozbalovat": True,
+    "po_rozbaleni": "nechat",     # nechat | kos
 }
 
 _cfg_lock = threading.Lock()

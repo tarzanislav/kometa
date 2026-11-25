@@ -45,6 +45,8 @@ export const IKONY = {
   hladat: 'M17 10.5a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0zM15.3 15.3l4.7 4.7',
   info: 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0zM12 11v5.5M12 7.8v.01',
   viac: 'M5.5 12h.01M12 12h.01M18.5 12h.01',
+  kurz: 'M3 8l9-4 9 4-9 4zM7 10v5c0 1.5 2.2 3 5 3s5-1.5 5-3v-5M21 8v5',
+  balik: 'M4 8l8-4 8 4v8l-8 4-8-4zM4 8l8 4 8-4M12 12v8M8 6l8 4',
 } as const
 
 export type MenoIkony = keyof typeof IKONY

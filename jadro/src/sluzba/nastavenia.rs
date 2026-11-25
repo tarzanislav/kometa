@@ -40,7 +40,7 @@ pub const ZVUK: [(&str, &str); 3] = [
 ];
 
 /// Kľúče, ktoré smie meniť okno.
-pub const KLUCE_OKNA: [&str; 14] = [
+pub const KLUCE_OKNA: [&str; 19] = [
     "outdir",
     "dl_preset",
     "parallel",
@@ -55,6 +55,11 @@ pub const KLUCE_OKNA: [&str; 14] = [
     "mode",
     "kontajner",
     "max_height",
+    "rozbalovat",
+    "po_rozbaleni",
+    "strazca",
+    "strazca_rezim",
+    "strazca_format",
 ];
 
 /// Domovský priečinok používateľa.
@@ -378,6 +383,12 @@ fn predvolene() -> Map<String, Value> {
         "webshare_user": "",
         "webshare_token": "",
         "fastshare_user": "",
+        "datoid_user": "",
+        "rozbalovat": true,
+        "po_rozbaleni": "nechat",
+        "strazca": false,
+        "strazca_rezim": "zachytit",
+        "strazca_format": "video",
     });
     match v {
         Value::Object(m) => m,
@@ -411,7 +422,12 @@ pub fn over(k: &str, v: &Value) -> Option<Value> {
         "dl_preset" => jedno_z(v, &formaty, "video"),
         "parallel" => json!(cele(v)?.clamp(1, 6)),
         "connections" => json!(cele(v)?.clamp(1, 16)),
-        "autoresume" | "include_original" | "keep_separate" => json!(v.as_bool()?),
+        "autoresume" | "include_original" | "keep_separate" | "rozbalovat" | "strazca" => {
+            json!(v.as_bool()?)
+        }
+        "po_rozbaleni" => jedno_z(v, &["nechat", "kos"], "nechat"),
+        "strazca_rezim" => jedno_z(v, &["zachytit", "stiahnut"], "zachytit"),
+        "strazca_format" => jedno_z(v, &formaty, "video"),
         "cookies_browser" => jedno_z(v, &PREHLIADACE, ""),
         "audio_mode" => jedno_z(v, &["oboje", "aac", "opus"], "oboje"),
         "tema" => jedno_z(v, &TEMY, "kometa"),

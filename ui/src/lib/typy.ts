@@ -26,6 +26,18 @@ export interface Polozka {
   krok?: string
   /** voľby jazykov, napr. „CZ, SK, EN · AAC + Opus · MKV“ */
   jazyky?: string | null
+  /** „subor“ = úložisko chce heslo k súboru */
+  treba_heslo?: string
+  /** rozbaľovanie archívu po stiahnutí */
+  rozbalenie?: Rozbalenie | null
+}
+
+export interface Rozbalenie {
+  stav: 'caka' | 'bezi' | 'hotovo' | 'heslo' | 'chyba' | 'cast' | 'vypnute'
+  text: string
+  podiel?: number | null
+  /** názov výsledného súboru alebo priečinka */
+  ciel?: string
 }
 
 export interface StavUctu {
@@ -44,12 +56,44 @@ export interface StavJazykov {
   rev: number
 }
 
+export interface Zachyteny {
+  id: string
+  url: string
+  zdroj: string
+  nazov: string
+  nahlad: string
+  kolekcia: boolean
+  ulozisko: boolean
+  cas: number
+}
+
+export interface Lekcia {
+  url: string
+  nazov: string
+  odporucana?: boolean
+}
+
+export interface Kapitola {
+  nazov: string
+  lekcie: Lekcia[]
+}
+
+export interface Kurz {
+  nazov: string
+  adresa: string
+  kapitoly: Kapitola[]
+}
+
 export interface Stav {
+  /** strážca schránky: zachytené odkazy (len aplikácia) */
+  zachytene?: Zachyteny[]
+  /** okno prehliadača kurzov (null = zatvorené) */
+  prehliadac?: { adresa: string; titulok: string } | null
   polozky: Polozka[]
   rychlost: number
   graf: number[]
   jazyky: StavJazykov
-  ucty: Record<'webshare' | 'fastshare', StavUctu>
+  ucty: Record<string, StavUctu>
   nastroje?: StavNastrojov
 }
 
@@ -68,6 +112,11 @@ export interface Nastavenia {
   mode: 'video' | 'existing' | 'audio'
   kontajner: 'mkv' | 'mp4'
   max_height: string
+  rozbalovat?: boolean
+  po_rozbaleni?: 'nechat' | 'kos'
+  strazca?: boolean
+  strazca_rezim?: 'zachytit' | 'stiahnut'
+  strazca_format?: string
 }
 
 export interface Init {
@@ -95,6 +144,12 @@ export interface Funkcie {
   doinstalovat_ffmpeg?: boolean
   /** vlastné spájanie stôp – FFmpeg treba len na MP3 a zriedkavé formáty */
   ffmpeg_volitelny: boolean
+  /** rozbaľovanie archívov po stiahnutí */
+  archivy?: boolean
+  /** strážca schránky (len aplikácia) */
+  strazca?: boolean
+  /** prehliadač na kurzy (len aplikácia) */
+  kurzy?: boolean
 }
 
 export interface StavNastrojov {

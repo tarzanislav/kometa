@@ -31,6 +31,13 @@ md-5 = "0.10"
 sha1 = "0.10"
 getrandom = "0.2"
 trash = "5"
+zip = { version = "9", default-features = false, features = ["deflate", "deflate64", "bzip2", "lzma", "aes-crypto"] }
+sevenz-rust2 = { version = "0.25", default-features = false, features = ["aes256", "bzip2", "ppmd"] }
+unrar = "0.5"
 
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
+
+[dev-dependencies]
+# len na vytvorenie skúšobných archívov 7z
+sevenz-rust2 = { version = "0.25", default-features = false, features = ["aes256", "compress", "util"] }

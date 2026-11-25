@@ -15,8 +15,8 @@ import uuid
 from pathlib import Path
 
 from .common import QUEUE_PATH, Paused, clean_error, safe_name, unique_path
-from . import hosts, httpdl, media, skener
-from .hosts import WEBSHARE_RE, Accounts, HostError, detect_host
+from . import archivy, hosts, httpdl, media, skener
+from .hosts import WEBSHARE_RE, Accounts, HostError, PasswordNeeded, detect_host
 
 _FRIENDLY = [
     (r"HTTP Error 404|404: Not Found|404 Client Error", "Stránka alebo súbor neexistuje (chyba 404)."),
@@ -155,10 +155,86 @@ class DownloadQueue:
             for iid in ids:
                 it = self.items.get(iid)
                 if it and it["status"] in ("pauza", "chyba"):
-                    it["status"], it["error"] = "caka", ""
+                    it["status"], it["error"], it["need_password"] = "caka", "", ""
                     self.emit(iid)
         self.save()
         self.schedule()
+
+    # ---------- heslá a archívy ----------
+    def set_password(self, iid: str, password: str) -> None:
+        """Heslo zadané pri položke: k súboru na úložisku (sťahovanie pokračuje) alebo k archívu."""
+        with self._lock:
+            it = self.items.get(iid)
+            if not it:
+                raise ValueError("Položka už nie je vo fronte.")
+            it["password"] = password
+            done = it["status"] == "hotovo"
+        if done:
+            self.try_extract(iid, manual=True)
+        else:
+            self.start([iid])
+
+    def try_extract(self, iid: str, manual: bool = False) -> None:
+        """Rozbalí archív po stiahnutí (rozdelený až keď sú hotové všetky časti vo fronte)."""
+        with self._lock:
+            it = self.items.get(iid)
+            if not it or not it.get("file"):
+                return
+            path = Path(it["file"])
+            r = archivy.recognize(path)
+            if not r:
+                return
+            if not manual and not self.cfg.get("rozbalovat", True):
+                it["extract"] = {"stav": "vypnute", "text": ""}
+                self.emit(iid)
+                return
+            group = []
+            for x in (self.items[i] for i in self.order if i in self.items):
+                p = Path(x.get("file") or x.get("dest") or "")
+                rx = archivy.recognize(p) if p.name else None
+                if rx and rx[0] == r[0] and rx[1] == r[1] and p.parent == path.parent:
+                    group.append((rx[2], x))
+            if any(x["status"] != "hotovo" for _, x in group):
+                missing = sum(1 for _, x in group if x["status"] != "hotovo")
+                it["extract"] = {"stav": "caka", "text": f"Rozbalí sa, keď budú stiahnuté všetky časti (chýba {missing})."}
+                self.emit(iid)
+                return
+            owner = min(group, key=lambda g: g[0])[1] if group else it
+            if (owner.get("extract") or {}).get("stav") == "bezi":
+                return
+            password = next((x.get("password") for _, x in group if x.get("password")), "") or it.get("password") or ""
+            for _, x in group:
+                if x is not owner:
+                    x["extract"] = {"stav": "cast", "text": f"Časť archívu {r[1]} – rozbalí sa spolu s prvou časťou."}
+                    self.emit(x["id"])
+            owner["extract"] = {"stav": "bezi", "text": "Rozbaľujem…"}
+            oid, archive = owner["id"], Path(owner["file"])
+        self.emit(oid)
+        threading.Thread(target=self._extract, args=(oid, archive, password), daemon=True).start()
+
+    def _extract(self, iid: str, archive: Path, password: str) -> None:
+        try:
+            target, count = archivy.extract(archive, password)
+            word = "súbor" if count == 1 else "súbory" if 2 <= count <= 4 else "súborov"
+            text = f"Rozbalené: {count} {word}"
+            if self.cfg.get("po_rozbaleni") == "kos":
+                try:
+                    from send2trash import send2trash
+                    for p in archivy.parts(archive):
+                        send2trash(str(p))
+                    text += " – archív je v Koši"
+                except Exception:  # noqa: BLE001 – archív ostane
+                    pass
+            ext = {"stav": "hotovo", "text": text, "ciel": str(target)}
+        except archivy.PasswordError as e:
+            ext = {"stav": "heslo", "text": str(e)}
+        except Exception as e:  # noqa: BLE001
+            ext = ({"stav": "caka", "text": "Rozbalí sa, keď budú stiahnuté všetky časti archívu."}
+                   if archivy.is_split(archive) and not isinstance(e, archivy.PasswordError)
+                   else {"stav": "chyba", "text": clean_error(e) or str(e)})
+        self.log(f"📦 {archive.name}: {ext['text']}")
+        self._update(iid, extract=ext)
+        self.save()
 
     def pause(self, ids: list[str]) -> None:
         with self._lock:
@@ -279,8 +355,13 @@ class DownloadQueue:
                     cur.update(status="hotovo", file=str(path), speed=0, tmp=[],
                                done=cur.get("total") or cur.get("done"), title=cur.get("title") or path.name)
             self.log(f"✔ Hotovo: {path.name}")
+            if archivy.recognize(path):
+                self.try_extract(iid)
         except Paused:
             self._update(iid, status="pauza", speed=0)
+        except PasswordNeeded as e:
+            self._update(iid, status="chyba", error=str(e), speed=0, need_password="subor")
+            self.log(f"🔒 {it.get('title') or it['url']}: {e}")
         except Exception as e:  # noqa: BLE001 – chybu chceme ukázať používateľovi
             msg = friendly_error(clean_error(e) or e.__class__.__name__)
             self._update(iid, status="chyba", error=msg, speed=0)
@@ -312,12 +393,44 @@ class DownloadQueue:
             client = self.accounts.webshare()
             ident = WEBSHARE_RE.match(url).group("id")
             info = client.file_info(ident)
+            password = (it.get("password") or "") if info.get("password") else ""
+            if info.get("password"):
+                self._update(iid, title=info["name"], total=info["size"])
+                if not password:
+                    raise PasswordNeeded("Súbor na Webshare je chránený heslom – zadaj ho.")
+                client.file_link(ident, password)   # zlé heslo nech sa ukáže hneď, nie uprostred
             dest = self._dest(iid, it, outdir, info["name"])
             self._update(iid, title=info["name"], total=info["size"])
             self.log(f"⬇ Webshare: {info['name']}")
-            return httpdl.download_auto(lambda refresh: self._ws_link(ident, refresh), dest, client.session,
-                                        connections=conns, on_progress=progress, stop=stop,
+            return httpdl.download_auto(lambda refresh: self._ws_link(ident, refresh, password), dest,
+                                        client.session, connections=conns, on_progress=progress, stop=stop,
                                         expected_size=info["size"], log=self.log)
+
+        if host == "datoid":
+            client = self.accounts.datoid()
+            password = it.get("password") or ""
+            info = client.file_info(url, password)
+            try:
+                first = client.file_link(url, password)
+            except PasswordNeeded:
+                raise
+            except HostError:
+                self.accounts.reset("datoid")            # token mohol vypršať
+                client = self.accounts.datoid()
+                first = client.file_link(url, password)
+            name = info["name"] or hosts.fastshare_name_from_url(first) or Path(url.rstrip("/")).name
+            dest = self._dest(iid, it, outdir, name)
+            self._update(iid, title=name, total=info["size"])
+            self.log(f"⬇ Datoid: {name}")
+
+            def dt_link(refresh):
+                if not refresh:
+                    return first
+                self.accounts.reset("datoid")
+                return self.accounts.datoid().file_link(url, password)
+
+            return httpdl.download_auto(dt_link, dest, client.session, connections=conns, on_progress=progress,
+                                        stop=stop, expected_size=info["size"], log=self.log)
 
         if host == "fastshare":
             client = self.accounts.fastshare()
@@ -447,16 +560,18 @@ class DownloadQueue:
             s.headers["Referer"] = referer
         return s
 
-    def _ws_link(self, ident: str, refresh: bool) -> str:
+    def _ws_link(self, ident: str, refresh: bool, password: str = "") -> str:
         if refresh:
             self.accounts.reset("webshare")
         try:
-            return self.accounts.webshare().file_link(ident)
+            return self.accounts.webshare().file_link(ident, password)
+        except PasswordNeeded:
+            raise
         except HostError:
             if refresh:
                 raise
             self.accounts.reset("webshare")  # token mohol vypršať – prihlásime sa znova
-            return self.accounts.webshare().file_link(ident)
+            return self.accounts.webshare().file_link(ident, password)
 
     def _dest(self, iid: str, it: dict, outdir: Path, name: str) -> Path:
         """Cieľový súbor – pri pokračovaní ten istý (kvôli .part), inak nový bez prepisovania."""

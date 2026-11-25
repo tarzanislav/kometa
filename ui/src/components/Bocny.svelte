@@ -11,12 +11,19 @@
   const chyby = $derived(app.stav?.polozky.filter((p) => p.stav === 'chyba').length ?? 0)
   const r = $derived(rychlost(app.stav?.rychlost ?? 0))
 
-  const polozky: { id: Stranka; text: string; ikona: MenoIkony }[] = [
-    { id: 'stahovanie', text: 'Sťahovanie', ikona: 'stiahnut' },
-    { id: 'jazyky', text: 'Jazykové stopy', ikona: 'jazyky' },
-    { id: 'ucty', text: 'Účty', ikona: 'ucty' },
-    { id: 'nastavenia', text: 'Nastavenia', ikona: 'nastavenia' },
-  ]
+  const polozky = $derived(
+    (
+      [
+        { id: 'stahovanie', text: 'Sťahovanie', ikona: 'stiahnut' },
+        app.init?.funkcie?.strazca && { id: 'schranka', text: 'Zo schránky', ikona: 'schranka' },
+        app.init?.funkcie?.kurzy && { id: 'kurzy', text: 'Kurzy', ikona: 'kurz' },
+        { id: 'jazyky', text: 'Jazykové stopy', ikona: 'jazyky' },
+        { id: 'ucty', text: 'Účty', ikona: 'ucty' },
+        { id: 'nastavenia', text: 'Nastavenia', ikona: 'nastavenia' },
+      ] as ({ id: Stranka; text: string; ikona: MenoIkony } | false | undefined)[]
+    ).filter((x): x is { id: Stranka; text: string; ikona: MenoIkony } => !!x),
+  )
+  const zachytenych = $derived(app.stav?.zachytene?.length ?? 0)
 
   const rezimy: { id: 'auto' | 'den' | 'noc'; text: string; ikona: MenoIkony }[] = [
     { id: 'auto', text: 'Podľa systému', ikona: 'auto' },
@@ -25,8 +32,12 @@
   ]
 
   const ucty = $derived(
-    (['webshare', 'fastshare'] as const)
-      .map((s) => ({ s, nazov: s === 'webshare' ? 'Webshare' : 'Fastshare', u: app.stav?.ucty[s] }))
+    (['webshare', 'fastshare', 'datoid'] as const)
+      .map((s) => ({
+        s,
+        nazov: { webshare: 'Webshare', fastshare: 'Fastshare', datoid: 'Datoid' }[s],
+        u: app.stav?.ucty[s],
+      }))
       .filter((x) => x.u && x.u.stav !== 'neprihlaseny'),
   )
 </script>
@@ -53,6 +64,9 @@
           {:else if p.id === 'stahovanie' && aktivne}
             <span class="odznak cisla">{aktivne}</span>
           {/if}
+          {#if p.id === 'schranka' && zachytenych}
+            <span class="odznak cisla" title="Zachytené odkazy">{zachytenych}</span>
+          {/if}
           {#if p.id === 'jazyky' && app.stav?.jazyky.busy}
             <span class="bodka" title="Sťahujú sa jazyky"></span>
           {/if}
@@ -74,7 +88,7 @@
           <span class="ucet">
             <span class="svetlo {u?.stav}"></span>
             <span class="male">{nazov}</span>
-            <span class="male tlmene skrat">{u?.stav === 'ok' ? 'VIP' : u?.stav === 'bez_vip' ? 'bez VIP' : u?.stav === 'chyba' ? 'chyba' : '…'}</span>
+            <span class="male tlmene skrat">{u?.stav === 'ok' ? (s === 'webshare' ? 'VIP' : 'kredit') : u?.stav === 'bez_vip' ? (s === 'webshare' ? 'bez VIP' : 'bez kreditu') : u?.stav === 'chyba' ? 'chyba' : '…'}</span>
           </span>
         {/each}
       </button>

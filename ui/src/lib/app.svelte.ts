@@ -3,7 +3,7 @@
 import { volaj, ChybaJadra } from './api'
 import type { Init, Nastavenia, Stav } from './typy'
 
-export type Stranka = 'stahovanie' | 'jazyky' | 'ucty' | 'nastavenia'
+export type Stranka = 'stahovanie' | 'schranka' | 'kurzy' | 'jazyky' | 'ucty' | 'nastavenia'
 export type Dialog =
   | { druh: 'playlist'; url: string }
   | { druh: 'skener'; url: string }

@@ -10,6 +10,8 @@
   import Skener from './dialogy/Skener.svelte'
   import Zmazat from './dialogy/Zmazat.svelte'
   import Jazyky from './stranky/Jazyky.svelte'
+  import Kurzy from './stranky/Kurzy.svelte'
+  import Schranka from './stranky/Schranka.svelte'
   import Pribudne from './stranky/Pribudne.svelte'
   import Nastavenia from './stranky/Nastavenia.svelte'
   import Stahovanie from './stranky/Stahovanie.svelte'
@@ -52,7 +54,9 @@
 
   function klavesy(e: KeyboardEvent) {
     if (!(e.ctrlKey || e.metaKey) || e.altKey) return
-    const stranky = ['stahovanie', 'jazyky', 'ucty', 'nastavenia'] as const
+    const stranky = (['stahovanie', 'schranka', 'kurzy', 'jazyky', 'ucty', 'nastavenia'] as const).filter(
+      (x) => (x !== 'schranka' || app.init?.funkcie?.strazca) && (x !== 'kurzy' || app.init?.funkcie?.kurzy),
+    )
     const i = Number(e.key) - 1
     if (i >= 0 && i < stranky.length) {
       e.preventDefault()
@@ -94,6 +98,10 @@
       {/if}
       {#if app.stranka === 'stahovanie'}
         <Stahovanie />
+      {:else if app.stranka === 'schranka'}
+        <Schranka />
+      {:else if app.stranka === 'kurzy'}
+        <Kurzy />
       {:else if app.stranka === 'jazyky'}
         {#if app.init?.funkcie && !app.init.funkcie.jazyky}
           <Pribudne

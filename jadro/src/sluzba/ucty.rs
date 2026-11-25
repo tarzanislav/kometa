@@ -1,7 +1,9 @@
-//! Úložiská súborov: Webshare.cz (oficiálne API) a Fastshare.cz (prihlásenie + stránka súboru).
+//! Úložiská súborov: Webshare.cz (oficiálne API), Fastshare.cz (prihlásenie + stránka súboru)
+//! a Datoid.cz (rozhranie api.datoid.cz).
 //!
 //! Sťahuje sa vždy cez vlastný účet používateľa. Kometa neobchádza obmedzenia bezplatných účtov
-//! (čakanie, captcha, rýchlosť) – na rýchle sťahovanie treba VIP (Webshare) alebo kredit (Fastshare).
+//! (čakanie, captcha, rýchlosť) – na rýchle sťahovanie treba VIP (Webshare) alebo kredit
+//! (Fastshare, Datoid).
 //! Heslá sú v trezore systému (Windows: Správca poverení, macOS: Kľúčenka, Linux: Secret Service
 //! cez `secret-tool`), inak v súbore `ucty.dat` ako v Pythone.
 
@@ -21,7 +23,17 @@ use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
 const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
-pub const SLUZBY: [&str; 2] = ["webshare", "fastshare"];
+pub const SLUZBY: [&str; 3] = ["webshare", "fastshare", "datoid"];
+
+/// Názov služby pre ľudí („webshare“ → „Webshare“) – zároveň `zdroj` položiek vo fronte.
+pub fn nazov_sluzby(s: &str) -> &'static str {
+    match s {
+        "webshare" => "Webshare",
+        "fastshare" => "Fastshare",
+        "datoid" => "Datoid",
+        _ => "Web",
+    }
+}
 
 fn chyba(t: impl Into<String>) -> Chyba {
     Chyba::Ine(t.into())
@@ -243,7 +255,8 @@ impl Webshare {
         })
     }
 
-    pub async fn subor(&self, id: &str) -> Vysledok<(String, Option<u64>)> {
+    /// (názov, veľkosť, chránený heslom)
+    pub async fn subor(&self, id: &str) -> Vysledok<(String, Option<u64>, bool)> {
         let m = self
             .volaj("file_info", &[("ident", id), ("wst", &self.token)])
             .await?;
@@ -253,25 +266,193 @@ impl Webshare {
                 .filter(|n| !n.is_empty())
                 .unwrap_or_else(|| id.to_string()),
             m.get("size").and_then(|s| s.parse().ok()),
+            m.get("password").is_some_and(|p| p == "1"),
         ))
     }
 
-    pub async fn odkaz(&self, id: &str) -> Vysledok<String> {
-        let m = self
-            .volaj(
-                "file_link",
-                &[
-                    ("ident", id),
-                    ("wst", &self.token),
-                    ("download_type", "file_download"),
-                    ("force_https", "1"),
-                ],
-            )
-            .await?;
+    /// Heslo k súboru pre file_link: sha1(md5_crypt(heslo, soľ súboru)) – ako pri prihlásení.
+    async fn heslo_suboru(&self, id: &str, heslo: &str) -> Vysledok<String> {
+        let sol = self
+            .volaj("file_password_salt", &[("ident", id), ("wst", &self.token)])
+            .await?
+            .remove("salt")
+            .unwrap_or_default();
+        Ok(hex(&Sha1::digest(md5_crypt(heslo, &sol).as_bytes())))
+    }
+
+    pub async fn odkaz(&self, id: &str, heslo: &str) -> Vysledok<String> {
+        let zakodovane = if heslo.is_empty() {
+            String::new()
+        } else {
+            self.heslo_suboru(id, heslo).await?
+        };
+        let mut data = vec![
+            ("ident", id),
+            ("wst", &self.token),
+            ("download_type", "file_download"),
+            ("force_https", "1"),
+        ];
+        if !zakodovane.is_empty() {
+            data.push(("password", &zakodovane));
+        }
+        let m = self.volaj("file_link", &data).await.map_err(|e| {
+            if heslo.is_empty() {
+                e
+            } else {
+                Chyba::Heslo(format!(
+                    "Heslo k súboru na Webshare nesedí – zadaj ho znova. ({e})"
+                ))
+            }
+        })?;
         m.get("link")
             .cloned()
             .filter(|l| !l.is_empty())
             .ok_or_else(|| chyba("Webshare nevrátil odkaz na stiahnutie."))
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Datoid – rozhranie api.datoid.cz/v1 (JSON): login, get-user-details, get-file-details,
+// get-download-link
+// ---------------------------------------------------------------------------------------------
+
+fn zaklad_datoid() -> String {
+    std::env::var("KOMETA_DATOID_ZAKLAD")
+        .unwrap_or_else(|_| "https://api.datoid.cz/v1".into())
+        .trim_end_matches('/')
+        .to_string()
+}
+
+#[derive(Clone)]
+pub struct Datoid {
+    k: Client,
+    pub token: String,
+}
+
+/// Údaje o súbore na Datoide.
+#[derive(Debug, PartialEq)]
+pub struct SuborDatoid {
+    pub nazov: Option<String>,
+    pub velkost: Option<u64>,
+}
+
+/// Chyba z odpovede Datoidu ako zrozumiteľná veta (None = bez chyby).
+pub fn chyba_datoid(j: &Value) -> Option<Chyba> {
+    if j.get("success").and_then(Value::as_bool) == Some(false) && j.get("error").is_none() {
+        return Some(chyba(
+            "Prihlásenie na Datoid zlyhalo – skontroluj e-mail a heslo.",
+        ));
+    }
+    let e = j.get("error").and_then(Value::as_str)?;
+    let m = e.to_ascii_lowercase();
+    Some(if m.contains("password") {
+        Chyba::Heslo("Súbor na Datoide je chránený heslom – zadaj ho.".into())
+    } else if m.contains("not found") || m.contains("deleted") || m.contains("blocked") {
+        chyba("Súbor na Datoide už neexistuje.")
+    } else if m.contains("credit") {
+        chyba("Na Datoide nemáš dosť kreditu na tento súbor.")
+    } else if m.contains("token") || m.contains("login") {
+        chyba("Na Datoide nie si prihlásený – zadaj účet v karte Účty.")
+    } else {
+        chyba(format!("Datoid: {e}"))
+    })
+}
+
+/// Číslo z JSON (Datoid niekedy posiela čísla ako text).
+fn cislo(v: Option<&Value>) -> Option<u64> {
+    let v = v?;
+    v.as_u64()
+        .or_else(|| v.as_f64().map(|f| f as u64))
+        .or_else(|| v.as_str()?.trim().parse().ok())
+}
+
+impl Datoid {
+    pub fn new() -> Vysledok<Self> {
+        let k = Client::builder()
+            .user_agent(UA)
+            .timeout(std::time::Duration::from_secs(30))
+            .build()?;
+        Ok(Datoid {
+            k,
+            token: String::new(),
+        })
+    }
+
+    async fn volaj(&self, metoda: &str, parametre: &[(&str, &str)]) -> Vysledok<Value> {
+        let r = self
+            .k
+            .get(format!("{}/{metoda}", zaklad_datoid()))
+            .query(parametre)
+            .send()
+            .await
+            .map_err(|e| chyba(format!("Datoid nie je dostupný: {e}")))?
+            .error_for_status()
+            .map_err(|e| chyba(format!("Datoid nie je dostupný: {e}")))?;
+        let j: Value = serde_json::from_str(&r.text().await?)
+            .map_err(|_| chyba("Datoid vrátil neočakávanú odpoveď."))?;
+        match chyba_datoid(&j) {
+            Some(e) => Err(e),
+            None => Ok(j),
+        }
+    }
+
+    pub async fn prihlas(&mut self, email: &str, heslo: &str) -> Vysledok<String> {
+        let j = self
+            .volaj("login", &[("email", email), ("password", heslo)])
+            .await?;
+        self.token = j
+            .get("token")
+            .and_then(Value::as_str)
+            .filter(|t| !t.is_empty())
+            .ok_or_else(|| chyba("Prihlásenie na Datoid zlyhalo – skontroluj e-mail a heslo."))?
+            .to_string();
+        Ok(self.token.clone())
+    }
+
+    pub async fn info(&self) -> Vysledok<(bool, String)> {
+        let j = self
+            .volaj("get-user-details", &[("token", &self.token)])
+            .await?;
+        let kredit = j.get("credits").map(|c| match c {
+            Value::String(s) => s.clone(),
+            c => c.to_string(),
+        });
+        Ok(match kredit {
+            Some(k) if k.trim_start_matches(['0', '.', ',']).is_empty() => {
+                (false, "bez kreditu – sťahovanie nebude možné".into())
+            }
+            Some(k) => (true, format!("kredit {k}")),
+            None => (true, "prihlásený".into()),
+        })
+    }
+
+    pub async fn subor(&self, url: &str, heslo: &str) -> Vysledok<SuborDatoid> {
+        let mut q = vec![("url", url)];
+        if !heslo.is_empty() {
+            q.push(("password", heslo));
+        }
+        let j = self.volaj("get-file-details", &q).await?;
+        Ok(SuborDatoid {
+            nazov: j
+                .get("filename")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .filter(|n| !n.trim().is_empty()),
+            velkost: cislo(j.get("filesize_bytes")).or_else(|| cislo(j.get("filesize"))),
+        })
+    }
+
+    pub async fn odkaz(&self, url: &str, heslo: &str) -> Vysledok<String> {
+        let mut q = vec![("token", self.token.as_str()), ("url", url)];
+        if !heslo.is_empty() {
+            q.push(("password", heslo));
+        }
+        let j = self.volaj("get-download-link", &q).await?;
+        j.get("download_link")
+            .and_then(Value::as_str)
+            .map(|l| l.replace('\\', ""))
+            .filter(|l| l.starts_with("http"))
+            .ok_or_else(|| chyba("Datoid nevrátil odkaz na stiahnutie."))
     }
 }
 
@@ -777,6 +958,7 @@ pub struct Ucty {
     stav: Mutex<HashMap<&'static str, Value>>,
     webshare: tokio::sync::Mutex<Option<Webshare>>,
     fastshare: tokio::sync::Mutex<Option<Fastshare>>,
+    datoid: tokio::sync::Mutex<Option<Datoid>>,
 }
 
 impl Ucty {
@@ -789,10 +971,8 @@ impl Ucty {
     }
 
     fn nastav(&self, s: &str, stav: &str, text: &str, user: &str) {
-        let k: &'static str = if s == "webshare" {
-            "webshare"
-        } else {
-            "fastshare"
+        let Some(k) = SLUZBY.iter().copied().find(|x| *x == s) else {
+            return;
         };
         self.stav
             .lock()
@@ -805,10 +985,10 @@ impl Ucty {
     }
 
     async fn reset(&self, s: &str) {
-        if s == "webshare" {
-            *self.webshare.lock().await = None;
-        } else {
-            *self.fastshare.lock().await = None;
+        match s {
+            "webshare" => *self.webshare.lock().await = None,
+            "fastshare" => *self.fastshare.lock().await = None,
+            _ => *self.datoid.lock().await = None,
         }
     }
 }
@@ -857,6 +1037,30 @@ async fn fastshare(v: &Vnutro, znova: bool) -> Vysledok<Fastshare> {
     Ok(f)
 }
 
+async fn datoid(v: &Vnutro, znova: bool) -> Vysledok<Datoid> {
+    let mut g = v.ucty.datoid.lock().await;
+    if let (Some(d), false) = (g.as_ref(), znova) {
+        return Ok(d.clone());
+    }
+    let meno = meno_v_nastaveniach(v, "datoid");
+    let h = heslo("datoid", &meno)
+        .filter(|_| !meno.is_empty())
+        .ok_or_else(|| chyba("Na Datoide nie si prihlásený – zadaj účet v karte Účty."))?;
+    let mut d = Datoid::new()?;
+    d.prihlas(&meno, &h).await?;
+    *g = Some(d.clone());
+    Ok(d)
+}
+
+/// Stav účtu (VIP/kredit, text) – prihlási sa, ak treba.
+async fn info_uctu(v: &Vnutro, s: &str) -> Vysledok<(bool, String)> {
+    match s {
+        "webshare" => webshare(v, false).await?.info().await,
+        "fastshare" => fastshare(v, false).await?.info().await,
+        _ => datoid(v, false).await?.info().await,
+    }
+}
+
 /// Po spustení overí uložené účty (na pozadí).
 pub fn over_pri_starte(v: &Arc<Vnutro>) {
     for s in SLUZBY {
@@ -868,17 +1072,7 @@ pub fn over_pri_starte(v: &Arc<Vnutro>) {
         let v2 = v.clone();
         v.rt_spawn(async move {
             let v = v2;
-            let r = if s == "webshare" {
-                match webshare(&v, false).await {
-                    Ok(w) => w.info().await,
-                    Err(e) => Err(e),
-                }
-            } else {
-                match fastshare(&v, false).await {
-                    Ok(f) => f.info().await,
-                    Err(e) => Err(e),
-                }
-            };
+            let r = info_uctu(&v, s).await;
             match r {
                 Ok((vip, text)) => {
                     v.ucty
@@ -923,11 +1117,17 @@ pub async fn prihlas(
                 .nastav("webshare_token", json!(t));
             *v.ucty.webshare.lock().await = Some(w);
             Ok(i)
-        } else {
+        } else if sluzba == "fastshare" {
             let f = Fastshare::new()?;
             f.prihlas(meno, &h).await?;
             let i = f.info().await?;
             *v.ucty.fastshare.lock().await = Some(f);
+            Ok(i)
+        } else {
+            let mut d = Datoid::new()?;
+            d.prihlas(meno, &h).await?;
+            let i = d.info().await?;
+            *v.ucty.datoid.lock().await = Some(d);
             Ok(i)
         }
     }
@@ -948,11 +1148,7 @@ pub async fn prihlas(
     v.ucty
         .nastav(sluzba, if vip { "ok" } else { "bez_vip" }, &text, meno);
     // zlyhané položky tejto služby skúsiť znova
-    let zdroj = if sluzba == "webshare" {
-        "Webshare"
-    } else {
-        "Fastshare"
-    };
+    let zdroj = nazov_sluzby(sluzba);
     let ids: Vec<String> = {
         let f = v.fronta.lock().unwrap();
         f.polozky
@@ -988,7 +1184,7 @@ pub fn odhlas(v: &Arc<Vnutro>, sluzba: &str) {
     v.rt_spawn(async move { v2.ucty.reset(&s).await });
 }
 
-/// Stiahne súbor z Webshare alebo Fastshare cez účet používateľa.
+/// Stiahne súbor z Webshare, Fastshare alebo Datoidu cez účet používateľa.
 pub async fn stiahni(
     v: &Arc<Vnutro>,
     p: &Polozka,
@@ -1004,7 +1200,16 @@ pub async fn stiahni(
     if p.zdroj == "Webshare" {
         let id = id_webshare(&p.url).ok_or_else(|| chyba("Neplatný odkaz na Webshare."))?;
         let w = webshare(v, false).await?;
-        let (nazov, velkost) = w.subor(&id).await?;
+        let (nazov, velkost, zamknuty) = w.subor(&id).await?;
+        if zamknuty && p.heslo.is_empty() {
+            v.fronta.lock().unwrap().uprav(&p.id, |x| {
+                x.nazov = nazov.clone();
+                x.celkom = velkost.or(x.celkom);
+            });
+            return Err(Chyba::Heslo(
+                "Súbor na Webshare je chránený heslom – zadaj ho.".into(),
+            ));
+        }
         v.zapis(format!("⬇ Webshare: {nazov}"));
         v.fronta.lock().unwrap().uprav(&p.id, |x| {
             x.nazov = nazov.clone();
@@ -1012,13 +1217,24 @@ pub async fn stiahni(
         });
         let ciel = super::stahovanie::ciel_suboru(v, p, &nazov);
         let v2 = v.clone();
+        let heslo = if zamknuty {
+            p.heslo.clone()
+        } else {
+            String::new()
+        };
+        // heslo over hneď – zlé heslo nech sa ukáže pred sťahovaním, nie uprostred
+        if zamknuty {
+            w.odkaz(&id, &heslo).await?;
+        }
         let zdroj: ZdrojUrl = Arc::new(move |novy| {
-            let (v2, id) = (v2.clone(), id.clone());
+            let (v2, id, heslo) = (v2.clone(), id.clone(), heslo.clone());
             Box::pin(async move {
                 let w = webshare(&v2, novy).await?;
-                match w.odkaz(&id).await {
+                match w.odkaz(&id, &heslo).await {
                     Ok(o) => Ok(o),
-                    Err(_) if !novy => webshare(&v2, true).await?.odkaz(&id).await, // token mohol vypršať
+                    Err(Chyba::Heslo(t)) => Err(Chyba::Heslo(t)),
+                    // token mohol vypršať
+                    Err(_) if !novy => webshare(&v2, true).await?.odkaz(&id, &heslo).await,
                     Err(e) => Err(e),
                 }
             })
@@ -1030,6 +1246,51 @@ pub async fn stiahni(
             hlasic: h.clone(),
         };
         return Ok(Koniec::Subor(http::stiahni(&w.k, zdroj, &ciel, &m).await?));
+    }
+    if p.zdroj == "Datoid" {
+        let d = datoid(v, false).await?;
+        let url = p.url.trim().replace("datoid.sk/", "datoid.cz/");
+        let s = d.subor(&url, &p.heslo).await?;
+        let mut odkaz = match d.odkaz(&url, &p.heslo).await {
+            Err(Chyba::Heslo(t)) => return Err(Chyba::Heslo(t)),
+            Err(_) => datoid(v, true).await?.odkaz(&url, &p.heslo).await?, // token mohol vypršať
+            Ok(o) => o,
+        };
+        let nazov = match s.nazov.clone() {
+            Some(n) => n,
+            None => {
+                let n = super::stahovanie::nazov_z_adresy(&odkaz);
+                if je_nazov_suboru(&n) {
+                    n
+                } else {
+                    super::stahovanie::nazov_z_adresy(&url)
+                }
+            }
+        };
+        v.zapis(format!("⬇ Datoid: {nazov}"));
+        v.fronta.lock().unwrap().uprav(&p.id, |x| {
+            x.nazov = nazov.clone();
+            x.celkom = s.velkost.or(x.celkom);
+        });
+        let ciel = super::stahovanie::ciel_suboru(v, p, &nazov);
+        let (v2, heslo) = (v.clone(), p.heslo.clone());
+        let prvy = std::mem::take(&mut odkaz);
+        let zdroj: ZdrojUrl = Arc::new(move |novy| {
+            let (v2, url, heslo, prvy) = (v2.clone(), url.clone(), heslo.clone(), prvy.clone());
+            Box::pin(async move {
+                if !novy {
+                    return Ok(prvy);
+                }
+                datoid(&v2, true).await?.odkaz(&url, &heslo).await
+            })
+        });
+        let m = Moznosti {
+            spojenia,
+            ocakavana_velkost: s.velkost,
+            zrusenie: z.clone(),
+            hlasic: h.clone(),
+        };
+        return Ok(Koniec::Subor(http::stiahni(&d.k, zdroj, &ciel, &m).await?));
     }
     let f = fastshare(v, false).await?;
     let s = f.subor(&p.url).await?;

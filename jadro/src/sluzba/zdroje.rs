@@ -32,6 +32,7 @@ pub fn nazov_zdroja(adresa: &str) -> &'static str {
         ("Facebook", &["facebook.com", "fb.watch", "fb.com"]),
         ("Webshare", &["webshare.cz"]),
         ("Fastshare", &["fastshare.cz", "fastshare.cloud"]),
+        ("Datoid", &["datoid.cz", "datoid.sk"]),
         ("X/Twitter", &["twitter.com", "x.com"]),
         ("Vimeo", &["vimeo.com"]),
     ];
@@ -43,7 +44,7 @@ pub fn nazov_zdroja(adresa: &str) -> &'static str {
 }
 
 /// Úložiská súborov – odkaz vedie na jeden hotový súbor, formát ani kvalita sa nevyberajú.
-pub const ULOZISKA: [&str; 2] = ["Webshare", "Fastshare"];
+pub const ULOZISKA: [&str; 3] = ["Webshare", "Fastshare", "Datoid"];
 
 pub fn je_ulozisko(adresa: &str) -> bool {
     ULOZISKA.contains(&nazov_zdroja(adresa))

@@ -19,6 +19,9 @@ pub struct Nastavenia {
     pub max_vyska: Option<u32>,
     /// Poradie jazykov zvuku, napr. ["cs", "sk", "en"].
     pub jazyky: Vec<String>,
+    /// Prihlásenie z prehliadača kurzov: (adresa, „meno=hodnota; Domain=…; Path=…“). Klient
+    /// ich pošle len tej doméne, ktorej patria (nie vloženému prehrávaču inej služby).
+    pub cookies: Vec<(String, String)>,
 }
 
 impl Default for Nastavenia {
@@ -29,6 +32,7 @@ impl Default for Nastavenia {
             spojenia: 4,
             max_vyska: None,
             jazyky: vec![],
+            cookies: vec![],
         }
     }
 }
@@ -52,8 +56,17 @@ pub fn klient(n: &Nastavenia) -> Vysledok<reqwest::Client> {
             h.insert(k, v);
         }
     }
-    reqwest::Client::builder()
-        .user_agent(USER_AGENT)
+    let mut b = reqwest::Client::builder();
+    if !n.cookies.is_empty() {
+        let jar = reqwest::cookie::Jar::default();
+        for (adresa, c) in &n.cookies {
+            if let Ok(u) = url::Url::parse(adresa) {
+                jar.add_cookie_str(c, &u);
+            }
+        }
+        b = b.cookie_provider(std::sync::Arc::new(jar));
+    }
+    b.user_agent(USER_AGENT)
         .default_headers(h)
         .connect_timeout(Duration::from_secs(20))
         .read_timeout(Duration::from_secs(60))

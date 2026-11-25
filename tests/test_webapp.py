@@ -60,6 +60,38 @@ def main() -> int:
         assert p["format"] == "subor" and p["nazov"] == "a.loose.end.web-dl.cz.5.1.es.5.1.2024.1080p.mkv", p
         assert api("vycistit_front")["ok"] and api("stav")["data"]["polozky"] == []
 
+        # archívy: rozpoznanie častí, rozbalenie ZIP (aj rozdeleného), nič mimo priečinka
+        import io
+        import zipfile
+        from kometa import archivy
+        assert archivy.recognize(Path("Film.part2.rar")) == ("rar", "Film", 2)
+        assert archivy.recognize(Path("Film.7z.003")) == ("7z", "Film", 3)
+        assert archivy.recognize(Path("Film.r00")) == ("rar", "Film", 2) and archivy.recognize(Path("a.mkv")) is None
+        ad = TMP / "archivy"
+        ad.mkdir()
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("Kurz/a.txt", "a")
+            z.writestr("Kurz/b.txt", "b")
+            z.writestr("../von.txt", "zlo")
+        (ad / "Balik.zip").write_bytes(buf.getvalue())
+        cesta, n = archivy.extract(ad / "Balik.zip")
+        assert cesta == ad / "Kurz" and n == 2 and (ad / "Kurz" / "b.txt").read_text() == "b", (cesta, n)
+        assert not (TMP / "von.txt").exists() and not (ad / "von.txt").exists()
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("Film.mkv", b"x" * 5000)
+        d = buf.getvalue()
+        (ad / "Velky.zip.001").write_bytes(d[:3000])
+        try:
+            archivy.extract(ad / "Velky.zip.001")
+            raise AssertionError("rozbalil neúplný archív")
+        except archivy.ArchiveError:
+            pass
+        (ad / "Velky.zip.002").write_bytes(d[3000:])
+        cesta, n = archivy.extract(ad / "Velky.zip.002")
+        assert cesta == ad / "Film.mkv" and cesta.read_bytes() == b"x" * 5000, cesta
+
         # vymazať stiahnuté súbory: len súbory z frontu, do Koša; prázdny priečinok kanála zmizne
         out = TMP / "Kometa" / "Kanál"
         out.mkdir(parents=True, exist_ok=True)

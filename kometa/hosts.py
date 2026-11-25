@@ -8,6 +8,7 @@ treba VIP (Webshare) alebo kredit (Fastshare).
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from html import unescape as html_unescape
 import threading
@@ -23,8 +24,13 @@ class HostError(Exception):
     pass
 
 
+class PasswordNeeded(HostError):
+    """Súbor na úložisku je chránený heslom (chýba alebo nesedí) – zadá sa pri položke."""
+
+
 WEBSHARE_RE = re.compile(r"https?://(?:[\w-]+\.)?webshare\.cz/(?:#/)?file/(?P<id>\w+)", re.I)
 FASTSHARE_RE = re.compile(r"https?://(?:www\.)?fastshare\.(?:cz|cloud)/\S+", re.I)
+DATOID_RE = re.compile(r"https?://(?:www\.)?datoid\.(?:cz|sk)/\S+", re.I)
 
 
 def detect_host(url: str) -> str | None:
@@ -32,6 +38,8 @@ def detect_host(url: str) -> str | None:
         return "webshare"
     if FASTSHARE_RE.match(url.strip()):
         return "fastshare"
+    if DATOID_RE.match(url.strip()):
+        return "datoid"
     return None
 
 
@@ -165,14 +173,98 @@ class WebshareClient:
     def file_info(self, ident: str) -> dict:
         root = self._call("file_info", ident=ident, wst=self.token)
         size = root.findtext("size") or ""
-        return {"name": root.findtext("name") or ident, "size": int(size) if size.isdigit() else None}
+        return {"name": root.findtext("name") or ident, "size": int(size) if size.isdigit() else None,
+                "password": (root.findtext("password") or "0").strip() == "1"}
 
-    def file_link(self, ident: str) -> str:
-        root = self._call("file_link", ident=ident, wst=self.token, download_type="file_download",
-                          force_https=1)
+    def file_link(self, ident: str, password: str = "") -> str:
+        extra = {}
+        if password:   # heslo k súboru: sha1(md5_crypt(heslo, soľ súboru)) – ako pri prihlásení
+            salt = self._call("file_password_salt", ident=ident, wst=self.token).findtext("salt") or ""
+            extra["password"] = hashlib.sha1(md5_crypt(password, salt).encode()).hexdigest()
+        try:
+            root = self._call("file_link", ident=ident, wst=self.token, download_type="file_download",
+                              force_https=1, **extra)
+        except HostError as e:
+            if password:
+                raise PasswordNeeded(f"Heslo k súboru na Webshare nesedí – zadaj ho znova. ({e})") from e
+            raise
         link = root.findtext("link")
         if not link:
             raise HostError("Webshare nevrátil odkaz na stiahnutie.")
+        return link
+
+
+# --------------------------------------------------------------------------- #
+#  Datoid.cz – rozhranie api.datoid.cz/v1 (JSON)
+# --------------------------------------------------------------------------- #
+
+class DatoidClient:
+    API = os.environ.get("KOMETA_DATOID_ZAKLAD", "https://api.datoid.cz/v1").rstrip("/")
+
+    def __init__(self, session: requests.Session | None = None):
+        self.session = session or requests.Session()
+        self.session.headers.update({"User-Agent": USER_AGENT})
+        self.token = ""
+
+    def _call(self, method: str, **params) -> dict:
+        try:
+            r = self.session.get(f"{self.API}/{method}", params=params, timeout=30)
+            r.raise_for_status()
+            data = r.json()
+        except requests.RequestException as e:
+            raise HostError(f"Datoid nie je dostupný: {e}") from e
+        except ValueError as e:
+            raise HostError("Datoid vrátil neočakávanú odpoveď.") from e
+        err = data.get("error") if isinstance(data, dict) else None
+        if data.get("success") is False and not err:
+            raise HostError("Prihlásenie na Datoid zlyhalo – skontroluj e-mail a heslo.")
+        if err:
+            low = str(err).lower()
+            if "password" in low:
+                raise PasswordNeeded("Súbor na Datoide je chránený heslom – zadaj ho.")
+            if any(x in low for x in ("not found", "deleted", "blocked")):
+                raise HostError("Súbor na Datoide už neexistuje.")
+            if "credit" in low:
+                raise HostError("Na Datoide nemáš dosť kreditu na tento súbor.")
+            if "token" in low or "login" in low:
+                raise HostError("Na Datoide nie si prihlásený – zadaj účet v karte Účty.")
+            raise HostError(f"Datoid: {err}")
+        return data
+
+    def login(self, email: str, password: str) -> str:
+        self.token = str(self._call("login", email=email, password=password).get("token") or "")
+        if not self.token:
+            raise HostError("Prihlásenie na Datoid zlyhalo – skontroluj e-mail a heslo.")
+        return self.token
+
+    def user_info(self) -> dict:
+        credits = self._call("get-user-details", token=self.token).get("credits")
+        if credits is None:
+            return {"vip": True, "text": "prihlásený"}
+        if str(credits).strip("0.,") == "":
+            return {"vip": False, "text": "bez kreditu – sťahovanie nebude možné"}
+        return {"vip": True, "text": f"kredit {credits}"}
+
+    @staticmethod
+    def _url(url: str) -> str:
+        return url.strip().replace("datoid.sk/", "datoid.cz/")
+
+    def file_info(self, url: str, password: str = "") -> dict:
+        extra = {"password": password} if password else {}
+        d = self._call("get-file-details", url=self._url(url), **extra)
+        size = d.get("filesize_bytes", d.get("filesize"))
+        try:
+            size = int(float(size)) if size is not None else None
+        except (TypeError, ValueError):
+            size = None
+        return {"name": (d.get("filename") or "").strip() or None, "size": size}
+
+    def file_link(self, url: str, password: str = "") -> str:
+        extra = {"password": password} if password else {}
+        link = str(self._call("get-download-link", token=self.token, url=self._url(url), **extra)
+                   .get("download_link") or "").replace("\\", "")
+        if not link.startswith("http"):
+            raise HostError("Datoid nevrátil odkaz na stiahnutie.")
         return link
 
 
@@ -287,6 +379,7 @@ class Accounts:
         self._ws: WebshareClient | None = None
         self._fs: FastshareClient | None = None
         self._fs_time = 0.0
+        self._dt: DatoidClient | None = None
 
     def reset(self, service: str | None = None) -> None:
         with self._lock:
@@ -294,6 +387,8 @@ class Accounts:
                 self._ws = None
             if service in (None, "fastshare"):
                 self._fs = None
+            if service in (None, "datoid"):
+                self._dt = None
 
     def webshare(self) -> WebshareClient:
         with self._lock:
@@ -327,4 +422,17 @@ class Accounts:
             client = FastshareClient()
             client.login(user, password)
             self._fs, self._fs_time = client, time.time()
+            return client
+
+    def datoid(self) -> DatoidClient:
+        with self._lock:
+            if self._dt:
+                return self._dt
+            user = self.cfg.get("datoid_user") or ""
+            password = get_password("datoid", user)
+            if not user or not password:
+                raise HostError("Na sťahovanie z Datoidu sa prihlás v karte „Účty“.")
+            client = DatoidClient()
+            client.login(user, password)
+            self._dt = client
             return client

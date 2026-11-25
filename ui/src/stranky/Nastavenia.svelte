@@ -132,6 +132,33 @@
     </div>
   </section>
 
+  <section class="plocha blok" aria-labelledby="h-archivy">
+    <h2 id="h-archivy">Archívy</h2>
+    <div class="riadky">
+      <Prepinac
+        nazov="Rozbaliť archív po stiahnutí"
+        zapnute={n.rozbalovat ?? true}
+        popis="ZIP, 7z a RAR – aj zaheslované a rozdelené na časti. Heslo zadáš pri odkaze alebo pri položke."
+        zmena={(v) => nastav({ rozbalovat: v })}
+      />
+      <div class="riadok-zvuk">
+        <div>
+          <p class="nazov-zvuk">Po rozbalení</p>
+          <p class="male tlmene">Archív sa dá presunúť do Koša – odtiaľ sa dá obnoviť.</p>
+        </div>
+        <Segment
+          popis="Čo s archívom po rozbalení"
+          hodnota={n.po_rozbaleni ?? 'nechat'}
+          zmena={(v) => nastav({ po_rozbaleni: v })}
+          moznosti={[
+            { id: 'nechat', text: 'Nechať archív' },
+            { id: 'kos', text: 'Do Koša' },
+          ]}
+        />
+      </div>
+    </div>
+  </section>
+
   <section class="plocha blok" aria-labelledby="h-priecinok">
     <h2 id="h-priecinok">Priečinok na sťahovanie</h2>
     <div class="priecinok">

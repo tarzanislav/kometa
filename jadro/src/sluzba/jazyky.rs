@@ -852,6 +852,7 @@ async fn stiahni_format(
             .clamp(1, 16) as usize,
         max_vyska: None,
         jazyky: vec![],
+        cookies: vec![],
     };
     let k = klient::klient(&n)?;
     if f.hls {

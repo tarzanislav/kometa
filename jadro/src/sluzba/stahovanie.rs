@@ -19,6 +19,7 @@ use crate::web::vzory;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 pub enum Koniec {
@@ -85,6 +86,12 @@ pub async fn prace(v: Arc<Vnutro>, id: String, zrusenie: CancellationToken) {
                     x.nazov = format!("{stranka} – nájdené videá: {n}");
                 }
                 Err(Chyba::Pauza) => x.stav = Stav::Pauza,
+                Err(Chyba::Heslo(ref t)) => {
+                    x.stav = Stav::Chyba;
+                    x.chyba = t.clone();
+                    x.podrobnosti.clear();
+                    x.treba_heslo = "subor".into();
+                }
                 Err(ref e) => {
                     let t = e.to_string();
                     let (kratka, podrobnosti) = match t.split_once("\n\nPodrobnosti: ") {
@@ -98,6 +105,9 @@ pub async fn prace(v: Arc<Vnutro>, id: String, zrusenie: CancellationToken) {
             }
         });
         f.uloz(true);
+    }
+    if let Ok(Koniec::Subor(_)) = &vysledok {
+        skus_rozbalit(&v, &id, None, false);
     }
     match &vysledok {
         Ok(Koniec::Subor(c)) => v.zapis(format!(
@@ -244,7 +254,7 @@ async fn stiahni(
     z: &CancellationToken,
     h: &(Hlasic, Arc<Mutex<Sucet>>),
 ) -> Vysledok<Koniec> {
-    if matches!(p.zdroj.as_str(), "Webshare" | "Fastshare") {
+    if zdroje::ULOZISKA.contains(&p.zdroj.as_str()) {
         return super::ucty::stiahni(v, p, z, &h.0).await;
     }
     if let Some(o) = &p.jazyky {
@@ -290,8 +300,14 @@ async fn stiahni(
 }
 
 fn nastavenia_siete(v: &Vnutro, p: &Polozka) -> Nastavenia {
+    let cookies = if p.prihlasenie {
+        super::kurzy::cookies_pre(v, &p.url)
+    } else {
+        vec![]
+    };
     let n = v.nastavenia.lock().unwrap();
     Nastavenia {
+        cookies,
         referer: Some(p.referer.clone()).filter(|r| !r.is_empty()),
         hlavicky: vec![],
         spojenia: n.cislo("connections", 4).clamp(1, 16) as usize,
@@ -349,6 +365,7 @@ async fn nativne(
                 heslo: p.heslo.clone(),
                 zo_skenu: true,
                 jazyky: None,
+                prihlasenie: p.prihlasenie,
             })
             .collect();
         let pocet = nove.len();
@@ -671,6 +688,183 @@ pub async fn uprac(p: Polozka, uloha: Option<tokio::task::JoinHandle<()>>) {
     if p.stav != Stav::Hotovo {
         let _ = tokio::task::spawn_blocking(move || fronta::zmaz_rozpracovane(&p)).await;
     }
+}
+
+/// Po dokončení: ak je výsledok archív a rozbaľovanie je zapnuté (alebo `rucne`), rozbalí ho vedľa
+/// neho. Pri rozdelenom archíve sa čaká, kým sú hotové všetky jeho časti vo fronte; rozbaľuje
+/// položka s najnižším číslom časti. `heslo` = nové heslo zadané pri položke.
+pub fn skus_rozbalit(v: &Arc<Vnutro>, id: &str, heslo: Option<String>, rucne: bool) {
+    use super::archivy;
+    use super::fronta::Rozbalenie;
+    let nastav = |v: &Vnutro, id: &str, stav: &str, text: String, ciel: String| {
+        v.fronta.lock().unwrap().uprav(id, |x| {
+            x.rozbalenie = Some(Rozbalenie {
+                stav: stav.into(),
+                text,
+                ciel,
+                podiel: None,
+            })
+        });
+    };
+    let (vlastnik, archiv, heslo) = {
+        let mut f = v.fronta.lock().unwrap();
+        let Some(p) = f.najdi(id).cloned() else {
+            return;
+        };
+        let cesta = PathBuf::from(&p.subor);
+        let Some(c) = archivy::rozpoznaj(&cesta) else {
+            return;
+        };
+        if !rucne && heslo.is_none() && !v.nastavenia.lock().unwrap().ano("rozbalovat", true) {
+            f.uprav(id, |x| {
+                x.rozbalenie = Some(Rozbalenie {
+                    stav: "vypnute".into(),
+                    ..Default::default()
+                })
+            });
+            return;
+        }
+        // ostatné časti toho istého archívu vo fronte (rovnaký priečinok, meno a druh)
+        let dir = cesta.parent().map(Path::to_path_buf).unwrap_or_default();
+        let skupina: Vec<(u32, String, Stav, String)> = f
+            .polozky
+            .iter()
+            .filter_map(|x| {
+                let c2 = PathBuf::from(if x.subor.is_empty() {
+                    &x.ciel
+                } else {
+                    &x.subor
+                });
+                let r = archivy::rozpoznaj(&c2)?;
+                (r.druh == c.druh && r.meno == c.meno && c2.parent() == Some(dir.as_path()))
+                    .then(|| (r.cislo, x.id.clone(), x.stav, x.heslo.clone()))
+            })
+            .collect();
+        if skupina.iter().any(|x| x.2 != Stav::Hotovo) {
+            let chyba = skupina.iter().filter(|x| x.2 != Stav::Hotovo).count();
+            drop(f);
+            nastav(
+                v,
+                id,
+                "caka",
+                format!("Rozbalí sa, keď budú stiahnuté všetky časti (chýba {chyba})."),
+                String::new(),
+            );
+            return;
+        }
+        let vlastnik = skupina
+            .iter()
+            .min_by_key(|x| x.0)
+            .map(|x| x.1.clone())
+            .unwrap_or_else(|| id.to_string());
+        let vp = f.najdi(&vlastnik).cloned().unwrap_or(p);
+        if vp.rozbalenie.as_ref().is_some_and(|r| r.stav == "bezi") {
+            return;
+        }
+        let heslo = heslo
+            .or_else(|| skupina.iter().map(|x| x.3.clone()).find(|h| !h.is_empty()))
+            .unwrap_or_default();
+        for (_, i, _, _) in skupina.iter().filter(|x| x.1 != vlastnik) {
+            f.uprav(i, |x| {
+                x.rozbalenie = Some(Rozbalenie {
+                    stav: "cast".into(),
+                    text: format!("Časť archívu {} – rozbalí sa spolu s prvou časťou.", c.meno),
+                    ..Default::default()
+                })
+            });
+        }
+        f.uprav(&vlastnik, |x| {
+            x.heslo = heslo.clone();
+            x.rozbalenie = Some(Rozbalenie {
+                stav: "bezi".into(),
+                text: "Rozbaľujem…".into(),
+                ciel: String::new(),
+                podiel: Some(0.0),
+            })
+        });
+        (vlastnik, PathBuf::from(vp.subor), heslo)
+    };
+    let v2 = v.clone();
+    v.rt_spawn(async move {
+        let v = v2;
+        let (v3, vl) = (v.clone(), vlastnik.clone());
+        let a = archiv.clone();
+        let r = tokio::task::spawn_blocking(move || {
+            let posledne = std::cell::Cell::new(Instant::now());
+            archivy::rozbal(&a, &heslo, &|hotovo, celkom| {
+                if celkom > 0 && posledne.get().elapsed().as_millis() >= 200 {
+                    posledne.set(Instant::now());
+                    v3.fronta.lock().unwrap().uprav(&vl, |x| {
+                        if let Some(r) = x.rozbalenie.as_mut() {
+                            r.podiel = Some((hotovo as f64 / celkom as f64).min(1.0));
+                        }
+                    });
+                }
+            })
+        })
+        .await;
+        let meno = archiv
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        match r {
+            Ok(Ok((ciel, n))) => {
+                let mut text = format!(
+                    "Rozbalené: {n} {}",
+                    match n {
+                        1 => "súbor",
+                        2..=4 => "súbory",
+                        _ => "súborov",
+                    }
+                );
+                if v.nastavenia.lock().unwrap().text("po_rozbaleni") == "kos" {
+                    let casti = archivy::casti(&archiv);
+                    let zmazane = tokio::task::spawn_blocking(move || {
+                        casti.iter().filter(|c| trash::delete(c).is_ok()).count()
+                    })
+                    .await
+                    .unwrap_or(0);
+                    if zmazane > 0 {
+                        text.push_str(" – archív je v Koši");
+                    }
+                }
+                v.zapis(format!("📦 {meno}: {text}"));
+                nastav(
+                    &v,
+                    &vlastnik,
+                    "hotovo",
+                    text,
+                    ciel.to_string_lossy().into_owned(),
+                );
+            }
+            Ok(Err(super::archivy::ChybaRozbalenia::Heslo(zle))) => {
+                let t = super::archivy::ChybaRozbalenia::Heslo(zle).to_string();
+                v.zapis(format!("📦 {meno}: {t}"));
+                nastav(&v, &vlastnik, "heslo", t, String::new());
+            }
+            // rozdelený archív, ktorému chýba časť: počká na ďalšie časti vo fronte
+            Ok(Err(_)) if archivy::je_delene(&archiv) => nastav(
+                &v,
+                &vlastnik,
+                "caka",
+                "Rozbalí sa, keď budú stiahnuté všetky časti archívu.".into(),
+                String::new(),
+            ),
+            Ok(Err(e)) => {
+                v.zapis(format!("📦 {meno}: {e}"));
+                nastav(&v, &vlastnik, "chyba", e.to_string(), String::new());
+            }
+            Err(e) => nastav(
+                &v,
+                &vlastnik,
+                "chyba",
+                format!("Rozbaľovanie zlyhalo: {e}"),
+                String::new(),
+            ),
+        }
+        v.fronta.lock().unwrap().uloz(true);
+    });
 }
 
 /// Stiahnuté súbory položiek (všetkých, ak `ids` je None), ktoré ešte sú na disku, a ich veľkosť.

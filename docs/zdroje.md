@@ -22,6 +22,11 @@ Kód Komety je vlastný a pôvodný. Tieto cudzie súčasti používa – každ�
 | yt-dlp (vydania na GitHube) | Unlicense | aplikácia ho na požiadanie stiahne do `~/.kometa/nastroje` | YouTube a ďalšie služby; overuje sa SHA-256 z vydania |
 | FFmpeg ([BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds), GPL zostavenie) | GPL-3.0 | aplikácia ho na požiadanie stiahne do `~/.kometa/nastroje` (samostatný program, nie súčasť Komety) | MP3, prevod Opus → AAC, zriedkavé formáty; overuje sa SHA-256 z vydania |
 | Rust: [trash](https://github.com/Byron/trash-rs) | MIT | jadro v Ruste | presun stiahnutých súborov do Koša |
+| Rust: [zip](https://github.com/zip-rs/zip2) | MIT | jadro v Ruste | rozbaľovanie ZIP (aj AES a ZipCrypto) |
+| Rust: [sevenz-rust2](https://github.com/hasenbanck/sevenz-rust2) | Apache-2.0 | jadro v Ruste | rozbaľovanie 7z (aj AES) |
+| Rust: [unrar](https://github.com/muja/unrar.rs) + knižnica UnRAR (RARLAB) | MIT/Apache-2.0; UnRAR: licencia UnRAR (voľné použitie na rozbaľovanie, nie na tvorbu RAR) | jadro v Ruste | rozbaľovanie RAR; skúšobný archív `jadro/testdata/zaheslovany.rar` je z balíka unrar |
+| [tauri-plugin-notification](https://github.com/tauri-apps/plugins-workspace) | MIT / Apache-2.0 | aplikácia | oznámenie, keď strážca schránky zachytí odkaz |
+| 7-Zip (doinštaluje `Instalacia.bat`) | LGPL-2.1 (+ unRAR) | Kometa pre Python, samostatný program | rozbaľovanie 7z a RAR |
 | [Send2Trash](https://github.com/arsenetar/send2trash) | BSD-3-Clause | program (Python) | presun stiahnutých súborov do Koša |
 
 Pravidlá pre nové súčasti: len slobodné licencie, ktoré dovoľujú použitie v projekte pod MIT;

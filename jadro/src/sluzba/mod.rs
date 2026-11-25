@@ -3,13 +3,16 @@
 //!
 //! Každé volanie vráti `{"ok": true, "data": …}` alebo `{"ok": false, "chyba": "…", "podrobnosti": "…"}`.
 
+pub mod archivy;
 pub mod fronta;
 pub mod jazyky;
+pub mod kurzy;
 pub mod nastavenia;
 pub mod nastroje;
 pub mod prostredie;
 pub mod server;
 pub mod stahovanie;
+pub mod strazca;
 pub mod ucty;
 pub mod ytdlp;
 pub mod zdroje;
@@ -45,6 +48,13 @@ pub const METODY: &[&str] = &[
     "odstranit",
     "vycistit_hotove",
     "vycistit_front",
+    "zadat_heslo",
+    "rozbalit",
+    "schranka_stiahnut",
+    "schranka_zahodit",
+    "kurz_otvorit",
+    "kurz_nacitat",
+    "kurz_stiahnut",
     "subory_na_zmazanie",
     "zmazat_subory",
     "pozastavit_vsetko",
@@ -91,6 +101,10 @@ pub struct Vnutro {
     graf: Mutex<Graf>,
     posledne_volanie: Mutex<Instant>,
     instalacia: Mutex<Instalacia>,
+    /// strážca schránky: zachytené odkazy
+    pub strazca: Mutex<strazca::Strazca>,
+    /// prihlásenie z prehliadača kurzov (cookies) – len v pamäti
+    pub prihlasenia: Mutex<Vec<(String, String)>>,
     rt: tokio::runtime::Handle,
     /// prostredie okna pre UI: "aplikacia" (Tauri) alebo "prehliadac"
     pub okno: &'static str,
@@ -165,6 +179,12 @@ pub struct Sluzba {
     v: Arc<Vnutro>,
 }
 
+impl From<Arc<Vnutro>> for Sluzba {
+    fn from(v: Arc<Vnutro>) -> Self {
+        Sluzba { v }
+    }
+}
+
 fn chyba(t: impl Into<String>) -> Chyba {
     Chyba::Ine(t.into())
 }
@@ -203,6 +223,8 @@ impl Sluzba {
             }),
             posledne_volanie: Mutex::new(Instant::now()),
             instalacia: Mutex::new(Instalacia::default()),
+            strazca: Mutex::new(strazca::Strazca::default()),
+            prihlasenia: Mutex::new(vec![]),
             rt,
             okno,
             verzia,
@@ -216,6 +238,7 @@ impl Sluzba {
         }
         s.v.naplanuj();
         ucty::over_pri_starte(&s.v);
+        strazca::spusti(&s.v);
         s
     }
 
@@ -293,7 +316,106 @@ impl Sluzba {
         Ok(match m {
             "init" => self.init(),
             "stav" => self.stav(),
-            "pridat" => self.pridat(&arg::<String>(a, 0)?, &arg::<String>(a, 1)?)?,
+            "pridat" => self.pridat(&arg::<String>(a, 0)?, &arg::<String>(a, 1)?, &arg::<String>(a, 2)?)?,
+            "zadat_heslo" => {
+                let (id, heslo) = (arg::<String>(a, 0)?, arg::<String>(a, 1)?);
+                let rozbalit = {
+                    let mut f = v.fronta.lock().unwrap();
+                    let Some(p) = f.najdi(&id).cloned() else {
+                        return Err(chyba("Položka už nie je vo fronte."));
+                    };
+                    let archiv = p.stav == Stav::Hotovo;
+                    f.uprav(&id, |x| x.heslo = heslo.clone());
+                    if !archiv {
+                        f.spusti(std::slice::from_ref(&id));
+                    }
+                    archiv
+                };
+                if rozbalit {
+                    stahovanie::skus_rozbalit(v, &id, Some(heslo), true);
+                } else {
+                    v.naplanuj();
+                }
+                Value::Null
+            }
+            "rozbalit" => {
+                stahovanie::skus_rozbalit(v, &arg::<String>(a, 0)?, None, true);
+                Value::Null
+            }
+            "schranka_stiahnut" => {
+                let ids = arg::<Option<Vec<String>>>(a, 0)?;
+                let preset = self.preset(&arg::<String>(a, 1)?);
+                let vybrane = strazca::vyber(v, ids.as_deref());
+                let (kolekcie, ostatne): (Vec<_>, Vec<_>) = vybrane.into_iter().partition(|z| z.kolekcia);
+                let urls: Vec<String> = ostatne.into_iter().map(|z| z.url).collect();
+                let n = self.pridat_odkazy(&urls, &preset, "");
+                json!({"pridane": n, "kolekcie": kolekcie.into_iter().map(|z| z.url).collect::<Vec<_>>()})
+            }
+            "schranka_zahodit" => {
+                strazca::vyber(v, arg::<Option<Vec<String>>>(a, 0)?.as_deref());
+                Value::Null
+            }
+            "kurz_otvorit" => {
+                let url = arg::<String>(a, 0)?;
+                let url = url.trim();
+                let url = if url.starts_with("http://") || url.starts_with("https://") {
+                    url.to_string()
+                } else {
+                    format!("https://{url}")
+                };
+                if url::Url::parse(&url).is_err() {
+                    return Err(chyba("Zadaj adresu stránky, napríklad https://www.vita.sk"));
+                }
+                v.prostredie.prehliadac_otvor(&url).map_err(chyba)?;
+                Value::Null
+            }
+            "kurz_nacitat" => {
+                let v2 = v.clone();
+                let t = tokio::task::spawn_blocking(move || v2.prostredie.prehliadac_skript(kurzy::ZBER_JS))
+                    .await
+                    .map_err(|_| chyba("Stránku sa nepodarilo prečítať."))?
+                    .map_err(chyba)?;
+                let z = kurzy::precitaj_zber(&t)
+                    .ok_or_else(|| chyba("Stránku sa nepodarilo prečítať – počkaj, kým sa načíta, a skús znova."))?;
+                let k = kurzy::kurz_zo_zberu(&z);
+                if k.kapitoly.is_empty() {
+                    return Err(chyba(
+                        "Na tejto stránke som nenašiel lekcie ani video. Prejdi na stránku s obsahom kurzu (zoznam lekcií).",
+                    ));
+                }
+                json!(k)
+            }
+            "kurz_stiahnut" => {
+                let k: kurzy::Kurz = arg(a, 0)?;
+                let preset = self.preset(&arg::<String>(a, 1)?);
+                let v2 = v.clone();
+                let adresy: Vec<String> = std::iter::once(k.adresa.clone())
+                    .chain(k.kapitoly.iter().flat_map(|x| x.lekcie.iter().map(|l| l.url.clone())))
+                    .collect();
+                // prihlásenie z okna prehliadača (pre každú doménu lekcií)
+                let cookies = tokio::task::spawn_blocking(move || {
+                    let mut hosty = std::collections::HashSet::new();
+                    let mut out = vec![];
+                    for u in adresy {
+                        let h = url::Url::parse(&u).ok().and_then(|x| x.host_str().map(str::to_string));
+                        if h.is_some_and(|h| hosty.insert(h)) {
+                            out.extend(v2.prostredie.prehliadac_cookies(&u));
+                        }
+                    }
+                    out
+                })
+                .await
+                .unwrap_or_default();
+                if !cookies.is_empty() {
+                    *v.prihlasenia.lock().unwrap() = cookies;
+                }
+                let nove = kurzy::polozky(&k, &v.priecinok_vystupu(), &preset);
+                let pocet = nove.len();
+                let n = v.fronta.lock().unwrap().pridaj(nove).len();
+                v.naplanuj();
+                v.zapis(format!("🎓 Kurz „{}“: {n} lekcií do sťahovania", k.nazov));
+                json!({"pridane": n, "uz_vo_fronte": pocet - n})
+            }
             "rozpoznat" => Value::Array(
                 zdroje::odkazy(&arg::<String>(a, 0)?)
                     .into_iter()
@@ -470,6 +592,9 @@ impl Sluzba {
                 "kolekcie": ytdlp,
                 "doinstalovat_ytdlp": true,
                 "doinstalovat_ffmpeg": nastroje::ffmpeg_doinstalovatelny(),
+                "archivy": true,
+                "strazca": self.v.prostredie.sleduje_schranku(),
+                "kurzy": self.v.prostredie.ma_prehliadac(),
                 "ffmpeg_volitelny": true,
             },
         })
@@ -510,10 +635,12 @@ impl Sluzba {
                 "podiel": i.podiel,
             },
             "zaznam": self.v.zaznam.lock().unwrap().iter().rev().take(40).rev().cloned().collect::<Vec<_>>(),
+            "zachytene": strazca::stav(&self.v),
+            "prehliadac": self.v.prostredie.prehliadac_stranka().map(|(adresa, titulok)| json!({"adresa": adresa, "titulok": titulok})),
         })
     }
 
-    fn pridat(&self, text: &str, preset: &str) -> Vysledok<Value> {
+    fn pridat(&self, text: &str, preset: &str, heslo: &str) -> Vysledok<Value> {
         let urls = zdroje::odkazy(text);
         if urls.is_empty() {
             return Err(chyba(
@@ -526,12 +653,20 @@ impl Sluzba {
         self.v.nastavenia.lock().unwrap().zmen(&z);
         let (kolekcie, jednotlive): (Vec<String>, Vec<String>) =
             urls.into_iter().partition(|u| zdroje::je_kolekcia(u));
-        let priecinok = self.v.priecinok_vystupu();
         let pocet = jednotlive.len();
+        let n = self.pridat_odkazy(&jednotlive, &preset, heslo);
+        Ok(json!({"pridane": n, "uz_vo_fronte": pocet - n, "kolekcie": kolekcie}))
+    }
+
+    /// Pridá jednotlivé odkazy (nie playlisty) do frontu; vráti počet nových položiek.
+    pub fn pridat_odkazy(&self, jednotlive: &[String], preset: &str, heslo: &str) -> usize {
+        let priecinok = self.v.priecinok_vystupu();
+        let preset = preset.to_string();
         let jazyky = (preset == "jazyky").then(|| self.jazyky_z_nastaveni());
         let nove = self.v.fronta.lock().unwrap().pridaj(
             jednotlive
-                .into_iter()
+                .iter()
+                .cloned()
                 .map(|url| Nova {
                     format: format_pre(&url, &preset),
                     jazyky: jazyky
@@ -542,12 +677,13 @@ impl Sluzba {
                         .unwrap_or_default(),
                     url,
                     priecinok: priecinok.clone(),
+                    heslo: heslo.trim().to_string(),
                     ..Default::default()
                 })
                 .collect(),
         );
         self.v.naplanuj();
-        Ok(json!({"pridane": nove.len(), "uz_vo_fronte": pocet - nove.len(), "kolekcie": kolekcie}))
+        nove.len()
     }
 
     /// Jazyky podľa nastavení (karta Jazykové stopy si ich pamätá).
@@ -694,6 +830,7 @@ impl Sluzba {
                 heslo: heslo.to_string(),
                 zo_skenu: true,
                 jazyky: None,
+                prihlasenie: false,
             })
             .collect();
         let n = self.v.fronta.lock().unwrap().pridaj(nove).len();
@@ -763,5 +900,10 @@ fn polozka_pre_okno(p: &Polozka) -> Value {
         "autor": p.autor, "pridane": p.pridane,
         "podiel": p.podiel, "krok": p.krok,
         "jazyky": p.jazyky.as_ref().map(jazyky::popis_volieb),
+        "treba_heslo": p.treba_heslo,
+        "rozbalenie": p.rozbalenie.as_ref().map(|r| json!({
+            "stav": r.stav, "text": r.text, "podiel": r.podiel,
+            "ciel": Path::new(&r.ciel).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+        })),
     })
 }

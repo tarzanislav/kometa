@@ -35,6 +35,7 @@ SOURCES = [
     ("Facebook", r"(facebook\.com|fb\.watch|fb\.com)/"),
     ("Webshare", r"webshare\.cz/"),
     ("Fastshare", r"fastshare\.(cz|cloud)/"),
+    ("Datoid", r"datoid\.(cz|sk)/"),
     ("X/Twitter", r"(twitter\.com|x\.com)/"),
     ("Vimeo", r"vimeo\.com/"),
 ]

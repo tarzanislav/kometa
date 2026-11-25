@@ -3,14 +3,17 @@
   import type { StavUctu } from '../lib/typy'
   import Ikona from '../components/Ikona.svelte'
 
-  type Sluzba = 'webshare' | 'fastshare'
-  const sluzby: { id: Sluzba; nazov: string; popis: string }[] = [
-    { id: 'webshare', nazov: 'Webshare.cz', popis: 'Na rýchle sťahovanie treba VIP.' },
-    { id: 'fastshare', nazov: 'Fastshare.cz', popis: 'Sťahuje sa z kreditu na tvojom účte.' },
+  type Sluzba = 'webshare' | 'fastshare' | 'datoid'
+  const sluzby: { id: Sluzba; nazov: string; popis: string; meno: string }[] = [
+    { id: 'webshare', nazov: 'Webshare.cz', popis: 'Na rýchle sťahovanie treba VIP.', meno: 'Meno' },
+    { id: 'fastshare', nazov: 'Fastshare.cz', popis: 'Sťahuje sa z kreditu na tvojom účte.', meno: 'Meno' },
+    { id: 'datoid', nazov: 'Datoid.cz', popis: 'Sťahuje sa z kreditu na tvojom účte.', meno: 'E-mail' },
   ]
+  const NAZOV: Record<Sluzba, string> = { webshare: 'Webshare', fastshare: 'Fastshare', datoid: 'Datoid' }
   const formular = $state<Record<Sluzba, { meno: string; heslo: string; pracuje: boolean }>>({
-    webshare: { meno: app.stav?.ucty.webshare.user ?? '', heslo: '', pracuje: false },
-    fastshare: { meno: app.stav?.ucty.fastshare.user ?? '', heslo: '', pracuje: false },
+    webshare: { meno: app.stav?.ucty.webshare?.user ?? '', heslo: '', pracuje: false },
+    fastshare: { meno: app.stav?.ucty.fastshare?.user ?? '', heslo: '', pracuje: false },
+    datoid: { meno: app.stav?.ucty.datoid?.user ?? '', heslo: '', pracuje: false },
   })
 
   const NAZVY: Record<string, string> = {
@@ -31,7 +34,7 @@
     f.pracuje = false
     if (r) {
       f.heslo = ''
-      toast(`Prihlásený do ${s === 'webshare' ? 'Webshare' : 'Fastshare'}.`, 'ok')
+      toast(`Prihlásený do ${NAZOV[s]}.`, 'ok')
     }
   }
 
@@ -78,8 +81,14 @@
             }}
           >
             <div>
-              <label class="popis" for="{s.id}-meno">Meno</label>
-              <input id="{s.id}-meno" class="pole" bind:value={formular[s.id].meno} autocomplete="username" />
+              <label class="popis" for="{s.id}-meno">{s.meno}</label>
+              <input
+                id="{s.id}-meno"
+                class="pole"
+                type={s.id === 'datoid' ? 'email' : 'text'}
+                bind:value={formular[s.id].meno}
+                autocomplete="username"
+              />
             </div>
             <div>
               <label class="popis" for="{s.id}-heslo">Heslo</label>

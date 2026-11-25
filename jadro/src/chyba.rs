@@ -24,6 +24,9 @@ pub enum Chyba {
     /// Vlastné spájanie tento kodek alebo formát (zatiaľ) nepozná – použije sa FFmpeg, ak je k dispozícii.
     #[error("Nepodporovaný formát: {0}")]
     Nepodporovane(String),
+    /// Súbor na úložisku alebo archív je chránený heslom (chýba alebo nesedí).
+    #[error("{0}")]
+    Heslo(String),
     #[error("{0}")]
     Ine(String),
 }
@@ -50,6 +53,7 @@ impl Chyba {
             Chyba::Stranka => "stranka",
             Chyba::Io(_) => "disk",
             Chyba::Nepodporovane(_) => "nepodporovane",
+            Chyba::Heslo(_) => "heslo",
             Chyba::Ine(_) => "ine",
         }
     }

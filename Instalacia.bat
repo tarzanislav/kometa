@@ -24,6 +24,9 @@ echo.
 echo  [3/5] Deno (YouTube ho dnes vyzaduje)...
 winget install -e --id DenoLand.Deno --accept-source-agreements --accept-package-agreements
 echo.
+echo  [3/5] 7-Zip (rozbalovanie archivov 7z a RAR)...
+winget install -e --id 7zip.7zip --accept-source-agreements --accept-package-agreements
+echo.
 echo  [4/5] Kniznice (yt-dlp, requests, keyring)...
 call :findpy
 if not defined PY (

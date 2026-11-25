@@ -9,9 +9,17 @@
 
   let { p }: { p: Polozka } = $props()
   let podrobnosti = $state(false)
+  let noveHeslo = $state('')
+  const rozb = $derived(p.rozbalenie)
+
+  async function zadatHeslo() {
+    if (!noveHeslo) return
+    await skus('zadat_heslo', p.id, noveHeslo)
+    noveHeslo = ''
+  }
   let bezObrazka = $state(false)
 
-  const ULOZISKA = ['Webshare', 'Fastshare']
+  const ULOZISKA = ['Webshare', 'Fastshare', 'Datoid']
   const formatNazov = $derived(
     p.format === 'subor' || ULOZISKA.includes(p.zdroj)
       ? 'Súbor'
@@ -67,12 +75,54 @@
       <div class="priebeh"><Kometa hodnota={podiel} stav={kometaStav} popis="Priebeh sťahovania" /></div>
     {:else if p.stav === 'chyba'}
       <p class="chyba vyber-text">{p.chyba}</p>
+      {#if p.treba_heslo}
+        <form
+          class="heslo"
+          onsubmit={(e) => {
+            e.preventDefault()
+            zadatHeslo()
+          }}
+        >
+          <input class="pole" type="password" bind:value={noveHeslo} placeholder="Heslo k súboru" aria-label="Heslo k súboru" />
+          <button class="tl hlavne" disabled={!noveHeslo}>Pokračovať</button>
+        </form>
+      {/if}
       {#if p.podrobnosti}
         <button class="viac" onclick={() => (podrobnosti = !podrobnosti)} aria-expanded={podrobnosti}>
           {podrobnosti ? 'Skryť podrobnosti' : 'Podrobnosti'}
         </button>
         {#if podrobnosti}<pre class="vyber-text">{p.podrobnosti}</pre>{/if}
       {/if}
+    {:else if p.stav === 'hotovo' && rozb}
+      <div class="archiv {rozb.stav}">
+        <Ikona meno={rozb.stav === 'heslo' ? 'zamok' : 'balik'} velkost={15} />
+        {#if rozb.stav === 'bezi'}
+          <span>Rozbaľujem{rozb.podiel != null ? ` (${Math.floor(rozb.podiel * 100)} %)` : '…'}</span>
+          <div class="priebeh-archivu"><Kometa hodnota={rozb.podiel ?? null} stav="bezi" popis="Priebeh rozbaľovania" /></div>
+        {:else if rozb.stav === 'hotovo'}
+          <span>{rozb.text}{rozb.ciel ? ` → ${rozb.ciel}` : ''}</span>
+        {:else if rozb.stav === 'vypnute'}
+          <span>Archív</span>
+          <button class="tl male-tl" onclick={() => skus('rozbalit', p.id)}>Rozbaliť</button>
+        {:else if rozb.stav === 'heslo'}
+          <span>{rozb.text}</span>
+          <form
+            class="heslo"
+            onsubmit={(e) => {
+              e.preventDefault()
+              zadatHeslo()
+            }}
+          >
+            <input class="pole" type="password" bind:value={noveHeslo} placeholder="Heslo k archívu" aria-label="Heslo k archívu" />
+            <button class="tl hlavne" disabled={!noveHeslo}>Rozbaliť</button>
+          </form>
+        {:else if rozb.stav === 'chyba'}
+          <span class="chyba">{rozb.text}</span>
+          <button class="tl male-tl" onclick={() => skus('rozbalit', p.id)}>Skúsiť znova</button>
+        {:else}
+          <span>{rozb.text}</span>
+        {/if}
+      </div>
     {:else if p.stav === 'rozbalene'}
       <p class="male tlmene">Na stránke bolo viac videí – každé je vo fronte samostatne.</p>
     {/if}
@@ -145,6 +195,39 @@
 </article>
 
 <style>
+  .heslo {
+    display: flex;
+    gap: var(--s2);
+    margin-top: var(--s2);
+    max-width: 420px;
+  }
+  .heslo .pole {
+    height: 34px;
+  }
+  .archiv {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2);
+    margin-top: var(--s2);
+    color: var(--ink-2);
+    font-size: var(--t-s);
+  }
+  .archiv.hotovo {
+    color: var(--ok);
+  }
+  .archiv .heslo {
+    margin-top: 0;
+    flex-basis: 100%;
+  }
+  .priebeh-archivu {
+    flex: 1;
+    min-width: 160px;
+  }
+  .male-tl {
+    height: 28px;
+    padding: 0 var(--s3);
+  }
   .polozka {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto auto;

@@ -36,7 +36,9 @@ BASE = ""
 VELKY = bytes((i * 7 + (i >> 9)) & 0xFF for i in range(24 << 20))
 FALOSNY_YTDLP = b"#!/bin/sh\necho 2099.01.01\n" + b"#" * 4096
 WS_SUBOR = os.urandom(3 << 20)
-FF_ARCHIV: list[bytes] = []   # [archív tar.xz, program ffmpeg] – vytvorí priprav_ffmpeg()
+FF_ARCHIV: list[bytes] = []
+ARCHIVY: dict[str, bytes] = {}
+UNIKY: list[str] = []            # cookies kurzu, ktoré by odišli na cudziu doménu   # názov → obsah (vytvorí priprav_archivy())   # [archív tar.xz, program ffmpeg] – vytvorí priprav_ffmpeg()
 WS_SOL, WS_HESLO = "AbCd1234", "tajné heslo"
 op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -129,6 +131,44 @@ class Server(http.server.SimpleHTTPRequestHandler):
             return
         if u.path == "/fastshare/download.php":
             return self.rozsah(WS_SUBOR)
+        if u.path.startswith("/datoid/"):
+            q = {k: v[0] for k, v in urllib.parse.parse_qs(u.query).items()}
+            m = u.path[len("/datoid/"):]
+            j = lambda x: self.posli(200, json.dumps(x), "application/json")  # noqa: E731
+            if m == "login":
+                ok = q.get("email") == "ja@example.sk" and q.get("password") == "dt-heslo"
+                return j({"success": True, "token": "dt-tok"} if ok else {"success": False})
+            if m == "get-user-details":
+                return j({"credits": 2048} if q.get("token") == "dt-tok" else {"error": "Bad token"})
+            zamknuty = "zamknuty" in q.get("url", "")
+            if zamknuty and q.get("password") != "dt-subor":
+                return j({"error": "File is password protected"})
+            if m == "get-file-details":
+                return j({"filename": "Datoid súbor.mkv" if not zamknuty else "Datoid zamknutý.mkv",
+                          "filesize_bytes": len(WS_SUBOR)})
+            if m == "get-download-link":
+                if q.get("token") != "dt-tok":
+                    return j({"error": "Bad token"})
+                return j({"download_link": f"{BASE}/ws/subor.bin".replace("/", "\\/")})
+        if u.path == "/media/Archiv.rar":
+            return self.posli(200, (KOREN / "jadro/testdata/zaheslovany.rar").read_bytes(), "application/octet-stream")
+        if u.path.startswith("/archivy/"):
+            return self.posli(200, ARCHIVY[u.path.rsplit("/", 1)[1]], "application/octet-stream")
+        if u.path == "/oembed":
+            return self.posli(200, json.dumps({"title": "Pieseň o kométe", "author_name": "Kanál"}), "application/json")
+        if u.path.startswith("/kurz/"):
+            prihlaseny = "sid=tajne" in (self.headers.get("Cookie") or "")
+            if not prihlaseny:
+                return self.posli(403, "<p>Prihlás sa</p>")
+            if u.path == "/kurz/lekcia-1":
+                return self.posli(200, f'<html><h1>Úvod</h1><video src="{BASE}/media/a.mp4"></video></html>')
+            if u.path == "/kurz/lekcia-2":
+                cudzi = BASE.replace("127.0.0.1", "localhost") + "/cudzie/b.mp4"
+                return self.posli(200, f'<html><h1>Ďalej</h1><video src="{cudzi}"></video></html>')
+        if u.path == "/cudzie/b.mp4":
+            if "sid=" in (self.headers.get("Cookie") or ""):
+                UNIKY.append(self.headers.get("Cookie"))
+            return self.rozsah((D / "web/media/b.mp4").read_bytes())
         if u.path == "/ff-vydanie":
             return self.posli(200, json.dumps({"assets": [
                 {"name": n, "browser_download_url": f"{BASE}/ff/{n}"}
@@ -166,8 +206,18 @@ class Server(http.server.SimpleHTTPRequestHandler):
                 return self.posli(200, ok("<username>ja</username><vip>1</vip><vip_days>30</vip_days>"
                                           "<vip_until>2027-01-01 10:00:00</vip_until>"), "text/xml")
             if m == "file_info":
+                if f.get("ident") == "zamok1":
+                    return self.posli(200, ok(f"<name>Zamknutý film.mkv</name><size>{len(WS_SUBOR)}</size>"
+                                              "<password>1</password>"), "text/xml")
                 return self.posli(200, ok(f"<name>Film &amp; titulky.mkv</name><size>{len(WS_SUBOR)}</size>"), "text/xml")
+            if m == "file_password_salt":
+                return self.posli(200, ok("<salt>SoLsUbOr</salt>"), "text/xml")
             if m == "file_link":
+                if f.get("ident") == "zamok1":
+                    spravne = hashlib.sha1(md5_crypt("tajné heslo", "SoLsUbOr").encode()).hexdigest()
+                    if f.get("password") != spravne:
+                        return self.posli(200, "<response><status>FATAL</status><code>FILE_LINK_FATAL_5</code>"
+                                               "<message>Bad password</message></response>", "text/xml")
                 return self.posli(200, ok(f"<link>{BASE}/ws/subor.bin</link>"), "text/xml")
         if u.path == "/fastshare/sql.php":
             if f.get("login") == "ja" and f.get("heslo") == "fs-heslo":
@@ -190,7 +240,7 @@ class Okno:
     def __init__(self, priecinok: Path, **env):
         self.priecinok = priecinok
         e = dict(os.environ, KOMETA_PRIECINOK=str(priecinok), KOMETA_BEZ_TREZORU="1", NO_PROXY="127.0.0.1,localhost",
-                 KOMETA_WEBSHARE_ZAKLAD=BASE + "/ws/api", KOMETA_FASTSHARE_ZAKLAD=BASE + "/fastshare", **env)
+                 KOMETA_WEBSHARE_ZAKLAD=BASE + "/ws/api", KOMETA_FASTSHARE_ZAKLAD=BASE + "/fastshare", KOMETA_DATOID_ZAKLAD=BASE + "/datoid", **env)
         self.p = subprocess.Popen([str(EXE), "okno", "--bez-okna"], stdout=subprocess.PIPE, text=True, env=e)
         self.url = ""
         for _ in range(20):
@@ -259,8 +309,28 @@ def priprav_ffmpeg():
     FF_ARCHIV[:] = [buf.getvalue(), program]
 
 
+def priprav_archivy():
+    """ZIP s viacerými súbormi a ZIP rozdelený na .zip.001 + .zip.002 (ako ho delí 7-Zip)."""
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("Kurz/01 Úvod.txt", "úvod")
+        z.writestr("Kurz/02 Druhá.txt", "druhá" * 1000)
+        z.writestr("../mimo.txt", "nesmie von")
+    ARCHIVY["Balik.zip"] = buf.getvalue()
+    film = os.urandom(200_000)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as z:
+        z.writestr("Film.mkv", film)
+    d = buf.getvalue()
+    ARCHIVY["Velky.zip.001"], ARCHIVY["Velky.zip.002"] = d[:120_000], d[120_000:]
+    ARCHIVY["film-obsah"] = film
+
+
 def priprav():
     priprav_ffmpeg()
+    priprav_archivy()
     m = D / "web" / "media"
     m.mkdir(parents=True)
     ff = lambda *a: subprocess.run([FF, "-hide_banner", "-loglevel", "error", "-y", *a], cwd=m, check=True)  # noqa: E731
@@ -387,6 +457,80 @@ def ucty(o: Okno, out: Path):
                and (out / "druhy.film.2024.mkv").read_bytes() == WS_SUBOR, polozka(s, f2))
     r = o.data("rozpoznat", f"{f1} https://youtu.be/dQw4w9WgXcQ")
     skontroluj("rozpoznanie: úložisko vs. videostránka", [x["ulozisko"] for x in r] == [True, False], r)
+
+    # Webshare: súbor chránený heslom – zastaví sa hneď na začiatku a čaká na heslo
+    uz = "https://webshare.cz/#/file/zamok1/film"
+    o.data("prihlasit", "webshare", "ja", WS_HESLO)
+    o.data("pridat", uz, "video")
+    s = o.cakaj(lambda s: polozka(s, uz)["stav"] in ("hotovo", "chyba"), 30)
+    skontroluj("Webshare: zamknutý súbor si vypýta heslo", polozka(s, uz)["treba_heslo"] == "subor"
+               and "heslom" in polozka(s, uz)["chyba"], polozka(s, uz))
+    o.data("zadat_heslo", polozka(s, uz)["id"], "zlé")
+    s = o.cakaj(lambda s: polozka(s, uz)["stav"] in ("hotovo", "chyba"), 30)
+    skontroluj("Webshare: zlé heslo – znova si ho vypýta", polozka(s, uz)["stav"] == "chyba"
+               and polozka(s, uz)["treba_heslo"] == "subor" and "nesedí" in polozka(s, uz)["chyba"], polozka(s, uz))
+    o.data("zadat_heslo", polozka(s, uz)["id"], "tajné heslo")
+    s = o.cakaj(lambda s: polozka(s, uz)["stav"] in ("hotovo", "chyba"), 30)
+    skontroluj("Webshare: so správnym heslom stiahnutý", polozka(s, uz)["stav"] == "hotovo"
+               and (out / "Zamknutý film.mkv").read_bytes() == WS_SUBOR, polozka(s, uz))
+
+    # Datoid
+    zle = o.volaj("prihlasit", "datoid", "ja@example.sk", "zlé")
+    skontroluj("Datoid: zlé heslo – jasná správa", not zle["ok"] and "e-mail a heslo" in zle["chyba"], zle)
+    d = o.data("prihlasit", "datoid", "ja@example.sk", "dt-heslo")
+    skontroluj("Datoid: prihlásenie a kredit", d["stav"] == "ok" and d["text"] == "kredit 2048", d)
+    d1, d2 = "https://datoid.cz/abc123/datoid-subor-mkv", "https://datoid.sk/xyz789/zamknuty-mkv"
+    o.data("pridat", d1, "video")
+    o.data("pridat", d2, "video", "dt-subor")
+    s = o.cakaj(lambda s: all(polozka(s, x)["stav"] in ("hotovo", "chyba") for x in (d1, d2)), 30)
+    skontroluj("Datoid: súbor s názvom zo služby", polozka(s, d1)["stav"] == "hotovo" and polozka(s, d1)["format"] == "subor"
+               and (out / "Datoid súbor.mkv").read_bytes() == WS_SUBOR, polozka(s, d1))
+    skontroluj("Datoid: heslo zadané vopred pri odkaze", polozka(s, d2)["stav"] == "hotovo"
+               and (out / "Datoid zamknutý.mkv").exists(), polozka(s, d2))
+
+
+def archivy(o: Okno, out: Path):
+    print("Rozbaľovanie archívov")
+    ua = BASE + "/archivy/Balik.zip"
+    o.data("pridat", ua, "video")
+    s = o.cakaj(lambda s: (polozka(s, ua) or {}).get("rozbalenie") and polozka(s, ua)["rozbalenie"]["stav"]
+                not in ("bezi", "caka"), 30)
+    r = polozka(s, ua)["rozbalenie"]
+    skontroluj("ZIP sa po stiahnutí sám rozbalí (jediný priečinok rovno vedľa archívu)", r["stav"] == "hotovo"
+               and r["ciel"] == "Kurz" and (out / "Kurz" / "02 Druhá.txt").read_text() == "druhá" * 1000
+               and (out / "Balik.zip").exists(), r)
+    skontroluj("archív nezapíše nič mimo priečinka", not (out.parent / "mimo.txt").exists()
+               and not (out / "mimo.txt").exists())
+    u1, u2 = BASE + "/archivy/Velky.zip.001", BASE + "/archivy/Velky.zip.002"
+    o.data("pridat", u1, "video")
+    s = o.cakaj(lambda s: polozka(s, u1)["stav"] == "hotovo" and (polozka(s, u1).get("rozbalenie") or {}).get("stav"), 30)
+    skontroluj("rozdelený archív čaká na ďalšie časti", polozka(s, u1)["rozbalenie"]["stav"] == "caka",
+               polozka(s, u1)["rozbalenie"])
+    o.data("pridat", u2, "video")
+    s = o.cakaj(lambda s: (polozka(s, u1).get("rozbalenie") or {}).get("stav") in ("hotovo", "chyba", "heslo"), 30)
+    skontroluj("po poslednej časti sa rozbalí celý (rozbaľuje prvá časť)", polozka(s, u1)["rozbalenie"]["stav"] == "hotovo"
+               and (out / "Film.mkv").read_bytes() == ARCHIVY["film-obsah"],
+               (polozka(s, u1)["rozbalenie"], polozka(s, u2).get("rozbalenie")))
+    skontroluj("druhá časť je označená ako časť archívu", (polozka(s, u2).get("rozbalenie") or {}).get("stav") == "cast",
+               polozka(s, u2).get("rozbalenie"))
+    ur = BASE + "/media/Archiv.rar"
+    o.data("pridat", ur, "video")
+    s = o.cakaj(lambda s: polozka(s, ur)["stav"] == "hotovo"
+                and (polozka(s, ur).get("rozbalenie") or {}).get("stav") in ("hotovo", "heslo", "chyba"), 30)
+    skontroluj("RAR s heslom: vypýta si heslo k archívu", polozka(s, ur)["rozbalenie"]["stav"] == "heslo",
+               polozka(s, ur)["rozbalenie"])
+    o.data("zadat_heslo", polozka(s, ur)["id"], "unrar")
+    s = o.cakaj(lambda s: polozka(s, ur)["rozbalenie"]["stav"] in ("hotovo", "chyba"), 30)
+    r = polozka(s, ur)["rozbalenie"]
+    skontroluj("RAR so správnym heslom rozbalený bez nového sťahovania", r["stav"] == "hotovo"
+               and (out / r["ciel"]).read_text() == "target\nCargo.lock\n", r)
+    o.data("ulozit_nastavenia", {"rozbalovat": False})
+    ub = BASE + "/archivy/Balik.zip?druhy"
+    o.data("pridat", ub, "video")
+    s = o.cakaj(lambda s: polozka(s, ub)["stav"] == "hotovo" and polozka(s, ub).get("rozbalenie"), 30)
+    skontroluj("rozbaľovanie vypnuté: dá sa spustiť ručne", polozka(s, ub)["rozbalenie"]["stav"] == "vypnute",
+               polozka(s, ub)["rozbalenie"])
+    o.data("ulozit_nastavenia", {"rozbalovat": True})
     o.data("odhlasit", "webshare")
     s = o.data("stav")
     skontroluj("odhlásenie", s["ucty"]["webshare"]["stav"] == "neprihlaseny" and s["ucty"]["fastshare"]["stav"] == "ok", s["ucty"])
@@ -458,6 +602,90 @@ def mazanie(o: Okno, out: Path):
     skontroluj("vyčistiť front: všetko preč aj počas sťahovania, rozpracované upratané",
                not s["polozky"] and not [x for x in out.iterdir() if x.name.startswith("velky.bin")]
                and (out / "cudzi.txt").exists(), s["polozky"])
+
+
+def strazca(out: Path):
+    print("Strážca schránky")
+    schr = D / "schranka.txt"
+    schr.write_text("https://youtu.be/uL9-e9OlLfw – bolo tu pred zapnutím", encoding="utf-8")
+    o = Okno(D / "cfg-strazca", KOMETA_SKUSKA_SCHRANKA=str(schr), KOMETA_OEMBED_ZAKLAD=BASE + "/oembed")
+    try:
+        skontroluj("strážca: aplikácia ho ponúka", o.data("init")["funkcie"]["strazca"] is True)
+        o.data("ulozit_nastavenia", {"strazca": True, "outdir": str(out)})
+        time.sleep(2.5)
+        skontroluj("to, čo bolo v schránke pred zapnutím, sa nezachytí", o.data("stav")["zachytene"] == [])
+        schr.write_text("pozri https://youtu.be/dQw4w9WgXcQ a https://www.sme.sk/clanok a "
+                        "https://webshare.cz/#/file/abc123/film", encoding="utf-8")
+        s = o.cakaj(lambda s: len(s["zachytene"]) == 2 and all(z["nazov"] for z in s["zachytene"] if z["zdroj"] == "YouTube"), 15)
+        z = {x["zdroj"]: x for x in s["zachytene"]}
+        skontroluj("zachytí YouTube (s názvom) a Webshare, článok nie", set(z) == {"YouTube", "Webshare"}
+                   and z["YouTube"]["nazov"] == "Pieseň o kométe" and z["Webshare"]["ulozisko"], s["zachytene"])
+        schr.write_text("iný text", encoding="utf-8")
+        time.sleep(1.5)
+        schr.write_text("pozri https://youtu.be/dQw4w9WgXcQ znova", encoding="utf-8")
+        time.sleep(2.5)
+        skontroluj("ten istý odkaz sa nezachytí dvakrát", len(o.data("stav")["zachytene"]) == 2)
+        o.data("schranka_zahodit", [z["Webshare"]["id"]])
+        r = o.data("schranka_stiahnut", None, "video")
+        s = o.data("stav")
+        skontroluj("stiahnuť zachytené: do frontu, zoznam prázdny", r["pridane"] == 1 and s["zachytene"] == []
+                   and polozka(s, "https://youtu.be/dQw4w9WgXcQ") is not None, (r, s["zachytene"]))
+        o.data("ulozit_nastavenia", {"strazca_rezim": "stiahnut"})
+        ua = BASE + "/media/a.mp4?zo-schranky"
+        schr.write_text(f"{ua}\nhttps://www.youtube.com/playlist?list=PL123", encoding="utf-8")
+        s = o.cakaj(lambda s: polozka(s, ua) is not None and s["zachytene"], 15)
+        skontroluj("„hneď stiahnuť“: video rovno do frontu, playlist čaká na výber",
+                   polozka(s, ua) is not None and [x["kolekcia"] for x in s["zachytene"]] == [True], s["zachytene"])
+    finally:
+        o.zatvor()
+    o2 = Okno(D / "cfg-strazca", KOMETA_SKUSKA_SCHRANKA=str(schr))
+    try:
+        skontroluj("zachytené odkazy ostanú aj po reštarte", len(o2.data("stav")["zachytene"]) == 1)
+    finally:
+        o2.zatvor()
+
+
+def kurzy(out: Path):
+    print("Kurzy po prihlásení")
+    pr = D / "prehliadac"
+    pr.mkdir()
+    (pr / "cookies.json").write_text(json.dumps([[BASE + "/kurz/obsah", "sid=tajne; Path=/; HttpOnly"]]))
+    (pr / "zber.json").write_text(json.dumps({
+        "url": BASE + "/kurz/obsah", "titulok": "Kurz | Portál", "h1": "Testovací kurz",
+        "odkazy": [{"href": BASE + "/prihlasenie", "text": "Prihlásiť", "kapitola": ""},
+                   {"href": BASE + "/kurz/lekcia-1", "text": "Úvod do kurzu", "kapitola": "Začíname"},
+                   {"href": BASE + "/kurz/lekcia-2", "text": "Pokračovanie", "kapitola": "Ďalej"}],
+        "ramce": [], "videa": []}))
+    o = Okno(D / "cfg-kurz", KOMETA_SKUSKA_PREHLIADAC=str(pr))
+    try:
+        o.data("ulozit_nastavenia", {"outdir": str(out)})
+        skontroluj("kurzy: aplikácia ich ponúka", o.data("init")["funkcie"]["kurzy"] is True)
+        o.data("kurz_otvorit", BASE.replace("http://", "") + "/kurz/obsah")
+        skontroluj("adresa bez https:// sa doplní a prehliadač je v stave",
+                   (o.data("stav")["prehliadac"] or {}).get("adresa") == BASE.replace("http://", "https://") + "/kurz/obsah",
+                   o.data("stav")["prehliadac"])
+        k = o.data("kurz_nacitat")
+        skontroluj("lekcie z otvorenej stránky podľa kapitol", k["nazov"] == "Testovací kurz"
+                   and [(x["nazov"], [l["nazov"] for l in x["lekcie"]]) for x in k["kapitoly"]]
+                   == [("Začíname", ["Úvod do kurzu"]), ("Ďalej", ["Pokračovanie"])], k)
+        k["kapitoly"][1]["lekcie"][0]["nazov"] = "Pokračovanie (premenované)"
+        r = o.data("kurz_stiahnut", k, "video")
+        skontroluj("kurz do sťahovania", r["pridane"] == 2, r)
+        s = o.cakaj(lambda s: all(x["stav"] in ("hotovo", "chyba") for x in s["polozky"]) and s["polozky"], 40)
+        d = out / "Testovací kurz"
+        skontroluj("lekcie stiahnuté s prihlásením do priečinkov kapitol",
+                   (d / "01 Začíname" / "01 Úvod do kurzu.mp4").read_bytes() == (D / "web/media/a.mp4").read_bytes()
+                   and (d / "02 Ďalej" / "01 Pokračovanie (premenované).mp4").exists(),
+                   [(x["nazov"], x["stav"], x["chyba"]) for x in s["polozky"]])
+        skontroluj("prihlásenie neodišlo na cudziu doménu (vložené video)", not UNIKY, UNIKY)
+    finally:
+        o.zatvor()
+    o2 = Okno(D / "cfg-kurz2")
+    try:
+        skontroluj("bez aplikácie (okno v prehliadači) kurzy nie sú", o2.data("init")["funkcie"]["kurzy"] is False
+                   and not o2.volaj("kurz_otvorit", "https://example.com")["ok"])
+    finally:
+        o2.zatvor()
 
 
 def doinstalovanie():
@@ -747,6 +975,7 @@ def main() -> int:
         zakladne(o, out)
         front(o, out)
         ucty(o, out)
+        archivy(o, out)
         rozhranie(o, out)
         mazanie(o, out)
     finally:
@@ -754,6 +983,8 @@ def main() -> int:
     try:
         ytdlp_bez_ffmpeg(out)
         ytdlp_plny(out)
+        strazca(out)
+        kurzy(out)
         if sys.platform.startswith("linux"):
             doinstalovanie()
             priecinky()

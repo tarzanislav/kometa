@@ -31,7 +31,7 @@ from . import __version__, common, hosts, media, skener
 from .common import (Cancelled, apply_settings, check_dependencies, clean_error, delete_password, get_password,
                      load_config, open_folder, safe_name, save_config, set_password)
 from .fronta import DownloadQueue
-from .hosts import Accounts, FastshareClient, WebshareClient
+from .hosts import Accounts, DatoidClient, FastshareClient, WebshareClient
 from .jazyky import AUDIO_MODES, fetch_info, list_audio_tracks, pick_tracks, run_job
 
 WEBUI = Path(__file__).with_name("webui")
@@ -56,6 +56,8 @@ _SETTINGS = {
     "mode": lambda v: v if v in ("video", "existing", "audio") else "video",
     "kontajner": lambda v: v if v in ("mkv", "mp4") else "mkv",
     "max_height": lambda v: v if v in ("Najlepšia", "2160p", "1440p", "1080p", "720p", "480p") else "Najlepšia",
+    "rozbalovat": bool,
+    "po_rozbaleni": lambda v: v if v in ("nechat", "kos") else "nechat",
 }
 
 
@@ -105,7 +107,7 @@ class Jadro:
         self._lang = {"busy": False, "frac": 0.0, "text": "", "log": [], "file": "", "error": "", "rev": 0}
         self._lang_cancel = threading.Event()
         self._accounts = {s: {"stav": "neprihlaseny", "text": "", "user": self.cfg.get(f"{s}_user") or ""}
-                          for s in ("webshare", "fastshare")}
+                          for s in ("webshare", "fastshare", "datoid")}
         self.last_call = time.time()
         threading.Thread(target=self._check_accounts, daemon=True).start()
 
@@ -155,7 +157,10 @@ class Jadro:
                 "podrobnosti": detail, "nahlad": it.get("thumb") or yt_thumb(it["url"]),
                 "dlzka": it.get("duration"), "autor": it.get("uploader") or "", "pridane": it.get("added"),
                 "podiel": it.get("frac"), "krok": it.get("step") or "",
-                "jazyky": popis_jazykov(it["jazyky"]) if it.get("jazyky") else None}
+                "jazyky": popis_jazykov(it["jazyky"]) if it.get("jazyky") else None,
+                "treba_heslo": it.get("need_password") or "",
+                "rozbalenie": dict(it["extract"], ciel=Path(it["extract"].get("ciel") or "").name)
+                if it.get("extract") else None}
 
     # ------------------------------------------------------------------ pridávanie
     def _outdir(self) -> str:
@@ -173,18 +178,26 @@ class Jadro:
                 "kvalita": c.get("max_height") or "Najlepšia", "rezim": "video", "bez_jazykov": "povodny"}
 
     def _pridaj(self, urls: list[str], preset: str, out: str, titles: list[str] | None = None,
-                jazyky: dict | None = None) -> list[str]:
+                jazyky: dict | None = None, password: str = "") -> list[str]:
         """„Video s jazykmi“ len pri YouTube – ostatné stránky sa stiahnu ako video."""
+        password = (password or "").strip()
         if preset != "jazyky":
-            return self.dq.add(urls, preset, out, titles=titles)
+            return self.dq.add(urls, preset, out, titles=titles, password=password)
         titles = titles or [""] * len(urls)
         yt = [i for i, u in enumerate(urls) if media.source_name(u) == "YouTube"]
         ine = [i for i in range(len(urls)) if i not in yt]
         new = self.dq.add([urls[i] for i in yt], "jazyky", out, titles=[titles[i] for i in yt],
                           jazyky=jazyky or self._jazyky_z_nastaveni()) if yt else []
-        return new + (self.dq.add([urls[i] for i in ine], "video", out, titles=[titles[i] for i in ine]) if ine else [])
+        return new + (self.dq.add([urls[i] for i in ine], "video", out, titles=[titles[i] for i in ine],
+                                  password=password) if ine else [])
 
-    def pridat(self, text: str, preset: str = "") -> dict:
+    def zadat_heslo(self, iid: str, heslo: str) -> None:
+        self.dq.set_password(iid, heslo or "")
+
+    def rozbalit(self, iid: str) -> None:
+        self.dq.try_extract(iid, manual=True)
+
+    def pridat(self, text: str, preset: str = "", heslo: str = "") -> dict:
         urls = list(dict.fromkeys(u.rstrip(").,;]") for u in URL_RE.findall(text or "")))
         if not urls:
             raise ValueError("Vlož aspoň jeden odkaz – začína na http:// alebo https://.")
@@ -192,7 +205,7 @@ class Jadro:
         self._save(dl_preset=preset)
         collections = [u for u in urls if media.is_collection(u)]
         single = [u for u in urls if u not in collections]
-        new = self._pridaj(single, preset, self._outdir()) if single else []
+        new = self._pridaj(single, preset, self._outdir(), password=heslo) if single else []
         return {"pridane": len(new), "uz_vo_fronte": len(single) - len(new), "kolekcie": collections}
 
     def rozpoznat(self, text: str) -> list[dict]:
@@ -447,13 +460,13 @@ class Jadro:
         return info.get("text") or ""
 
     def _check_accounts(self) -> None:
-        for s in ("webshare", "fastshare"):
+        for s in ("webshare", "fastshare", "datoid"):
             user = self.cfg.get(f"{s}_user")
             if not user or not get_password(s, user):
                 continue
             self._accounts[s].update(stav="overujem", text="Overujem účet…", user=user)
             try:
-                client = self.accounts.webshare() if s == "webshare" else self.accounts.fastshare()
+                client = getattr(self.accounts, s)()
                 info = client.user_info()
                 self._accounts[s].update(stav="ok" if info.get("vip") else "bez_vip", text=self._account_text(info))
             except Exception as e:  # noqa: BLE001
@@ -475,8 +488,12 @@ class Jadro:
                 token = client.login(meno, heslo)
                 info = client.user_info()
                 self.cfg["webshare_token"] = token
-            else:
+            elif sluzba == "fastshare":
                 client = FastshareClient()
+                client.login(meno, heslo)
+                info = client.user_info()
+            else:
+                client = DatoidClient()
                 client.login(meno, heslo)
                 info = client.user_info()
         except Exception as e:  # noqa: BLE001
@@ -526,7 +543,8 @@ class Jadro:
 
 API_METHODS = ["init", "stav", "pridat", "rozpoznat", "kolekcia", "pridat_vybrane", "skenovat", "pridat_zo_skenu",
                "pozastavit", "spustit", "odstranit", "vycistit_hotove", "pozastavit_vsetko", "spustit_vsetko",
-               "vycistit_front", "subory_na_zmazanie", "zmazat_subory", "otvorit", "otvorit_subor", "schranka",
+               "vycistit_front", "subory_na_zmazanie", "zmazat_subory", "zadat_heslo", "rozbalit", "otvorit",
+               "otvorit_subor", "schranka",
                "jazyky_nacitat", "jazyky_stiahnut", "jazyky_zrusit",
                "vybrat_priecinok", "vybrat_video", "prihlasit", "odhlasit", "ulozit_nastavenia"]
 

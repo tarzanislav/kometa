@@ -3,7 +3,7 @@
 <h1 align="center">Kometa</h1>
 
 <p align="center">Sťahovanie videí a súborov z akejkoľvek stránky – s pokračovaním prerušeného sťahovania<br>
-YouTube · Vimeo (aj vložené) · Facebook · Instagram · TikTok (bez vodoznaku) · Webshare · Fastshare · kurzy a články</p>
+YouTube · Vimeo (aj vložené) · Facebook · Instagram · TikTok (bez vodoznaku) · Webshare · Fastshare · Datoid · kurzy a články</p>
 
 ![Sťahovanie](docs/stahovanie.png)
 
@@ -15,7 +15,10 @@ YouTube · Vimeo (aj vložené) · Facebook · Instagram · TikTok (bez vodoznak
 - **Viac spojení naraz.** Veľké súbory sa delia na úseky; voľné spojenie prevezme polovicu najväčšieho zvyšku a pri odmietnutí serverom (429/503) sa počet spojení sám zníži. Streamy HLS/DASH sa sťahujú po viacerých kúskoch súčasne.
 - **Playlisty a kanály.** Celý playlist alebo kanál YouTube (Videá, Shorts, Naživo) so zoznamom na výber: všetky, najnovších N alebo podľa filtra názvu. Ukladá sa do priečinka s názvom playlistu.
 - **TikTok bez vodoznaku.** Verzie s vodoznakom sa vynechávajú.
-- **Webshare.cz a Fastshare.cz** cez tvoj vlastný účet (Webshare cez oficiálne API).
+- **Webshare.cz, Fastshare.cz a Datoid.cz** cez tvoj vlastný účet (Webshare a Datoid cez ich rozhranie pre programy). Súbory chránené heslom: heslo zadáš pri odkaze alebo pri položke.
+- **Archívy sa po stiahnutí samy rozbalia** – ZIP, 7z a RAR, aj zaheslované a rozdelené na časti (`.part1.rar`, `.7z.001`…). Rozdelený archív sa rozbalí, keď sú stiahnuté všetky časti.
+- **Strážca schránky** (aplikácia): skopíruješ odkaz (`Ctrl+C`) a Kometa ho zachytí – len odloží, alebo hneď stiahne.
+- **Kurzy po prihlásení** (aplikácia): vlastné okno prehliadača, v ktorom sa prihlásiš; Kometa načíta lekcie kurzu a stiahne ich do priečinkov podľa kapitol. Video chránené DRM nestiahne.
 - **Pokračovanie prerušeného sťahovania.** Pri pauze, výpadku siete aj po zatvorení programu sa pokračuje od miesta, kde sa skončilo. Keď odkaz z úložiska vyprší, Kometa si vypýta nový.
 - **Front sťahovania**: viac súborov naraz, pauza a pokračovanie, front ostane uložený aj po reštarte.
 - **Jazykové stopy z YouTube**: z videí s preloženým zvukom stiahne vybrané jazyky a spojí ich s videom do jedného `.mkv` alebo `.mp4`. Predvolené poradie je CZ, SK, EN, PL, HU, RU (zmeníš ho ťahaním) a pôvodná stopa ide na koniec. Pri každom jazyku zvolíš AAC, Opus alebo oboje; stopy idú po jazykoch – CZ (AAC), CZ (Opus), SK (AAC)… Jazyky zvolíš aj pre celý playlist či kanál naraz.
@@ -42,7 +45,9 @@ Kometa je v dvoch vydaniach s tým istým rozhraním:
 | inštalácia | jeden inštalátor, bez Pythonu | `Instalacia.bat` (Python, FFmpeg, knižnice) |
 | systémy | Windows, macOS, Linux | Windows (inde ručne) |
 | stránky, Vimeo, streamy, súbory | áno, vlastným jadrom | áno |
-| Webshare, Fastshare | áno | áno |
+| Webshare, Fastshare, Datoid | áno | áno |
+| rozbaľovanie archívov | ZIP, 7z, RAR – samo | ZIP samo, 7z a RAR cez 7-Zip |
+| strážca schránky, kurzy po prihlásení | áno | nie |
 | YouTube a ďalšie služby | áno, cez yt-dlp (doinštaluje sa jedným klikom) | áno |
 | jazykové stopy YouTube | áno, aj bez FFmpeg | áno |
 
@@ -112,8 +117,25 @@ Prevod do AAC potrebuje FFmpeg (Kometa pre Python ho má vždy; aplikácia bez n
 
 Formát **Video s jazykmi** je aj v bežnom zozname formátov – vtedy sa pre každý vložený odkaz z YouTube použijú jazyky a voľby z karty *Jazykové stopy*. Odkazy z iných stránok sa stiahnu ako obyčajné video.
 
+### Heslá a archívy
+- **Súbor chránený heslom** (Webshare, Datoid): heslo zadaj vopred tlačidlom **Heslo** pod poľom na odkazy, alebo neskôr – položka sa hneď na začiatku zastaví a pri nej je políčko na heslo.
+- **Archív po stiahnutí:** ZIP, 7z a RAR sa samy rozbalia vedľa archívu. Jediný súbor alebo priečinok z archívu sa dá rovno vedľa neho, viac súborov do priečinka s menom archívu. Zaheslovaný archív si vypýta heslo pri položke (nič sa nesťahuje znova); heslo zadané vopred sa použije aj pre archív. Nič z archívu sa nezapíše mimo cieľového priečinka.
+- **Rozdelené archívy** (`.part1.rar`, `.r00`, `.7z.001`, `.zip.001`): rozbaľuje sa, keď sú stiahnuté všetky časti; dovtedy položka čaká.
+- V *Nastaveniach → Archívy* vypneš automatické rozbaľovanie (archív potom rozbalíš tlačidlom pri položke) a zvolíš, či archív po rozbalení ostane, alebo pôjde do Koša.
+
+### Zo schránky (aplikácia)
+Zapni **Sledovať schránku**. Keď potom skopíruješ odkaz na YouTube, Webshare, Fastshare, Datoid, Vimeo, TikTok a pod. alebo priamy odkaz na video či archív, objaví sa v karte *Zo schránky* (pri YouTube s názvom a náhľadom). Odtiaľ ho stiahneš alebo zahodíš. Pri voľbe **Hneď stiahnuť** ide odkaz rovno do sťahovania zvoleným formátom; playlisty a kanály vždy počkajú na výber videí. Text, ktorý bol v schránke pred zapnutím, sa nezachytí, a ten istý odkaz sa nezachytí dvakrát.
+
+### Kurzy (aplikácia)
+Pre kurzy, na ktoré si prihlásený:
+1. V karte *Kurzy* zadaj adresu portálu a klikni na **Otvoriť prehliadač**. Otvorí sa okno Komety s bežným prehliadačom – prihlás sa a prejdi na stránku kurzu so zoznamom lekcií.
+2. Klikni na **Načítať lekcie z tejto stránky**. Kometa ukáže lekcie zoskupené podľa kapitol tak, ako sú na stránke; lekcie kurzu sú predvybrané, odkazy z menu a päty nie.
+3. Uprav názov priečinka alebo lekcií, vyber formát a klikni na **Stiahnuť**. Lekcie sa uložia ako `Kurz/01 Kapitola/01 Lekcia.mp4`.
+
+Prihlásenie (cookies) sa vezme z okna prehliadača, drží sa len v pamäti a pošle sa iba stránke kurzu – nie vloženým prehrávačom iných služieb. Okno prehliadača nemá žiadny prístup k jadru Komety. Video chránené DRM Kometa nestiahne a pri lekcii to napíše.
+
 ### Účty
-- **Webshare / Fastshare:** zadaj meno a heslo a klikni na **Prihlásiť**. Heslo sa uloží do systémovej kľúčenky (vo Windows *Správca poverení*), nikam inam sa neposiela. Na rýchle sťahovanie treba **VIP (Webshare)** alebo **kredit (Fastshare)**. Kometa neobchádza obmedzenia bezplatných účtov.
+- **Webshare / Fastshare / Datoid:** zadaj meno (pri Datoide e-mail) a heslo a klikni na **Prihlásiť**. Heslo sa uloží do systémovej kľúčenky (vo Windows *Správca poverení*), nikam inam sa neposiela. Na rýchle sťahovanie treba **VIP (Webshare)** alebo **kredit (Fastshare, Datoid)**. Kometa neobchádza obmedzenia bezplatných účtov.
 - **Stránky po prihlásení** (Instagram, Facebook, platené kurzy, súkromné Vimeo): prihlás sa v prehliadači a tu ho vyber – Kometa použije jeho prihlásenie (cookies) pri sťahovaní aj pri prehľadávaní stránok. Najspoľahlivejší je **Firefox**; Chrome a Edge treba pri sťahovaní zavrieť.
 
 ### Nastavenia

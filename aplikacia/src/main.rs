@@ -10,9 +10,14 @@ use kometa_jadro::sluzba::Sluzba;
 use serde_json::Value;
 use std::path::Path;
 use std::sync::Arc;
-use tauri::{Manager, RunEvent};
+use std::time::Duration;
+use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_notification::NotificationExt;
+
+/// Okno prehliadača kurzov – bežná stránka bez prístupu k jadru (žiadne povolenia v capabilities).
+const PREHLIADAC: &str = "kurz";
 
 /// Natívne dialógy a schránka okna aplikácie.
 struct Okno {
@@ -64,6 +69,87 @@ impl Prostredie for Okno {
     fn otvor(&self, priecinok: &Path, oznac: Option<&Path>) {
         Systemove.otvor(priecinok, oznac);
     }
+
+    fn sleduje_schranku(&self) -> bool {
+        true
+    }
+
+    fn oznam(&self, nadpis: &str, text: &str) {
+        // keď je Kometa vpredu, stačí jej vlastný zoznam – oznámenie len v pozadí
+        let vpredu = self
+            .app
+            .get_webview_window("main")
+            .and_then(|w| w.is_focused().ok())
+            .unwrap_or(false);
+        if !vpredu {
+            let _ = self
+                .app
+                .notification()
+                .builder()
+                .title(nadpis)
+                .body(text)
+                .show();
+        }
+    }
+
+    fn ma_prehliadac(&self) -> bool {
+        true
+    }
+
+    fn prehliadac_otvor(&self, url: &str) -> Result<(), String> {
+        let u: tauri::Url = url.parse().map_err(|_| "Neplatná adresa.".to_string())?;
+        if let Some(w) = self.app.get_webview_window(PREHLIADAC) {
+            w.navigate(u).map_err(|e| e.to_string())?;
+            let _ = w.unminimize();
+            let _ = w.set_focus();
+            return Ok(());
+        }
+        WebviewWindowBuilder::new(&self.app, PREHLIADAC, WebviewUrl::External(u))
+            .title("Kometa – prehliadač kurzov")
+            .inner_size(1200.0, 860.0)
+            .min_inner_size(640.0, 480.0)
+            // len bežné webové adresy (žiadne súbory ani vlastné schémy)
+            .on_navigation(|u| matches!(u.scheme(), "http" | "https" | "about" | "blob" | "data"))
+            .build()
+            .map(|_| ())
+            .map_err(|e| format!("Prehliadač sa nepodarilo otvoriť: {e}"))
+    }
+
+    fn prehliadac_stranka(&self) -> Option<(String, String)> {
+        let w = self.app.get_webview_window(PREHLIADAC)?;
+        Some((
+            w.url().map(|u| u.to_string()).unwrap_or_default(),
+            w.title().unwrap_or_default(),
+        ))
+    }
+
+    fn prehliadac_skript(&self, js: &str) -> Result<String, String> {
+        let w = self
+            .app
+            .get_webview_window(PREHLIADAC)
+            .ok_or("Prehliadač kurzov nie je otvorený – otvor ho a prejdi na stránku kurzu.")?;
+        let (tx, rx) = std::sync::mpsc::channel();
+        w.eval_with_callback(js, move |vysledok| {
+            let _ = tx.send(vysledok);
+        })
+        .map_err(|e| e.to_string())?;
+        rx.recv_timeout(Duration::from_secs(15))
+            .map_err(|_| "Stránka neodpovedá – počkaj, kým sa načíta, a skús znova.".to_string())
+    }
+
+    fn prehliadac_cookies(&self, url: &str) -> Vec<(String, String)> {
+        let (Some(w), Ok(u)) = (
+            self.app.get_webview_window(PREHLIADAC),
+            url.parse::<tauri::Url>(),
+        ) else {
+            return vec![];
+        };
+        w.cookies_for_url(u)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|c| (url.to_string(), c.to_string()))
+            .collect()
+    }
 }
 
 /// Jediný príkaz okna: zavolá metódu služby a vráti `{"ok": …}`.
@@ -98,6 +184,17 @@ fn main() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_notification::init())
+        .on_window_event(|w, udalost| {
+            // zatvorením hlavného okna sa zatvorí aj prehliadač kurzov (a aplikácia skončí)
+            if w.label() == "main" {
+                if let tauri::WindowEvent::Destroyed = udalost {
+                    if let Some(k) = w.app_handle().get_webview_window(PREHLIADAC) {
+                        let _ = k.close();
+                    }
+                }
+            }
+        })
         .setup(move |app| {
             let okno = Okno {
                 app: app.handle().clone(),
