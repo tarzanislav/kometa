@@ -360,10 +360,10 @@ mod testy {
         let p = polozky(&k, "/tmp/out", "video");
         assert_eq!(p.len(), 4);
         assert_eq!(p[0].nazov, "01 Úvod do kurzu");
-        assert!(p[0]
-            .priecinok
-            .ends_with("AI grafika, dizajn a multimédiá/01 Začíname"));
-        assert!(p[2].priecinok.ends_with("02 Generovanie") && p[2].nazov == "01 Prvý obrázok");
+        let cesta = |x: &Nova| std::path::PathBuf::from(&x.priecinok);
+        let kurz = std::path::Path::new("AI grafika, dizajn a multimédiá");
+        assert!(cesta(&p[0]).ends_with(kurz.join("01 Začíname")));
+        assert!(cesta(&p[2]).ends_with("02 Generovanie") && p[2].nazov == "01 Prvý obrázok");
         assert!(p.iter().all(|x| x.prihlasenie && x.referer == z.url));
     }
 
