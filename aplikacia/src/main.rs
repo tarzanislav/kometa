@@ -25,6 +25,11 @@ struct Okno {
 }
 
 impl Prostredie for Okno {
+    fn ukonci(&self) {
+        // zavrie okná; pri udalosti Exit sa uloží front (pokračuje sa po spustení)
+        self.app.exit(0);
+    }
+
     fn vyber_priecinok(&self, zaciatok: &str) -> String {
         let mut d = self
             .app

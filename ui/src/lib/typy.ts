@@ -84,7 +84,23 @@ export interface Kurz {
   kapitoly: Kapitola[]
 }
 
+export interface StavAktualizacie {
+  verzia: string
+  balik: 'instalator' | 'appimage' | 'deb' | 'dmg' | 'program' | 'zip' | 'rucne'
+  najnovsia?: string | null
+  stranka?: string | null
+  stahuje: boolean
+  pripravena: boolean
+  pri_starte: boolean
+  instaluje: boolean
+  nainstalovana: boolean
+  kontrola?: string | null
+  chyba?: string | null
+}
+
 export interface Stav {
+  /** nová verzia Komety */
+  aktualizacia?: StavAktualizacie
   /** strážca schránky: zachytené odkazy (len aplikácia) */
   zachytene?: Zachyteny[]
   /** okno prehliadača kurzov (null = zatvorené) */
@@ -111,6 +127,10 @@ export interface Nastavenia {
   keep_separate: boolean
   titulky?: 'vypnute' | 'jazyky'
   titulky_auto?: boolean
+  vlozit_udaje?: boolean
+  vlozit_kapitoly?: boolean
+  vlozit_obal?: boolean
+  aktualizacie?: boolean
   mode: 'video' | 'existing' | 'audio'
   kontajner: 'mkv' | 'mp4'
   max_height: string

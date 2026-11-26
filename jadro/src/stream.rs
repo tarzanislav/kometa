@@ -317,6 +317,7 @@ pub async fn stiahni(
             druh: s.druh.clone(),
             jazyk: s.jazyk.clone(),
             nazov: s.nazov.clone(),
+            povodny: None,
         });
     }
     udalosti::info(hlasic, "Spájam stopy…");

@@ -420,7 +420,7 @@ pub async fn zisti(v: &Arc<Vnutro>, urls: Vec<String>) -> Vysledok<Value> {
         )
     })?;
     let sp = spolocne(v);
-    let sem = Arc::new(tokio::sync::Semaphore::new(4));
+    let sem = Arc::new(tokio::sync::Semaphore::new(2));
     let mut ulohy = tokio::task::JoinSet::new();
     let urls: Vec<String> = urls
         .into_iter()
@@ -1410,6 +1410,7 @@ async fn prace(
                     druh: "video".into(),
                     jazyk: None,
                     nazov: None,
+                    povodny: None,
                 });
                 let kmen = e
                     .file_stem()
@@ -1426,6 +1427,7 @@ async fn prace(
                     druh: "video".into(),
                     jazyk: None,
                     nazov: None,
+                    povodny: None,
                 });
                 u.priecinok.join(format!(
                     "{} [{znacka}].{pripona}",
@@ -1454,6 +1456,7 @@ async fn prace(
                         t.nazov,
                         if t.original { " – originál" } else { "" }
                     )),
+                    povodny: u.original.is_some().then_some(t.original),
                 });
             }
         }
@@ -1489,9 +1492,11 @@ async fn prace(
                         .map(|o| format!("{} – originál", o.nazov))
                         .unwrap_or_else(|| "Pôvodný zvuk".into())
                 }),
+                povodny: u.original.is_some().then_some(true),
             });
         }
-        if !u.mp4 {
+        {
+            // titulky ako samostatné stopy – v MKV aj v MP4 (tx3g), predvolene vypnuté
             for (t, cesta, auto) in &titulky {
                 vstupy.push(Vstup {
                     cesta: cesta.clone(),
@@ -1502,11 +1507,30 @@ async fn prace(
                         t.nazov,
                         if *auto { " (automatické)" } else { "" }
                     )),
+                    povodny: u.original.is_some().then_some(t.original),
                 });
             }
         }
+        let volby = super::doplnky::Volby::z_nastaveni(&v.nastavenia.lock().unwrap());
+        let mut doplnky = super::doplnky::z_info(&u.info, volby).await;
+        if doplnky.titul.is_empty() {
+            doplnky.titul = titul.clone();
+        }
+        let mut vlozene = vec![];
+        if doplnky.ma_udaje() {
+            vlozene.push("údaje o videu".to_string());
+        }
+        if !doplnky.kapitoly.is_empty() {
+            vlozene.push(format!("kapitoly ({})", doplnky.kapitoly.len()));
+        }
+        if doplnky.obal.is_some() {
+            vlozene.push("obrázok".into());
+        }
+        if !vlozene.is_empty() {
+            r.zapis(format!("🏷 Do súboru: {}", vlozene.join(", ")));
+        }
         let ciel = rezervuj(ciel);
-        let out = match spajanie::spoj(&vstupy, &ciel, &titul).await {
+        let out = match spajanie::spoj_s(&vstupy, &ciel, &doplnky).await {
             Ok(o) => o,
             Err(e) => {
                 if std::fs::metadata(&ciel).is_ok_and(|m| m.len() == 0) {
@@ -1515,8 +1539,8 @@ async fn prace(
                 return Err(e);
             }
         };
-        // MP4 (alebo „aj samostatne“): titulky vedľa súboru – prehrávače ich načítajú samy
-        if u.mp4 || u.samostatne {
+        // „aj samostatne“: titulky aj vedľa súboru ako .srt
+        if u.samostatne {
             let kmen = out
                 .file_stem()
                 .map(|s| s.to_string_lossy().into_owned())
@@ -1550,8 +1574,9 @@ async fn prace(
                     druh: "zvuk".into(),
                     jazyk: Some(t.kod.clone()).filter(|k| !k.is_empty()),
                     nazov: Some(t.nazov.clone()),
+                    povodny: u.original.is_some().then_some(t.original),
                 };
-                if let Ok(x) = spajanie::spoj(std::slice::from_ref(&vstup), &c, &titul).await {
+                if let Ok(x) = spajanie::spoj_s(std::slice::from_ref(&vstup), &c, &doplnky).await {
                     r.zapis(format!(
                         "   ↳ {}",
                         x.file_name().unwrap_or_default().to_string_lossy()

@@ -3,11 +3,15 @@
 //! Hlavička `moov` sa načíta celá (je malá), vzorky sa čítajú prúdovo – zo súboru sa naraz
 //! drží v pamäti len jeden fragment, nikdy celé video. Šifrované stopy (`encv`, `enca`,
 //! `pssh`) vrátia [`Chyba::Drm`] – Kometa šifrovaný obsah nesťahuje ani nerozbaľuje.
+//!
+//! Textové stopy (3GPP Timed Text `tx3g`, QuickTime `text`) sa čítajú ako titulky: vzorka bez textu
+//! (vyplnená medzera) sa preskočí. Kapitolová stopa (cieľ odkazu `tref/chap`) sa ako titulky nečíta.
+//! [`prehlad`] vráti, čo o súbore ukážu prehrávače: stopy, kapitoly, údaje o videu a obrázok.
 
 use super::bity::{be16, be32, be64};
 use super::{aac, na_ns, Citac, InfoStopy, Kodek, Vzorka};
 use crate::chyba::{Chyba, Vysledok};
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
@@ -91,10 +95,14 @@ struct Stopa {
     trex: Trex,
     /// progresívne MP4: zoznam vzoriek (offset, veľkosť, dts, cto, kľúčová)
     vzorky: Vec<ZaznamVzorky>,
+    /// koniec poslednej vzorky podľa stts (v mierke stopy) – jej trvanie
+    koniec: i64,
     dalsia: usize,
     /// fragmentované: dts nasledujúcej vzorky (ak fragment nemá tfdt)
     dalsi_dts: i64,
     zvuk: bool,
+    /// textová stopa (titulky)
+    text: bool,
 }
 
 struct Polozka {
@@ -188,6 +196,18 @@ fn info_stopy(stsd: &[u8], tkhd: &[u8]) -> Vysledok<Option<InfoStopy>> {
     let typ = &z.typ;
     if typ == b"encv" || typ == b"enca" {
         return Err(Chyba::Drm("MP4 CENC".into()));
+    }
+    if typ == b"tx3g" || typ == b"text" {
+        return Ok(Some(InfoStopy {
+            kodek: Kodek::Srt,
+            konfig: vec![],
+            sirka: 0,
+            vyska: 0,
+            frekvencia: 0,
+            kanaly: 0,
+            jazyk: None,
+            nazov: None,
+        }));
     }
     let telo = &stsd[z.obsah as usize..z.koniec as usize];
     let video = matches!(
@@ -306,6 +326,215 @@ fn info_stopy(stsd: &[u8], tkhd: &[u8]) -> Vysledok<Option<InfoStopy>> {
     }))
 }
 
+/// ID stopy z tkhd.
+fn id_stopy(tkhd: &[u8]) -> u32 {
+    match tkhd.first() {
+        Some(1) if tkhd.len() >= 24 => be32(&tkhd[20..]),
+        Some(_) if tkhd.len() >= 16 => be32(&tkhd[12..]),
+        _ => 0,
+    }
+}
+
+/// Stopy, na ktoré táto stopa odkazuje ako na kapitoly (tref/chap).
+fn odkazy_chap(trak: &[u8]) -> Vec<u32> {
+    vnorene(trak, &[b"tref", b"chap"])
+        .map(|c| c.chunks_exact(4).map(be32).collect())
+        .unwrap_or_default()
+}
+
+/// Názov stopy z udta/name: holý text (ISO), alebo s 16-bitovou dĺžkou a jazykom (QuickTime).
+fn nazov_stopy(d: &[u8]) -> Option<String> {
+    let d = if d.len() >= 4 && be16(d) as usize == d.len() - 4 {
+        &d[4..]
+    } else {
+        d
+    };
+    let t = String::from_utf8_lossy(d)
+        .trim_matches(char::from(0))
+        .trim()
+        .to_string();
+    (!t.is_empty()).then_some(t)
+}
+
+/// Vzorka tx3g/text → text titulku (UTF-8 alebo UTF-16 so značkou poradia); None = bez textu.
+fn text_vzorky(d: &[u8]) -> Option<String> {
+    let n = be16(d.get(..2)?) as usize;
+    let t = &d[2..(2 + n).min(d.len())];
+    let text = if t.starts_with(&[0xFE, 0xFF]) {
+        let u: Vec<u16> = t[2..]
+            .chunks_exact(2)
+            .map(|c| u16::from_be_bytes([c[0], c[1]]))
+            .collect();
+        String::from_utf16_lossy(&u)
+    } else {
+        String::from_utf8_lossy(t).into_owned()
+    };
+    let text = text.trim_matches(char::from(0)).trim_end().to_string();
+    (!text.trim().is_empty()).then_some(text)
+}
+
+/// Stopa, ako ju uvidí prehrávač.
+#[derive(Clone, Debug, Default)]
+pub struct PrehladStopy {
+    pub id: u32,
+    /// vide, soun, sbtl, text…
+    pub handler: String,
+    /// opis vzorky: avc1, mp4a, tx3g…
+    pub kodek: String,
+    pub jazyk: Option<String>,
+    /// udta/name, inak názov v hdlr
+    pub nazov: Option<String>,
+    pub zapnuta: bool,
+    pub skupina: u16,
+    /// roly MPEG-DASH z boxov kind
+    pub roly: Vec<String>,
+    /// ID kapitolovej stopy, na ktorú odkazuje
+    pub kapitoly: Option<u32>,
+}
+
+/// Prehľad hlavičky MP4: stopy, kapitoly (chpl), údaje o videu (ilst) a obrázok.
+#[derive(Clone, Debug, Default)]
+pub struct Prehlad {
+    pub stopy: Vec<PrehladStopy>,
+    /// (začiatok v ms, názov)
+    pub kapitoly: Vec<(i64, String)>,
+    /// je tu kapitolová textová stopa, na ktorú niektorá stopa odkazuje
+    pub kapitolova_stopa: bool,
+    /// textové položky ilst podľa kľúča (©nam, ©ART, desc…)
+    pub udaje: BTreeMap<String, String>,
+    /// obrázok: (typ údajov 13 = JPEG / 14 = PNG, veľkosť)
+    pub obal: Option<(u32, usize)>,
+}
+
+fn fourcc(t: &[u8]) -> String {
+    t.iter().map(|&b| b as char).collect()
+}
+
+/// Prečíta hlavičku MP4 a vráti, čo z nej ukážu prehrávače.
+pub fn prehlad(cesta: &Path) -> Vysledok<Prehlad> {
+    let mut f = File::open(cesta)?;
+    let dlzka = f.metadata()?.len();
+    let mut poz = 0u64;
+    let mut moov = None;
+    while poz + 8 <= dlzka {
+        let (typ, obsah, koniec) = CitacMp4::hlavicka_boxu(&mut f, poz, dlzka)?;
+        if &typ == b"moov" {
+            let mut b = vec![0u8; (koniec - obsah) as usize];
+            f.seek(SeekFrom::Start(obsah))?;
+            f.read_exact(&mut b)?;
+            moov = Some(b);
+            break;
+        }
+        poz = koniec;
+    }
+    let moov = moov.ok_or_else(|| Chyba::Format("MP4 bez hlavičky moov".into()))?;
+    let mut p = Prehlad::default();
+    for trak in deti(&moov, 0, moov.len())
+        .into_iter()
+        .filter(|b| &b.typ == b"trak")
+    {
+        let t = &moov[trak.obsah as usize..trak.koniec as usize];
+        let tkhd = najdi(t, 0, t.len(), b"tkhd").unwrap_or(&[]);
+        let mut s = PrehladStopy {
+            id: id_stopy(tkhd),
+            zapnuta: tkhd.len() >= 4 && be32(tkhd) & 1 == 1,
+            kapitoly: odkazy_chap(t).first().copied(),
+            ..Default::default()
+        };
+        let skupina_poz = if tkhd.first() == Some(&1) { 46 } else { 34 };
+        if tkhd.len() >= skupina_poz + 2 {
+            s.skupina = be16(&tkhd[skupina_poz..]);
+        }
+        if let Some(hdlr) = vnorene(t, &[b"mdia", b"hdlr"]).filter(|h| h.len() >= 24) {
+            s.handler = fourcc(&hdlr[8..12]);
+            let meno = String::from_utf8_lossy(&hdlr[24..])
+                .trim_matches(char::from(0))
+                .to_string();
+            s.nazov = (!meno.is_empty()).then_some(meno);
+        }
+        if let Some(mdhd) = vnorene(t, &[b"mdia", b"mdhd"]) {
+            let z = if mdhd[0] == 1 {
+                be16(&mdhd[32..])
+            } else {
+                be16(&mdhd[20..])
+            };
+            s.jazyk = jazyk_mdhd(z);
+        }
+        if let Some(stsd) = vnorene(t, &[b"mdia", b"minf", b"stbl", b"stsd"]) {
+            if stsd.len() >= 16 {
+                s.kodek = fourcc(&stsd[12..16]);
+            }
+        }
+        if let Some(udta) = najdi(t, 0, t.len(), b"udta") {
+            if let Some(n) = najdi(udta, 0, udta.len(), b"name").and_then(nazov_stopy) {
+                s.nazov = Some(n);
+            }
+            for k in deti(udta, 0, udta.len())
+                .into_iter()
+                .filter(|b| &b.typ == b"kind")
+            {
+                let d = &udta[k.obsah as usize + 4..k.koniec as usize];
+                let mut casti = d.split(|&b| b == 0);
+                if let (Some(_schema), Some(rola)) = (casti.next(), casti.next()) {
+                    s.roly.push(String::from_utf8_lossy(rola).into_owned());
+                }
+            }
+        }
+        p.stopy.push(s);
+    }
+    let odkazovane: Vec<u32> = p.stopy.iter().filter_map(|s| s.kapitoly).collect();
+    p.kapitolova_stopa = p
+        .stopy
+        .iter()
+        .any(|s| odkazovane.contains(&s.id) && s.handler == "text");
+    if let Some(udta) = najdi(&moov, 0, moov.len(), b"udta") {
+        if let Some(c) = najdi(udta, 0, udta.len(), b"chpl") {
+            let mut i = if c.first() == Some(&1) { 8 } else { 4 };
+            let n = c.get(i).copied().unwrap_or(0) as usize;
+            i += 1;
+            for _ in 0..n {
+                let (Some(cas), Some(&dl)) = (c.get(i..i + 8), c.get(i + 8)) else {
+                    break;
+                };
+                let meno = c.get(i + 9..i + 9 + dl as usize).unwrap_or(&[]);
+                p.kapitoly.push((
+                    be64(cas) as i64 / 10_000,
+                    String::from_utf8_lossy(meno).into_owned(),
+                ));
+                i += 9 + dl as usize;
+            }
+        }
+        if let Some(meta) = najdi(udta, 0, udta.len(), b"meta") {
+            // ISO meta je „plný“ box (verzia a príznaky), starší QuickTime nie
+            let od = if meta.get(4..8) == Some(b"hdlr") {
+                0
+            } else {
+                4
+            };
+            if let Some(ilst) = najdi(meta, od.min(meta.len()), meta.len(), b"ilst") {
+                for pol in deti(ilst, 0, ilst.len()) {
+                    let Some(data) = najdi(ilst, pol.obsah as usize, pol.koniec as usize, b"data")
+                    else {
+                        continue;
+                    };
+                    if data.len() < 8 {
+                        continue;
+                    }
+                    let druh = be32(data) & 0xFF_FFFF;
+                    let kluc = fourcc(&pol.typ);
+                    if kluc == "covr" {
+                        p.obal = Some((druh, data.len() - 8));
+                    } else if druh == 1 {
+                        p.udaje
+                            .insert(kluc, String::from_utf8_lossy(&data[8..]).into_owned());
+                    }
+                }
+            }
+        }
+    }
+    Ok(p)
+}
+
 impl CitacMp4 {
     pub fn otvor(cesta: &Path) -> Vysledok<Self> {
         let mut f = File::open(cesta)?;
@@ -363,21 +592,18 @@ impl CitacMp4 {
         }
         let mut stopy_info = vec![];
         let mut stopy = vec![];
-        for trak in deti(&moov, 0, moov.len())
+        let traky: Vec<&[u8]> = deti(&moov, 0, moov.len())
             .into_iter()
             .filter(|b| &b.typ == b"trak")
-        {
-            let t = &moov[trak.obsah as usize..trak.koniec as usize];
+            .map(|b| &moov[b.obsah as usize..b.koniec as usize])
+            .collect();
+        let kapitolove: Vec<u32> = traky.iter().flat_map(|t| odkazy_chap(t)).collect();
+        for t in traky {
             let tkhd = najdi(t, 0, t.len(), b"tkhd").unwrap_or(&[]);
-            let id = if tkhd.len() >= 24 {
-                if tkhd[0] == 1 {
-                    be32(&tkhd[20..])
-                } else {
-                    be32(&tkhd[12..])
-                }
-            } else {
-                0
-            };
+            let id = id_stopy(tkhd);
+            if kapitolove.contains(&id) {
+                continue; // kapitoly nie sú titulky
+            }
             let Some(mdia) = najdi(t, 0, t.len(), b"mdia") else {
                 continue;
             };
@@ -399,6 +625,7 @@ impl CitacMp4 {
                 continue;
             };
             info.jazyk = jazyk_mdhd(jazyk);
+            info.nazov = vnorene(t, &[b"udta", b"name"]).and_then(nazov_stopy);
             if info.kodek == Kodek::Mp3 && info.frekvencia == 0 {
                 info.frekvencia = 44100;
             }
@@ -432,7 +659,8 @@ impl CitacMp4 {
                 .map(|(_, t)| t.clone())
                 .unwrap_or_default();
             let zvuk = info.kodek.druh() == super::Druh::Zvuk;
-            let vzorky = Self::tabulky(stbl)?;
+            let text = info.kodek == Kodek::Srt;
+            let (vzorky, koniec) = Self::tabulky(stbl)?;
             stopy_info.push(info);
             stopy.push(Stopa {
                 id,
@@ -440,13 +668,15 @@ impl CitacMp4 {
                 posun,
                 trex,
                 vzorky,
+                koniec,
                 dalsia: 0,
                 dalsi_dts: 0,
                 zvuk,
+                text,
             });
         }
         if stopy.is_empty() {
-            return Err(Chyba::Format("MP4 bez obrazu aj zvuku".into()));
+            return Err(Chyba::Format("MP4 bez obrazu, zvuku aj titulkov".into()));
         }
         let fragmentovane = prvy_moof.is_some() || stopy.iter().all(|s| s.vzorky.is_empty());
         Ok(CitacMp4 {
@@ -486,10 +716,10 @@ impl CitacMp4 {
     }
 
     /// Tabuľky vzoriek bežného MP4 (stts, ctts, stsc, stsz, stco/co64, stss).
-    fn tabulky(stbl: &[u8]) -> Vysledok<Vec<ZaznamVzorky>> {
+    fn tabulky(stbl: &[u8]) -> Vysledok<(Vec<ZaznamVzorky>, i64)> {
         let tab = |t: &[u8; 4]| najdi(stbl, 0, stbl.len(), t);
         let (Some(stts), Some(stsc)) = (tab(b"stts"), tab(b"stsc")) else {
-            return Ok(vec![]);
+            return Ok((vec![], 0));
         };
         let velkosti: Vec<u32> = if let Some(stsz) = tab(b"stsz") {
             let pevna = be32(&stsz[4..]);
@@ -512,11 +742,11 @@ impl CitacMp4 {
                 })
                 .collect()
         } else {
-            return Ok(vec![]);
+            return Ok((vec![], 0));
         };
         let n = velkosti.len();
         if n == 0 {
-            return Ok(vec![]);
+            return Ok((vec![], 0));
         }
         let ofsety: Vec<u64> = if let Some(stco) = tab(b"stco") {
             (0..be32(&stco[4..]) as usize)
@@ -599,7 +829,7 @@ impl CitacMp4 {
                 vzorka += 1;
             }
         }
-        Ok(out)
+        Ok((out, t))
     }
 
     /// Ďalší fragment (moof) → položky do fronty.
@@ -762,6 +992,25 @@ impl Citac for CitacMp4 {
     }
 
     fn dalsia(&mut self) -> Vysledok<Option<Vzorka>> {
+        loop {
+            let Some(mut v) = self.surova()? else {
+                return Ok(None);
+            };
+            if !self.stopy[v.stopa].text {
+                return Ok(Some(v));
+            }
+            if let Some(t) = text_vzorky(&v.data) {
+                v.data = t.into_bytes();
+                v.kluc = true;
+                return Ok(Some(v));
+            }
+        }
+    }
+}
+
+impl CitacMp4 {
+    /// Ďalšia vzorka tak, ako je v súbore.
+    fn surova(&mut self) -> Vysledok<Option<Vzorka>> {
         if self.fragmentovane {
             loop {
                 if let Some(p) = self.fronta.pop_front() {
@@ -790,7 +1039,9 @@ impl Citac for CitacMp4 {
             .get(s.dalsia + 1)
             .map(|d| d.2 - dts)
             .unwrap_or_else(|| {
-                if s.dalsia > 0 {
+                if s.koniec > dts {
+                    s.koniec - dts // posledná vzorka: trvanie zo stts
+                } else if s.dalsia > 0 {
                     dts - s.vzorky[s.dalsia - 1].2
                 } else {
                     0
@@ -835,6 +1086,24 @@ mod testy {
             0, 0, 1, 0xF4, 0, 0x05, 0x02, 0x11, 0x90, 0x06, 0x01, 0x02,
         ];
         assert_eq!(esds(&e), Some((0x40, vec![0x11, 0x90])));
+    }
+
+    #[test]
+    fn text_titulkov() {
+        assert_eq!(
+            text_vzorky(b"\x00\x05Ahoj!\x00\x00\x00\x0cstyl").as_deref(),
+            Some("Ahoj!")
+        );
+        assert_eq!(text_vzorky(&[0, 0]), None);
+        assert_eq!(
+            text_vzorky(&[0, 6, 0xFE, 0xFF, 0, b'O', 0, b'K']).as_deref(),
+            Some("OK")
+        );
+        assert_eq!(nazov_stopy(b"\x00\x03\x15\xc7abc").as_deref(), Some("abc"));
+        assert_eq!(
+            nazov_stopy("Čeština".as_bytes()).as_deref(),
+            Some("Čeština")
+        );
     }
 
     #[test]

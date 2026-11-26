@@ -3,7 +3,9 @@
 //!
 //! Každé volanie vráti `{"ok": true, "data": …}` alebo `{"ok": false, "chyba": "…", "podrobnosti": "…"}`.
 
+pub mod aktualizacie;
 pub mod archivy;
+pub mod doplnky;
 pub mod fronta;
 pub mod jazyky;
 pub mod kurzy;
@@ -37,6 +39,9 @@ pub const VERZIA: &str = env!("CARGO_PKG_VERSION");
 pub const METODY: &[&str] = &[
     "init",
     "stav",
+    "aktualizacia_skontroluj",
+    "aktualizacia_instaluj",
+    "aktualizacia_pri_starte",
     "pridat",
     "rozpoznat",
     "kolekcia",
@@ -106,6 +111,8 @@ pub struct Vnutro {
     pub strazca: Mutex<strazca::Strazca>,
     /// prihlásenie z prehliadača kurzov (cookies) – len v pamäti
     pub prihlasenia: Mutex<Vec<(String, String)>>,
+    /// nová verzia Komety: kontrola, stiahnutie, inštalácia
+    pub aktualizacia: Mutex<aktualizacie::StavAktualizacie>,
     rt: tokio::runtime::Handle,
     /// prostredie okna pre UI: "aplikacia" (Tauri) alebo "prehliadac"
     pub okno: &'static str,
@@ -226,6 +233,7 @@ impl Sluzba {
             instalacia: Mutex::new(Instalacia::default()),
             strazca: Mutex::new(strazca::Strazca::default()),
             prihlasenia: Mutex::new(vec![]),
+            aktualizacia: Mutex::new(aktualizacie::StavAktualizacie::default()),
             rt,
             okno,
             verzia,
@@ -240,6 +248,7 @@ impl Sluzba {
         s.v.naplanuj();
         ucty::over_pri_starte(&s.v);
         strazca::spusti(&s.v);
+        aktualizacie::spusti(&s.v);
         s
     }
 
@@ -512,6 +521,9 @@ impl Sluzba {
             }
             "schranka" => json!(self.blokujuco(|v| v.prostredie.schranka()).await),
             "jazyky_zistit" => jazyky::zisti(v, arg::<Vec<String>>(a, 0)?).await?,
+            "aktualizacia_skontroluj" => aktualizacie::skontroluj(v).await,
+            "aktualizacia_instaluj" => aktualizacie::instaluj(v)?,
+            "aktualizacia_pri_starte" => aktualizacie::pri_starte(v),
             "jazyky_nacitat" => jazyky::nacitaj(v, &arg::<String>(a, 0)?).await?,
             "jazyky_stiahnut" => {
                 jazyky::stiahni(v, &arg::<Map<String, Value>>(a, 0)?)?;
@@ -628,6 +640,7 @@ impl Sluzba {
             "graf": graf,
             "jazyky": self.v.jazyky.stav(),
             "ucty": self.v.ucty.stav(),
+            "aktualizacia": *self.v.aktualizacia.lock().unwrap(),
             "nastroje": {
                 "ytdlp": self.v.nastroje.ytdlp().is_some(),
                 "ffmpeg": self.v.nastroje.ffmpeg().is_some(),

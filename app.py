@@ -66,9 +66,21 @@ def cli_download(argv: list[str]) -> int:
     return 1 if bad else 0
 
 
+def _aktualizacia_pri_starte() -> None:
+    """Pripravenú novú verziu nainštaluje (raz) a spustí Kometu znova už v novej verzii."""
+    try:
+        from kometa import aktualizacia
+        if aktualizacia.apply_pending():
+            import os
+            os.execv(sys.executable, [sys.executable, *sys.argv])
+    except Exception:  # noqa: BLE001 – aktualizácia nesmie zabrániť spusteniu
+        pass
+
+
 def main() -> int:
     args = sys.argv[1:]
     if not args or args[0] in ("--prehliadac", "--bez-okna", "--port"):
+        _aktualizacia_pri_starte()
         ap = argparse.ArgumentParser(prog="app.py")
         ap.add_argument("--prehliadac", action="store_true")
         ap.add_argument("--bez-okna", action="store_true", help="len lokálny server (na testy)")

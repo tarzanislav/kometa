@@ -1,13 +1,14 @@
 //! Spojenie stôp z viacerých súborov do jedného MKV/MKA alebo MP4/M4A – bez FFmpeg.
-//! Titulky (SRT) sa vkladajú len do Matroska; do MP4 sa nevkladajú.
+//! Titulky (SRT) idú do Matroska ako S_TEXT/UTF8, do MP4 ako 3GPP Timed Text (tx3g).
+//! Spolu so stopami sa zapíšu údaje o videu, kapitoly a obrázok ([`Doplnky`]).
 //!
 //! Vzorky sa zlučujú podľa času dekódovania, všetky stopy sa posunú na spoločný začiatok 0
 //! (vzájomný posun obrazu a zvuku ostane zachovaný). Výsledok sa zapíše do dočasného súboru,
 //! skontroluje a až potom premenuje na konečný názov.
 
 use super::mkv::{self, StopaVystupu, ZapisovacMkv};
-use super::mp4zapis::{VzorkaMeta, ZapisovacMp4};
-use super::{otvor, Citac, Druh, Vzorka};
+use super::mp4zapis::{tx3g_vzorka, VzorkaMeta, ZapisovacMp4, TX3G_PRAZDNA};
+use super::{otvor, Citac, Doplnky, Druh, Kodek, Vzorka};
 use crate::chyba::{Chyba, Vysledok};
 use crate::klient::s_priponou;
 use std::collections::VecDeque;
@@ -21,6 +22,8 @@ pub struct Vstup {
     pub druh: String,
     pub jazyk: Option<String>,
     pub nazov: Option<String>,
+    /// stopa v pôvodnom jazyku videa (Some(true)) alebo preklad/dabing (Some(false))
+    pub povodny: Option<bool>,
 }
 
 struct Vyber {
@@ -78,6 +81,12 @@ fn vyber(vstupy: &[Vstup]) -> Vysledok<Vyber> {
                         None
                     },
                     predvolena: druh == Druh::Video || prvy_zvuk,
+                    // titulky v inom jazyku nie sú „dabing“ – pri nich sa označí len pôvodný jazyk
+                    povodna: match druh {
+                        Druh::Video => None,
+                        Druh::Zvuk => v.povodny,
+                        Druh::Titulky => v.povodny.filter(|&p| p),
+                    },
                 });
             }
         }
@@ -197,6 +206,11 @@ fn prejdi(
 /// Spojí vstupy do `ciel`; formát podľa prípony (.mp4/.m4a = MP4, inak Matroska).
 /// Vráti počty vzoriek v jednotlivých stopách výsledku.
 pub fn spoj(vstupy: &[Vstup], ciel: &Path, titul: &str) -> Vysledok<Vec<u64>> {
+    spoj_s(vstupy, ciel, &Doplnky::s_titulom(titul))
+}
+
+/// Ako [`spoj`], navyše zapíše údaje o videu, kapitoly a obrázok.
+pub fn spoj_s(vstupy: &[Vstup], ciel: &Path, doplnky: &Doplnky) -> Vysledok<Vec<u64>> {
     let mp4 = matches!(
         ciel.extension()
             .and_then(|e| e.to_str())
@@ -206,9 +220,9 @@ pub fn spoj(vstupy: &[Vstup], ciel: &Path, titul: &str) -> Vysledok<Vec<u64>> {
     );
     let docasny = s_priponou(ciel, ".spajanie");
     let vysledok = if mp4 {
-        spoj_mp4(vstupy, &docasny)
+        spoj_mp4(vstupy, &docasny, doplnky)
     } else {
-        spoj_mkv(vstupy, &docasny, titul)
+        spoj_mkv(vstupy, &docasny, doplnky)
     };
     match vysledok {
         Ok(pocty) => {
@@ -222,46 +236,112 @@ pub fn spoj(vstupy: &[Vstup], ciel: &Path, titul: &str) -> Vysledok<Vec<u64>> {
     }
 }
 
-fn spoj_mkv(vstupy: &[Vstup], docasny: &Path, titul: &str) -> Vysledok<Vec<u64>> {
+fn spoj_mkv(vstupy: &[Vstup], docasny: &Path, doplnky: &Doplnky) -> Vysledok<Vec<u64>> {
     let mut v = vyber(vstupy)?;
-    let mut z = ZapisovacMkv::new(docasny, &v.stopy, titul)?;
+    let mut z = ZapisovacMkv::new(docasny, &v.stopy, doplnky)?;
     prejdi(&mut v, None, |o, s| {
         z.zapis(o, s.pts, s.trvanie, s.kluc, &s.data)
     })?;
-    let pocty = z.dokonci()?;
-    let overene = mkv::over(docasny, v.stopy.len())?;
-    if overene != pocty {
+    let (pocty, kapitol) = z.dokonci_s()?;
+    let k = mkv::over_vsetko(docasny, v.stopy.len())?;
+    if k.pocty != pocty || k.kapitoly != kapitol || k.prilohy != doplnky.obal.is_some() as usize {
         return Err(Chyba::Format(format!(
-            "kontrola MKV: zapísané {pocty:?}, prečítané {overene:?}"
+            "kontrola MKV: zapísané {pocty:?}, prečítané {:?} (kapitoly {}, prílohy {})",
+            k.pocty, k.kapitoly, k.prilohy
         )));
     }
     Ok(pocty)
 }
 
-fn spoj_mp4(vstupy: &[Vstup], docasny: &Path) -> Vysledok<Vec<u64>> {
-    if vstupy.iter().any(|v| v.druh.contains("titulky")) {
-        return Err(Chyba::Nepodporovane("titulky v MP4".into()));
+/// Titulky v MP4 (tx3g) platia od svojho začiatku po ďalšiu vzorku, preto čas bez titulku treba
+/// vyplniť prázdnou vzorkou a prekryvy orezať. Ostatné stopy prejdú bez zmeny.
+struct Medzery {
+    /// pri textovej stope: koniec poslednej zapísanej vzorky (ns)
+    koniec: Vec<Option<i64>>,
+}
+
+impl Medzery {
+    fn new(v: &Vyber) -> Self {
+        Medzery {
+            koniec: v
+                .stopy
+                .iter()
+                .map(|s| (s.info.kodek == Kodek::Srt).then_some(0))
+                .collect(),
+        }
     }
+
+    fn vydaj(
+        &mut self,
+        o: usize,
+        s: Vzorka,
+        f: &mut impl FnMut(usize, Vzorka) -> Vysledok<()>,
+    ) -> Vysledok<()> {
+        let Some(koniec) = self.koniec[o] else {
+            return f(o, s);
+        };
+        let od = s.pts.max(koniec);
+        let do_ = s.pts + s.trvanie.max(0);
+        let text = String::from_utf8_lossy(&s.data).into_owned();
+        if do_ <= od || text.trim().is_empty() {
+            return Ok(()); // titulok úplne prekrytý predošlým alebo prázdny
+        }
+        if od > koniec {
+            f(
+                o,
+                Vzorka {
+                    dts: koniec,
+                    pts: koniec,
+                    trvanie: od - koniec,
+                    kluc: true,
+                    data: TX3G_PRAZDNA.to_vec(),
+                    ..s.clone()
+                },
+            )?;
+        }
+        self.koniec[o] = Some(do_);
+        f(
+            o,
+            Vzorka {
+                dts: od,
+                pts: od,
+                trvanie: do_ - od,
+                kluc: true,
+                data: tx3g_vzorka(&text),
+                ..s
+            },
+        )
+    }
+}
+
+fn spoj_mp4(vstupy: &[Vstup], docasny: &Path, doplnky: &Doplnky) -> Vysledok<Vec<u64>> {
     // 1. prechod: veľkosti a časy
     let mut v = vyber(vstupy)?;
     let mut meta = vec![];
+    let mut medzery = Medzery::new(&v);
     let nula = prejdi(&mut v, None, |o, s| {
-        meta.push(VzorkaMeta {
-            stopa: o as u16,
-            velkost: s.data.len() as u32,
-            dts: s.dts,
-            pts: s.pts,
-            trvanie: s.trvanie,
-            kluc: s.kluc,
-        });
-        Ok(())
+        medzery.vydaj(o, s, &mut |o, s| {
+            meta.push(VzorkaMeta {
+                stopa: o as u16,
+                velkost: s.data.len() as u32,
+                dts: s.dts,
+                pts: s.pts,
+                trvanie: s.trvanie,
+                kluc: s.kluc,
+            });
+            Ok(())
+        })
     })?;
     let stopy = v.stopy.clone();
     drop(v);
-    let mut z = ZapisovacMp4::new(docasny, &stopy, &meta)?;
+    let mut z = ZapisovacMp4::new(docasny, &stopy, &meta, doplnky)?;
+    let kapitol = z.kapitoly;
     // 2. prechod: samotné vzorky v rovnakom poradí
     let mut v = vyber(vstupy)?;
-    prejdi(&mut v, Some(nula), |o, s| z.data(o, &s.data))?;
+    let mut medzery = Medzery::new(&v);
+    prejdi(&mut v, Some(nula), |o, s| {
+        medzery.vydaj(o, s, &mut |o, s| z.data(o, &s.data))
+    })?;
     let pocty = z.dokonci()?;
     // kontrola: súbor sa dá otvoriť vlastným čítačom a sedia počty vzoriek
     let mut c = super::mp4::CitacMp4::otvor(docasny)?;
@@ -275,6 +355,22 @@ fn spoj_mp4(vstupy: &[Vstup], docasny: &Path) -> Vysledok<Vec<u64>> {
         return Err(Chyba::Format(format!(
             "kontrola MP4: zapísané {pocty:?}, prečítané {prec:?}"
         )));
+    }
+    // a hlavička: stopy, kapitoly, údaje a obrázok tak, ako ich uvidia prehrávače
+    let p = super::mp4::prehlad(docasny)?;
+    let stop = p.stopy.iter().filter(|s| s.handler != "text").count();
+    let zle = |co: &str| Err(Chyba::Format(format!("kontrola MP4: {co}")));
+    if stop != stopy.len() {
+        return zle("nesedí počet stôp");
+    }
+    if p.kapitoly.len() != kapitol.min(255) || p.kapitolova_stopa != (kapitol > 0) {
+        return zle("kapitoly");
+    }
+    if !doplnky.titul.trim().is_empty() && !p.udaje.contains_key("\u{a9}nam") {
+        return zle("chýba názov videa");
+    }
+    if p.obal.is_some() != doplnky.obal.is_some() {
+        return zle("obrázok videa");
     }
     Ok(pocty)
 }

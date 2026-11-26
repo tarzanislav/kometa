@@ -21,6 +21,11 @@ pub trait Prostredie: Send + Sync {
     /// Krátke systémové oznámenie (aj keď je okno v pozadí).
     fn oznam(&self, _nadpis: &str, _text: &str) {}
 
+    /// Zavrie Kometu (pred inštaláciou aktualizácie). Aplikácia zavrie okno a uloží front.
+    fn ukonci(&self) {
+        std::process::exit(0);
+    }
+
     /// Má prostredie vlastné okno prehliadača (na kurzy po prihlásení)?
     fn ma_prehliadac(&self) -> bool {
         false

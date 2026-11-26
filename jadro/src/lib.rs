@@ -5,6 +5,9 @@
 //! `spajanie` (stopy do jedného súboru) a `web` (skener stránok, Vimeo a ďalšie prehrávače).
 //! Šifrovaný obsah (DRM, kľúče v streame) jadro zámerne nesťahuje.
 
+/// Verzia vydania Komety (z kometa/__init__.py) – rovnaká v aplikácii, v programe aj v Kometa pre Python.
+pub const VERZIA: &str = env!("KOMETA_VERZIA");
+
 pub mod chyba;
 pub mod dash;
 pub mod hls;

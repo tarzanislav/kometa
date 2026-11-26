@@ -25,6 +25,8 @@ USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 # Ďalšie voľby pre yt-dlp (napr. cookies z prehliadača); nastavuje ich apply_settings().
 EXTRA_YDL_OPTS: dict = {}
 AUDIO_MODE = "oboje"   # zvuk vo videách: „oboje“ (AAC + Opus), „aac“, „opus“ – nastavuje apply_settings()
+# čo vložiť do stiahnutých súborov: údaje o videu, kapitoly, obrázok – nastavuje apply_settings()
+VLOZIT = {"udaje": True, "kapitoly": True, "obal": True}
 
 
 class Cancelled(Exception):
@@ -301,6 +303,12 @@ DEFAULT_CONFIG = {
     # titulky k jazykovým stopám
     "titulky": "vypnute",          # vypnute | jazyky
     "titulky_auto": False,
+    # do stiahnutých súborov vložiť údaje o videu, kapitoly a obrázok
+    "vlozit_udaje": True,
+    "vlozit_kapitoly": True,
+    "vlozit_obal": True,
+    # kontrolovať nové verzie a inštalovať ich
+    "aktualizacie": True,
 }
 
 _cfg_lock = threading.Lock()
@@ -340,6 +348,8 @@ def apply_settings(cfg: dict) -> None:
     """Premietne nastavenia do yt-dlp (cookies z prehliadača pre Instagram/Facebook)."""
     global AUDIO_MODE
     AUDIO_MODE = cfg.get("audio_mode") if cfg.get("audio_mode") in ("oboje", "aac", "opus") else "oboje"
+    for k in VLOZIT:
+        VLOZIT[k] = bool(cfg.get(f"vlozit_{k}", True))
     EXTRA_YDL_OPTS.pop("cookiesfrombrowser", None)
     # HLS/DASH: viac kúskov naraz (rovnaké nastavenie ako „spojenia na súbor“)
     EXTRA_YDL_OPTS["concurrent_fragment_downloads"] = max(1, min(16, int(cfg.get("connections") or 4)))

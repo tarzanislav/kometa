@@ -60,6 +60,10 @@ _SETTINGS = {
     "po_rozbaleni": lambda v: v if v in ("nechat", "kos") else "nechat",
     "titulky": lambda v: v if v in ("vypnute", "jazyky") else "vypnute",
     "titulky_auto": bool,
+    "vlozit_udaje": bool,
+    "vlozit_kapitoly": bool,
+    "vlozit_obal": bool,
+    "aktualizacie": bool,
 }
 
 
@@ -115,6 +119,8 @@ class Jadro:
                           for s in ("webshare", "fastshare", "datoid")}
         self.last_call = time.time()
         threading.Thread(target=self._check_accounts, daemon=True).start()
+        from . import aktualizacia
+        aktualizacia.start(lambda: bool(self.cfg.get("aktualizacie", True)), self._log.append)
 
     # ------------------------------------------------------------------ úvod
     def init(self) -> dict:
@@ -147,8 +153,23 @@ class Jadro:
         if now - self._speed_t >= 1.0:           # graf rýchlosti: jeden bod za sekundu
             self._speed.append(float(counts.get("speed") or 0))
             self._speed_t = now
+        from . import aktualizacia
         return {"polozky": items, "rychlost": counts.get("speed") or 0, "graf": list(self._speed),
-                "jazyky": dict(self._lang, log=self._lang["log"][-80:]), "ucty": self._accounts}
+                "jazyky": dict(self._lang, log=self._lang["log"][-80:]), "ucty": self._accounts,
+                "aktualizacia": aktualizacia.status()}
+
+    # ------------------------------------------------------------------ aktualizácia
+    def aktualizacia_skontroluj(self) -> dict:
+        from . import aktualizacia
+        return aktualizacia.check(bool(self.cfg.get("aktualizacie", True)), self._log.append)
+
+    def aktualizacia_instaluj(self) -> dict:
+        from . import aktualizacia
+        return aktualizacia.install(self._log.append) or aktualizacia.status()
+
+    def aktualizacia_pri_starte(self) -> dict:
+        from . import aktualizacia
+        return aktualizacia.later()
 
     def _item(self, it: dict) -> dict:
         total, done, speed = it.get("total"), it.get("done") or 0, it.get("speed") or 0
@@ -397,7 +418,7 @@ class Jadro:
                     "nahlad": yt_thumb(url) or "", "jazyky": list(kody),
                     "original": next((k for k, o in kody.items() if o), None)}
 
-        with ThreadPoolExecutor(4) as ex:
+        with ThreadPoolExecutor(2) as ex:
             videa = list(ex.map(jeden, urls))
         pocty: dict[str, list] = {}
         for v in videa:
@@ -591,7 +612,8 @@ API_METHODS = ["init", "stav", "pridat", "rozpoznat", "kolekcia", "pridat_vybran
                "vycistit_front", "subory_na_zmazanie", "zmazat_subory", "zadat_heslo", "rozbalit", "otvorit",
                "otvorit_subor", "schranka",
                "jazyky_nacitat", "jazyky_zistit", "jazyky_stiahnut", "jazyky_zrusit",
-               "vybrat_priecinok", "vybrat_video", "prihlasit", "odhlasit", "ulozit_nastavenia"]
+               "vybrat_priecinok", "vybrat_video", "prihlasit", "odhlasit", "ulozit_nastavenia",
+               "aktualizacia_skontroluj", "aktualizacia_instaluj", "aktualizacia_pri_starte"]
 
 
 def call(jadro: Jadro, name: str, args: list) -> dict:

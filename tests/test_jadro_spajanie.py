@@ -17,6 +17,7 @@ Spustenie (z koreňa repozitára, po `cargo build --release` v priečinku jadro)
 import json
 import os
 import shutil
+import re
 import subprocess
 import sys
 import tempfile
@@ -145,6 +146,66 @@ def poskladaj(vzor: str, ciel: str, init: str | None = None):
             out.write(k.read_bytes())
 
 
+def kontrola(meno: str, ok: bool, detail=""):
+    print(f"  {'OK' if ok else 'ZLYHALO'}  {meno}")
+    if not ok:
+        CHYBY.append(f"{meno}: {str(detail)[-400:]}")
+
+
+def titulky_kapitoly_obal(vys: Path, prip: str):
+    """Titulky (v MP4 ako tx3g), kapitoly, údaje o videu, obrázok a roly stôp – overené ffprobe a FFmpeg."""
+    (D / "cs.srt").write_text("1\n00:00:00,500 --> 00:00:01,500\nAhoj, svet\nDruhý riadok\n\n"
+                              "2\n00:00:02,000 --> 00:00:03,000\nČeský titulok\n\n"
+                              "3\n00:00:02,800 --> 00:00:04,000\nPrekryv\n", encoding="utf-8")
+    (D / "en.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n\n"
+                              "2\n00:00:03,000 --> 00:00:04,500\nWorld\n", encoding="utf-8")
+    if not (D / "obal.jpg").exists():
+        ff("-f", "lavfi", "-i", "color=c=teal:size=160x90", "-frames:v", "1", "obal.jpg")
+    cil = vys / f"plne.{prip}"
+    r = subprocess.run([str(EXE), "spoj", "-o", str(cil), "-t", "Plná skúška", "--autor", "Kanál", "--datum",
+                        "2024-05-17", "--zdroj", "https://example.org/v", "--popis", "Popis",
+                        "--kapitola", "0=Úvod", "--kapitola", "2.5=Stred; a=b", "--obal", str(D / "obal.jpg"),
+                        f"{D / 'yt_vp9.webm' if prip == 'mkv' else D / 'p_zaciatok.mp4'}#video",
+                        f"{D / 'yt_sk.m4a'}#zvuk#sk#Slovenčina#dabing", f"{D / 'yt_cs.webm'}#zvuk#en#English#povodny",
+                        f"{D / 'cs.srt'}#titulky#cs#Čeština", f"{D / 'en.srt'}#titulky#en#English#povodny"],
+                       capture_output=True, text=True, encoding="utf-8")
+    if r.returncode != 0:
+        kontrola(f"titulky, kapitoly, obrázok (.{prip})", False, r.stderr)
+        return
+    j = json.loads(subprocess.run([FP, "-v", "error", "-show_streams", "-show_chapters", "-show_format", "-of", "json",
+                                   str(cil)], capture_output=True, text=True).stdout)
+    st = j["streams"]
+    tit = [(x["codec_name"], x["tags"].get("language"), x["disposition"]["default"]) for x in st
+           if x["codec_type"] == "subtitle"]
+    kodek = "mov_text" if prip == "mp4" else "subrip"
+    jaz = ("ces", "eng") if prip == "mp4" else ("cze", "eng")
+    kontrola(f"titulky ako samostatné stopy, predvolene vypnuté (.{prip})",
+             tit == [(kodek, jaz[0], 0), (kodek, jaz[1], 0)], tit)
+    texty = [subprocess.run([FF, "-v", "error", "-i", str(cil), "-map", f"0:s:{k}", "-f", "srt", "-"],
+                            capture_output=True, text=True, encoding="utf-8").stdout for k in (0, 1)]
+    kontrola(f"text a časy titulkov, prekryv orezaný (.{prip})",
+             "Ahoj, svet" in texty[0] and "Druhý riadok" in texty[0] and texty[0].count("-->") == 3
+             # prekryv: predošlý titulok skončí tam, kde začína ďalší
+             and re.search(r"00:00:02,0\d\d --> 00:00:02,8\d\d\n(<[^>]+>)?Český", texty[0]) is not None
+             and re.search(r"00:00:02,8\d\d --> 00:00:04,0\d\d\n(<[^>]+>)?Prekryv", texty[0]) is not None
+             and re.search(r"00:00:03,0\d\d --> 00:00:04,5\d\d\n.*World", texty[1], re.S) is not None, texty)
+    kap = [(round(float(c["start_time"]), 1), c["tags"]["title"]) for c in j.get("chapters", [])]
+    kontrola(f"kapitoly (.{prip})", kap == [(0.0, "Úvod"), (2.5, "Stred; a=b")], kap)
+    tagy = {k.lower(): v for k, v in j["format"].get("tags", {}).items()}
+    datum, zdroj = ("date", "comment") if prip == "mp4" else ("date_released", "url")
+    kontrola(f"údaje o videu (.{prip})", tagy.get("title") == "Plná skúška" and tagy.get("artist") == "Kanál"
+             and tagy.get(datum) == "2024-05-17" and tagy.get(zdroj) == "https://example.org/v", tagy)
+    obal = [x for x in st if x["disposition"].get("attached_pic") or x.get("tags", {}).get("filename") == "cover.jpg"]
+    kontrola(f"obrázok videa (.{prip})", len(obal) == 1 and obal[0]["codec_name"] == "mjpeg", obal)
+    roly = [(x["disposition"]["dub"], x["disposition"]["original"]) for x in st if x["codec_type"] == "audio"]
+    # MP4 nemá príznak „originál“ (len rolu main) – dabing áno
+    kontrola(f"roly zvukov: dabing a originál (.{prip})",
+             roly == ([(1, 0), (0, 0)] if prip == "mp4" else [(1, 0), (0, 1)]), roly)
+    d = subprocess.run([FF, "-hide_banner", "-v", "error", "-i", str(cil), "-map", "0:v:0", "-map", "0:a",
+                        "-f", "null", "-"], capture_output=True, text=True)
+    kontrola(f"celé dekódovanie bez chýb (.{prip})", d.returncode == 0 and not d.stderr.strip(), d.stderr)
+
+
 def main() -> int:
     try:
         sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
@@ -263,6 +324,8 @@ def main() -> int:
                 else:
                     over("MKV z jadra znova do MP4", vys / "znova.mp4",
                          [(D / "hv.ts", "video"), (D / "hcs.ts", "audio"), (D / "hsk.ts", "audio")])
+
+            titulky_kapitoly_obal(vys, prip)
 
             r = spoj(vys / f"hevc_ts.{prip}", str(D / "hevc.ts"))
             if r.returncode != 0 and "Nepodporovaný" in r.stderr and not (vys / f"hevc_ts.{prip}").exists():

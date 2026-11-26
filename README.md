@@ -22,6 +22,8 @@ YouTube · Vimeo (aj vložené) · Facebook · Instagram · TikTok (bez vodoznak
 - **Pokračovanie prerušeného sťahovania.** Pri pauze, výpadku siete aj po zatvorení programu sa pokračuje od miesta, kde sa skončilo. Keď odkaz z úložiska vyprší, Kometa si vypýta nový.
 - **Front sťahovania**: viac súborov naraz, pauza a pokračovanie, front ostane uložený aj po reštarte.
 - **Jazykové stopy z YouTube**: z videí s preloženým zvukom stiahne vybrané jazyky a spojí ich s videom do jedného `.mkv` alebo `.mp4`. Predvolené poradie je CZ, SK, EN, PL, HU, RU (zmeníš ho ťahaním) a pôvodná stopa ide na koniec. Pri každom jazyku zvolíš AAC, Opus alebo oboje; stopy idú po jazykoch – CZ (AAC), CZ (Opus), SK (AAC)… Jazyky zvolíš aj pre celý playlist či kanál naraz.
+- **Titulky, kapitoly, údaje o videu a obrázok priamo v súbore** – v MKV aj v MP4, vlastným kódom bez FFmpeg. Titulky ku každému jazyku zvuku, kapitoly z YouTube, názov, autor, dátum, odkaz a popis videa, náhľad ako obrázok súboru; dabing a pôvodný jazyk sú označené (prehrávače a Jellyfin to ukážu).
+- **Automatická aktualizácia:** nová verzia sa stiahne z GitHubu, overí kontrolným súčtom a nainštaluje, keď potvrdíš – inak sama pri ďalšom spustení.
 - Formáty: najlepšia kvalita, MP4 pre TV a mobil, najviac 1080p alebo 720p, MP3, zvuk v pôvodnej kvalite.
 
 | Jazykové stopy | Nastavenia a témy |
@@ -119,9 +121,30 @@ Prevod do AAC potrebuje FFmpeg (Kometa pre Python ho má vždy; aplikácia bez n
 
 Výber jazykov je rovnaký ako pri jednom videu – poradie jazykov, AAC/Opus pre všetky aj pre každý jazyk zvlášť, video alebo len zvuk, MKV alebo MP4, kvalita a pôvodná stopa na koniec. Pri kanáli Kometa zistí jazyky zo vzorky 10 videí z celého výberu: pri každom jazyku vidno, v koľkých videách je („8/10“ alebo „nie je“), a jazyky, ktoré videá majú navyše, pridáš jedným klikom. Každé video potom dostane tie z vybraných jazykov, ktoré naozaj má, v zvolenom poradí; ktoré chýbajú, uvidíš v zázname. Pre video bez žiadneho z vybraných jazykov zvolíš **Stiahnuť s pôvodným zvukom** alebo **Preskočiť**. Pri položke vo fronte vidno, aké jazyky sa sťahujú, a priebeh ukazuje aj krok (napr. „Sťahujem: Slovenčina (2/4)…“).
 
-**Titulky k jazykom.** Pri jednom videu aj pri viacerých zvolíš **Bez titulkov** alebo **K jazykom zvuku** – ku každému vybranému jazyku zvuku sa stiahnu aj titulky v tom istom jazyku (CZ zvuk → CZ titulky…). Najprv sa použijú titulky od autora videa; prepínač **Aj automatické titulky** doplní chýbajúce automatickými titulkami YouTube (strojovo rozpoznané alebo preložené, v názve stopy „(automatické)“). Do MKV sa titulky vložia ako samostatné stopy (predvolene vypnuté, zapneš ich v prehrávači). Pri MP4 ich aplikácia uloží vedľa videa ako `video.cs.srt`, `video.sk.srt` – prehrávače ich načítajú samy; Kometa pre Python ich vloží aj do MP4. Pri jednom videu karta vopred ukáže, ku ktorým jazykom má video titulky od autora. Ktoré titulky chýbajú, uvidíš v zázname.
+**Titulky k jazykom.** Pri jednom videu aj pri viacerých zvolíš **Bez titulkov** alebo **K jazykom zvuku** – ku každému vybranému jazyku zvuku sa stiahnu aj titulky v tom istom jazyku (CZ zvuk → CZ titulky…). Najprv sa použijú titulky od autora videa; prepínač **Aj automatické titulky** doplní chýbajúce automatickými titulkami YouTube (strojovo rozpoznané alebo preložené, v názve stopy „(automatické)“). Titulky sa vložia do súboru ako samostatné stopy (predvolene vypnuté, zapneš ich v prehrávači) – do MKV ako SRT, do MP4 ako titulky MP4 (3GPP Timed Text), ktoré prehrajú aj telefóny, televízory a zariadenia Apple. Pri voľbe **Každý jazyk aj samostatne** sa uložia aj vedľa videa ako `video.cs.srt`. Pri jednom videu karta vopred ukáže, ku ktorým jazykom má video titulky od autora. Ktoré titulky chýbajú, uvidíš v zázname.
 
 Formát **Video s jazykmi** je aj v bežnom zozname formátov – vtedy sa pre každý vložený odkaz z YouTube použijú jazyky a voľby z karty *Jazykové stopy*. Odkazy z iných stránok sa stiahnu ako obyčajné video.
+
+### Údaje o videu, kapitoly a obrázok
+
+Do stiahnutého videa (MKV aj MP4) Kometa vloží:
+- **údaje o videu** – názov, autora (kanál), dátum zverejnenia, odkaz na video a popis; ukážu ich prehrávače, Windows vo vlastnostiach súboru aj knižnice médií (Plex, Jellyfin, Kodi);
+- **kapitoly** – ak ich video má (YouTube: od autora, z popisu aj automatické); v prehrávači preskočíš na kapitolu. V MP4 sú v oboch bežných podobách (zoznam kapitol aj kapitolová stopa pre zariadenia Apple);
+- **obrázok videa** – náhľad ako obrázok súboru (v MKV príloha `cover.jpg`, v MP4 obal);
+- **roly stôp** – preložený zvuk je označený ako dabing, pôvodný jazyk ako originál.
+
+Každú z týchto vecí vypneš v *Nastaveniach* (časť *Do stiahnutého videa vložiť*). Aplikácia to zapisuje vlastným kódom pri spájaní stôp; keď sťahuje a spája yt-dlp s FFmpeg, použije jeho voľby na vloženie údajov, kapitol a obrázka. Priamy súbor z bežnej stránky ostane presne taký, aký je na webe.
+
+### Automatická aktualizácia
+
+Kometa sa po spustení a potom raz za 12 hodín pozrie na [vydania na GitHube](https://github.com/tarzanislav/kometa/releases). Novú verziu stiahne a overí súčtom SHA-256 zo zoznamu `SHA256SUMS.txt` (aj odtlačkom, ktorý o súbore uvádza GitHub) – neoverený súbor nikdy nespustí. V okne sa objaví pás **Nová verzia … je stiahnutá a overená** s tlačidlom **Nainštalovať teraz**; ak ju nenainštaluješ, nainštaluje sa sama pri ďalšom spustení (len raz – keď sa inštalácia nedokončí, neskúša sa dookola a okno to povie).
+
+- **Windows:** inštalátor beží viditeľne s ukazovateľom priebehu, bez otázok, a potom sa Kometa spustí znova.
+- **Linux:** AppImage sa vymení na mieste; balík DEB si vypýta heslo správcu.
+- **macOS:** aplikácia sa vymení z obrazu DMG.
+- **Program bez okna (noGUI)** sa vymení, nová verzia platí od ďalšieho spustenia; **Kometa pre Python** prepíše svoje súbory (nastavenia a front ostanú).
+
+Automatickú aktualizáciu vypneš v *Nastaveniach → Aktualizácie*; tam je aj **Skontrolovať teraz**.
 
 ### Heslá a archívy
 - **Súbor chránený heslom** (Webshare, Datoid): heslo zadaj vopred tlačidlom **Heslo** pod poľom na odkazy, alebo neskôr – položka sa hneď na začiatku zastaví a pri nej je políčko na heslo.
@@ -148,6 +171,8 @@ Prihlásenie (cookies) sa vezme z okna prehliadača, drží sa len v pamäti a p
 - **Vzhľad:** 7 tém (Kometa, Polárna žiara, Súmrak, Les, More, Levanduľa, Grafit) a režim podľa systému, deň alebo noc. Režim prepneš aj ikonami dole v bočnom paneli.
 - **Súčasne sťahovať** (1–6 súborov naraz) a **Spojenia na jeden súbor** (1–16, predvolene 4).
 - **Zvuk vo videách z YouTube** (AAC + Opus, len AAC, len Opus) a **pokračovanie nedokončených sťahovaní po spustení**.
+- **Do stiahnutého videa vložiť:** údaje o videu, kapitoly, obrázok videa (každé sa dá vypnúť).
+- **Aktualizácie:** automaticky (predvolene zapnuté) a **Skontrolovať teraz**.
 - **Priečinok na sťahovanie.**
 - **Pomocníci** (aplikácia): yt-dlp a FFmpeg sa dajú doinštalovať jedným klikom. FFmpeg sa stiahne zo zostavení [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) (Windows, Linux) a pred použitím sa overí kontrolný súčet; v macOS ho nainštaluješ cez Homebrew (`brew install ffmpeg`).
 
@@ -174,6 +199,7 @@ py app.py jazyky ODKAZ --k-videu "moje.mp4"    # pridá stopy k stiahnutému vid
 - **Webshare / Fastshare hlási chybu účtu:** na stránke *Účty* sa prihlás znova a skontroluj VIP alebo kredit.
 - **Okno sa neotvorí:** spusti `py app.py --prehliadac` (rozhranie v okne Edge/Chrome) alebo `py app.py --klasicke`.
 - **„Chýba FFmpeg / Deno“:** spusti `Instalacia.bat`.
+- **Antivírus hlási Kometu ako trójskeho koňa** (napr. Kaspersky `PDM:Trojan.Win32.Generic`): ide o odhad podľa správania – Kometa sťahuje súbory a spúšťa pomocníkov (yt-dlp, FFmpeg), ktorých si sama stiahla, a jej súbory zatiaľ nie sú digitálne podpísané. Over inštalačku: jej súčet SHA-256 porovnaj so `SHA256SUMS.txt` vo vydaní a skontroluj ju na [virustotal.com](https://www.virustotal.com). Falošný poplach nahlás výrobcovi antivírusu a Kometu pridaj medzi dôveryhodné aplikácie.
 
 ## Štruktúra projektu
 
@@ -239,7 +265,7 @@ V priečinku [`jadro/`](jadro) vzniká nové jadro Komety v Ruste: jeden spustit
 - **súbory** po úsekoch cez viac spojení s pokračovaním, adaptívnym počtom spojení a obnovou odkazov;
 - **HLS** (`.m3u8`) aj **DASH** (`.mpd` – šablóny s číslom aj časovou osou, zoznamy, BaseURL) – vlastné parsery, kúsky sa sťahujú súbežne a po prerušení sa pokračuje;
 - **výber kvality** (`--max-vyska`) a **jazykov zvuku v poradí** (`-j cs,sk,en`);
-- **vlastné spájanie do MKV aj MP4 – bez FFmpeg.** Číta MPEG-TS (H.264, AAC), MP4/fragmentované MP4 a Matroska/WebM (H.264, HEVC, AV1, VP9, AAC, Opus, MP3, AC-3, E-AC-3 – pri MKV dopočíta časy dekódovania snímok B), zapisuje Matroska aj MP4 s jazykmi, názvami, predvolenou stopou a bodmi na pretáčanie. Nič sa neprekóduje, výsledok sa po zápise skontroluje. Zvláda B-snímky, edit listy aj nespojitosti časov v HLS. Pamäť ~10 MB aj pri veľkých súboroch. FFmpeg sa použije len pre formát, ktorý vlastné spájanie zatiaľ nepozná (napr. HEVC v MPEG-TS) – a nikdy potichu;
+- **vlastné spájanie do MKV aj MP4 – bez FFmpeg.** Číta MPEG-TS (H.264, AAC), MP4/fragmentované MP4 a Matroska/WebM (H.264, HEVC, AV1, VP9, AAC, Opus, MP3, AC-3, E-AC-3 – pri MKV dopočíta časy dekódovania snímok B), zapisuje Matroska aj MP4 s jazykmi, názvami, rolami (dabing, originál), predvolenou stopou a bodmi na pretáčanie. **Titulky** číta aj zapisuje – v MKV ako S_TEXT/UTF8, v MP4 ako 3GPP Timed Text (`tx3g`, čas bez titulku vyplnia prázdne vzorky); **kapitoly** (MKV Chapters, v MP4 zoznam `chpl` aj kapitolová stopa), **údaje o videu** (MKV Tags, MP4 `ilst`) a **obrázok** (príloha MKV, obal MP4). Nič sa neprekóduje, výsledok sa po zápise skontroluje. Zvláda B-snímky, edit listy aj nespojitosti časov v HLS. Pamäť ~10 MB aj pri veľkých súboroch. FFmpeg sa použije len pre formát, ktorý vlastné spájanie zatiaľ nepozná (napr. HEVC v MPEG-TS) – a nikdy potichu;
 - **skener stránok** – vlastný čítač HTML prejde stránku aj vnorené rámčeky (2 úrovne), nájde prehrávače, streamy a súbory v značkách, atribútoch `data-*`, metaúdajoch (Open Graph, JSON-LD) aj v skriptoch, vynechá reklamy a vyberie hlavné video. Či ide o stránku, stream alebo súbor, rozhodne obsah – nie len typ, ktorý pošle server;
 - **Vimeo** – verejné, neverejné (s kľúčom `h=…`) aj obmedzené na doménu: skener sám pošle adresu stránky, kde je video vložené (Referer). Pri videu s heslom povie, čo robiť;
 - **JW Player, Wistia, Cloudflare Stream a Bunny Stream** cez ich verejné rozhrania prehrávača;
@@ -254,9 +280,12 @@ kometa stiahni ODKAZ -o PRIEČINOK -j cs,sk,en      # stránka, prehrávač, HLS
 kometa stiahni ODKAZ_NA_VIMEO --referer STRÁNKA    # video obmedzené na doménu, keď nemáš adresu celej stránky
 kometa stiahni ODKAZ --max-vyska 1080 --json       # udalosti ako JSON pre okno Komety
 kometa spoj -o film.mkv video.ts "cs.ts#zvuk#cs#Čeština" "sk.ts#zvuk#sk#Slovenčina"   # vlastné súbory → MKV/MP4
+kometa spoj -o film.mp4 video.mp4 "sk.m4a#zvuk#sk#Slovenčina#dabing" "en.webm#zvuk#en#English#povodny" \
+   "sk.srt#titulky#sk#Slovenčina" --kapitola "0=Úvod" --kapitola "95=Druhá časť" --obal nahlad.jpg \
+   -t "Názov" --autor "Kanál" --datum 2024-05-17 --zdroj https://…   # titulky, kapitoly, údaje a obrázok
 ```
 
-Ďalej: titulky (aj z Vimea), zápis zvuku Opus do .opus bez FFmpeg a Android.
+Ďalej: titulky z Vimea, zápis zvuku Opus do .opus bez FFmpeg a Android.
 
 ## Plán ďalšieho vývoja
 

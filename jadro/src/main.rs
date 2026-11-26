@@ -56,8 +56,9 @@ enum Prikaz {
     },
     /// Spojí súbory (MPEG-TS, MP4) do jedného MKV alebo MP4 bez prekódovania – vlastným kódom, bez FFmpeg
     ///
-    /// VSTUP je cesta, voliteľne s údajmi oddelenými znakom #: cesta#druh#jazyk#názov,
-    /// napr. zvuk.ts#zvuk#cs#Čeština (druh: video, zvuk alebo video+zvuk).
+    /// VSTUP je cesta, voliteľne s údajmi oddelenými znakom #: cesta#druh#jazyk#názov#rola,
+    /// napr. zvuk.ts#zvuk#cs#Čeština#dabing (druh: video, zvuk, video+zvuk alebo titulky;
+    /// rola: povodny alebo dabing).
     Spoj {
         /// Výsledný súbor (.mkv, .mka, .mp4 alebo .m4a)
         #[arg(short = 'o', long = "vystup")]
@@ -65,6 +66,24 @@ enum Prikaz {
         /// Názov (titul) výsledku
         #[arg(short = 't', long)]
         titul: Option<String>,
+        /// Autor (kanál)
+        #[arg(long)]
+        autor: Option<String>,
+        /// Dátum zverejnenia (RRRR-MM-DD)
+        #[arg(long)]
+        datum: Option<String>,
+        /// Adresa, odkiaľ video pochádza
+        #[arg(long)]
+        zdroj: Option<String>,
+        /// Popis videa
+        #[arg(long)]
+        popis: Option<String>,
+        /// Kapitola v tvare SEKUNDY=Názov (dá sa opakovať)
+        #[arg(long = "kapitola")]
+        kapitoly: Vec<String>,
+        /// Obrázok videa (JPEG alebo PNG)
+        #[arg(long)]
+        obal: Option<PathBuf>,
         #[arg(required = true)]
         vstupy: Vec<String>,
     },
@@ -208,7 +227,7 @@ async fn okno(port: u16, bez_okna: bool, zrusenie: CancellationToken) -> Vysledo
         Box::new(Systemove),
         tokio::runtime::Handle::current(),
         "prehliadac",
-        env!("CARGO_PKG_VERSION"),
+        kometa_jadro::VERZIA,
     );
     let (adresa, kluc) = server::spusti(sluzba.clone(), port).await?;
     let url = format!("http://127.0.0.1:{}/#t={kluc}", adresa.port());
@@ -283,6 +302,12 @@ async fn spusti(cli: Cli, zrusenie: CancellationToken) -> Vysledok<()> {
         Prikaz::Spoj {
             vystup,
             titul,
+            autor,
+            datum,
+            zdroj,
+            popis,
+            kapitoly,
+            obal,
             vstupy,
         } => {
             let vstupy: Vec<media::spajac::Vstup> = vstupy
@@ -297,11 +322,17 @@ async fn spusti(cli: Cli, zrusenie: CancellationToken) -> Vysledok<()> {
                         .to_string();
                     let jazyk = casti.next().filter(|x| !x.is_empty()).map(str::to_string);
                     let nazov = casti.next().filter(|x| !x.is_empty()).map(str::to_string);
+                    let povodny = match casti.next() {
+                        Some("povodny") => Some(true),
+                        Some("dabing") => Some(false),
+                        _ => None,
+                    };
                     media::spajac::Vstup {
                         cesta,
                         druh,
                         jazyk,
                         nazov,
+                        povodny,
                     }
                 })
                 .collect();
@@ -312,11 +343,40 @@ async fn spusti(cli: Cli, zrusenie: CancellationToken) -> Vysledok<()> {
                     .unwrap_or("")
                     .to_string()
             });
+            let mut kap = vec![];
+            for k in &kapitoly {
+                let (cas, meno) = k.split_once('=').unwrap_or((k, ""));
+                let sekundy: f64 = cas
+                    .trim()
+                    .parse()
+                    .map_err(|_| Chyba::Ine(format!("kapitola „{k}“: čakám SEKUNDY=Názov")))?;
+                kap.push(media::Kapitola {
+                    od: (sekundy * 1e9) as i64,
+                    nazov: meno.to_string(),
+                });
+            }
+            let obal = match obal {
+                Some(c) => Some(media::Obal::z_dat(std::fs::read(&c)?).ok_or_else(|| {
+                    Chyba::Ine("obrázok musí byť JPEG alebo PNG (do 20 MB)".into())
+                })?),
+                None => None,
+            };
+            let doplnky = media::Doplnky {
+                titul,
+                autor,
+                datum,
+                zdroj,
+                popis,
+                kapitoly: kap,
+                obal,
+                trvanie: None,
+            };
             let ciel = vystup.clone();
-            let pocty =
-                tokio::task::spawn_blocking(move || media::spajac::spoj(&vstupy, &ciel, &titul))
-                    .await
-                    .map_err(|e| Chyba::Ine(e.to_string()))??;
+            let pocty = tokio::task::spawn_blocking(move || {
+                media::spajac::spoj_s(&vstupy, &ciel, &doplnky)
+            })
+            .await
+            .map_err(|e| Chyba::Ine(e.to_string()))??;
             println!(
                 "{}",
                 serde_json::json!({"subor": vystup.display().to_string(), "vzorky": pocty})

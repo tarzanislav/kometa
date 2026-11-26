@@ -334,6 +334,8 @@ pub struct Uloha<'a> {
     pub zvuk: &'a str,
     pub spojenia: usize,
     pub spolocne: Spolocne,
+    /// prepínače na vloženie údajov, kapitol a obrázka (pozri [`super::doplnky::argumenty_ytdlp`])
+    pub doplnky: Vec<String>,
 }
 
 /// Stiahne video samotným yt-dlp (s FFmpeg). Vráti cestu k výsledku.
@@ -367,6 +369,9 @@ pub async fn stiahni(
         "%(title).120B [%(id)s].%(ext)s".into(),
     ]);
     a.extend(extra);
+    if u.ffmpeg.is_some() {
+        a.extend(u.doplnky.iter().cloned());
+    }
     if let Some(f) = u.ffmpeg {
         a.extend(["--ffmpeg-location".into(), f.to_string_lossy().into_owned()]);
     }

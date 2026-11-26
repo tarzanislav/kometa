@@ -55,6 +55,26 @@ def _no_watermark(fmt: str) -> str:
     return "/".join(filtered + parts)
 
 
+def embed_postprocessors(preset: str, opts: dict) -> list[dict]:
+    """Do súboru vloží údaje o videu, kapitoly a obrázok (podľa nastavení; treba FFmpeg).
+
+    Obrázok len pri výsledku, ktorý ho vie niesť (MP4/MKV/MP3) – WebM/Opus nie.
+    """
+    import shutil
+    if not shutil.which("ffmpeg"):
+        return []
+    v = common.VLOZIT
+    pp: list[dict] = []
+    if v["udaje"] or v["kapitoly"]:
+        pp.append({"key": "FFmpegMetadata", "add_metadata": v["udaje"], "add_chapters": v["kapitoly"],
+                   "add_infojson": False})
+    if v["obal"] and preset in ("video", "mp4", "1080", "720", "mp3"):
+        opts["writethumbnail"] = True
+        pp.insert(0, {"key": "FFmpegThumbnailsConvertor", "format": "jpg", "when": "before_dl"})
+        pp.append({"key": "EmbedThumbnail", "already_have_thumbnail": False})
+    return pp
+
+
 class Unsupported(Exception):
     """yt-dlp stránku nepozná – skúsi sa priame stiahnutie súboru."""
 
@@ -115,6 +135,7 @@ def download_media(url: str, outdir: Path, preset: str = "video", *, on_progress
             state["done"] += d.get("total_bytes") or d.get("downloaded_bytes") or 0
 
     extra = dict(preset_opts)
+    extra["postprocessors"] = list(extra.get("postprocessors") or []) + embed_postprocessors(preset, extra)
     if referer:   # vložené prehrávače (Vimeo s obmedzením na doménu) chcú adresu stránky, kde sú vložené
         extra["http_headers"] = {"Referer": referer, "Origin": "{0.scheme}://{0.netloc}".format(urlparse(referer))}
     if password:

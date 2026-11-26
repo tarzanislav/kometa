@@ -3,10 +3,17 @@
 //! Dvojprechodový: najprv sa zozbierajú údaje o vzorkách (veľkosti, časy), z nich sa postaví
 //! `moov` a zapíše sa pred `mdat`; v druhom prechode sa do `mdat` zapíšu samotné vzorky
 //! v rovnakom poradí. Jazyk ide do `mdhd` (ISO 639-2/T) a pri regióne aj do `elng` (BCP 47),
-//! názov stopy do `hdlr`; predvolená zvuková stopa je jediná zapnutá v skupine zvukov.
+//! názov stopy do `hdlr` aj `udta/name`; predvolená zvuková stopa je jediná zapnutá v skupine zvukov.
+//!
+//! Titulky: 3GPP Timed Text (`tx3g`, 3GPP TS 26.245) v stope `sbtl` – každý jazyk vlastná stopa,
+//! predvolene vypnutá; čas bez titulku vyplnia prázdne vzorky, lebo text platí až po ďalšiu vzorku.
+//! Roly stôp (pôvodný jazyk, dabing) ako `kind` s rolami MPEG-DASH (ISO/IEC 14496-12, 8.10.4).
+//! Kapitoly dvakrát: zoznam `chpl` v `moov/udta` a kapitolová textová stopa, na ktorú odkazuje
+//! prvá stopa cez `tref/chap` – prvý spôsob čítajú prehrávače na počítači, druhý zariadenia Apple.
+//! Údaje o videu (názov, autor, dátum, zdroj, popis, obrázok) v `moov/udta/meta/ilst`.
 
 use super::mkv::StopaVystupu;
-use super::{z_ns, Druh, Kodek};
+use super::{orez_utf8, z_ns, Doplnky, Druh, Kapitola, Kodek, NS};
 use crate::chyba::{Chyba, Vysledok};
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -37,6 +44,144 @@ fn plny(typ: &[u8; 4], verzia: u8, priznaky: u32, telo: &[u8]) -> Vec<u8> {
     t.extend_from_slice(telo);
     bx(typ, &t)
 }
+
+/// Vzorka tx3g bez textu – úsek, keď sa nič nezobrazuje.
+pub const TX3G_PRAZDNA: [u8; 2] = [0, 0];
+
+/// Text titulku → vzorka tx3g: 16-bitová dĺžka a text v UTF-8 (riadky oddelené LF).
+pub fn tx3g_vzorka(text: &str) -> Vec<u8> {
+    let t = text.replace("\r\n", "\n").replace('\r', "\n");
+    let t = orez_utf8(t.trim_matches('\n'), u16::MAX as usize);
+    let mut o = (t.len() as u16).to_be_bytes().to_vec();
+    o.extend_from_slice(t.as_bytes());
+    o
+}
+
+/// Opis vzorky `tx3g`: biele písmo bez pozadia, v strede pri spodnom okraji. Textové pole je celý
+/// obraz (ak ho poznáme) a veľkosť písma asi dvadsatina jeho výšky – čitateľný riadok titulkov.
+fn tx3g_opis(sirka: u32, vyska: u32) -> Vec<u8> {
+    let mut t = vec![0u8; 6];
+    t.extend(1u16.to_be_bytes()); // data_reference_index
+    t.extend(0u32.to_be_bytes()); // displayFlags
+    t.push(1); // vodorovne: stred
+    t.push(0xFF); // zvisle: dole (−1)
+    t.extend([0u8; 4]); // pozadie RGBA: priehľadné
+    let (s, v) = (
+        sirka.min(i16::MAX as u32) as i16,
+        vyska.min(i16::MAX as u32) as i16,
+    );
+    for x in [0i16, 0, v, s] {
+        t.extend(x.to_be_bytes()); // BoxRecord: hore, vľavo, dole, vpravo
+    }
+    t.extend(0u16.to_be_bytes()); // StyleRecord: startChar
+    t.extend(0u16.to_be_bytes()); // endChar
+    t.extend(1u16.to_be_bytes()); // font-ID
+    t.push(0); // bez tučného/kurzívy
+    t.push(if vyska > 0 {
+        (vyska / 20).clamp(12, 255) as u8
+    } else {
+        18
+    });
+    t.extend([0xFF; 4]); // biela, nepriehľadná
+    let pismo = b"Sans-Serif";
+    let mut ft = 1u16.to_be_bytes().to_vec(); // jedno písmo
+    ft.extend(1u16.to_be_bytes());
+    ft.push(pismo.len() as u8);
+    ft.extend(pismo);
+    t.extend(bx(b"ftab", &ft));
+    bx(b"tx3g", &t)
+}
+
+/// Položka iTunes zoznamu `ilst`: box s jedným `data` (typ 1 = UTF-8, 13 = JPEG, 14 = PNG).
+fn polozka_ilst(typ: &[u8; 4], druh: u32, obsah: &[u8]) -> Vec<u8> {
+    let mut d = druh.to_be_bytes().to_vec();
+    d.extend(0u32.to_be_bytes()); // jazyk/krajina: žiadne
+    d.extend_from_slice(obsah);
+    bx(typ, &bx(b"data", &d))
+}
+
+/// `moov/udta`: kapitoly (`chpl`) a údaje o videu (`meta` s `ilst`).
+fn udta_filmu(d: &Doplnky, kapitoly: &[Kapitola]) -> Vec<u8> {
+    let mut u = vec![];
+    if !kapitoly.is_empty() {
+        // chpl verzie 1: 4 rezervované bajty, počet (najviac 255), potom začiatok v 100 ns a názov
+        let mut t = vec![0u8; 4];
+        let n = kapitoly.len().min(255);
+        t.push(n as u8);
+        for k in &kapitoly[..n] {
+            t.extend(((k.od.max(0) / 100) as u64).to_be_bytes());
+            let meno = orez_utf8(&k.nazov, 255);
+            t.push(meno.len() as u8);
+            t.extend(meno.as_bytes());
+        }
+        u.extend(plny(b"chpl", 1, 0, &t));
+    }
+    let mut ilst = vec![];
+    let mut text = |kluc: &[u8; 4], hodnota: Option<&str>| {
+        if let Some(h) = hodnota.map(str::trim).filter(|h| !h.is_empty()) {
+            ilst.extend(polozka_ilst(kluc, 1, h.as_bytes()));
+        }
+    };
+    text(b"\xA9nam", Some(&d.titul));
+    text(b"\xA9ART", d.autor.as_deref());
+    text(b"\xA9day", d.datum.as_deref());
+    text(b"\xA9cmt", d.zdroj.as_deref());
+    // krátky popis (iTunes ho obmedzuje na 255 znakov), celý ide do „ldes“
+    if let Some(p) = d.popis.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+        let kratky: String = p.chars().take(255).collect();
+        text(b"desc", Some(&kratky));
+        if kratky.len() < p.len() {
+            text(b"ldes", Some(p));
+        }
+    }
+    text(b"\xA9too", Some(&format!("Kometa {}", crate::VERZIA)));
+    if let Some(o) = &d.obal {
+        ilst.extend(polozka_ilst(
+            b"covr",
+            if o.png() { 14 } else { 13 },
+            &o.data,
+        ));
+    }
+    let mut hd = 0u32.to_be_bytes().to_vec(); // pre_defined
+    hd.extend(b"mdir");
+    hd.extend(b"appl");
+    hd.extend([0u8; 8]);
+    hd.push(0); // prázdny názov
+    let meta = plny(
+        b"meta",
+        0,
+        0,
+        &[plny(b"hdlr", 0, 0, &hd), bx(b"ilst", &ilst)].concat(),
+    );
+    u.extend(meta);
+    bx(b"udta", &u)
+}
+
+/// Druh stopy v MP4 (titulky a kapitoly sú obe textové, ale s inou úlohou).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Uloha {
+    Obraz,
+    Zvuk,
+    Titulky,
+    Kapitoly,
+}
+
+/// Čo treba vedieť na zápis jednej stopy `trak`.
+struct OpisStopy {
+    uloha: Uloha,
+    stsd: Vec<u8>,
+    jazyk: Option<String>,
+    nazov: String,
+    zapnuta: bool,
+    sirka: u32,
+    vyska: u32,
+    /// roly MPEG-DASH (urn:mpeg:dash:role:2011), napr. „main“, „dub“
+    roly: Vec<&'static str>,
+    /// ID kapitolovej stopy (tref/chap)
+    kapitoly: Option<u32>,
+}
+
+const SCHEMA_ROL: &str = "urn:mpeg:dash:role:2011";
 
 const MATICA: [u32; 9] = [0x0001_0000, 0, 0, 0, 0x0001_0000, 0, 0, 0, 0x4000_0000];
 
@@ -132,7 +277,7 @@ fn zvukovy(fourcc: &[u8; 4], kanaly: u16, frekv: u32, deti: &[u8]) -> Vec<u8> {
     bx(fourcc, &t)
 }
 
-fn stsd(s: &StopaVystupu, id: u32) -> Vysledok<Vec<u8>> {
+fn stsd(s: &StopaVystupu, id: u32, ramec: (u32, u32)) -> Vysledok<Vec<u8>> {
     let i = &s.info;
     let vstup = match i.kodek {
         Kodek::H264 => vizualny(b"avc1", i.sirka, i.vyska, &bx(b"avcC", &i.konfig)),
@@ -172,16 +317,21 @@ fn stsd(s: &StopaVystupu, id: u32) -> Vysledok<Vec<u8>> {
             i.frekvencia,
             &bx(b"dec3", &i.konfig),
         ),
-        Kodek::Srt => return Err(Chyba::Nepodporovane("titulky v MP4".into())),
+        Kodek::Srt => tx3g_opis(ramec.0, ramec.1),
     };
+    Ok(stsd_z(vstup))
+}
+
+fn stsd_z(vstup: Vec<u8>) -> Vec<u8> {
     let mut t = 1u32.to_be_bytes().to_vec();
     t.extend(vstup);
-    Ok(plny(b"stsd", 0, 0, &t))
+    plny(b"stsd", 0, 0, &t)
 }
 
 fn mierka(s: &StopaVystupu) -> u32 {
     match s.info.kodek {
         Kodek::Opus => 48_000,
+        Kodek::Srt => 1000,
         _ if s.info.druh() == Druh::Zvuk && s.info.frekvencia > 0 => s.info.frekvencia,
         _ => 90_000,
     }
@@ -200,13 +350,7 @@ struct Tabulky {
     media_cas: i64,
 }
 
-fn tabulky(
-    meta: &[VzorkaMeta],
-    stopa: usize,
-    s: &StopaVystupu,
-    ofsety_kuskov: &[(usize, u64)],
-) -> Tabulky {
-    let m = mierka(s);
+fn tabulky(meta: &[VzorkaMeta], stopa: usize, m: u32, ofsety_kuskov: &[(usize, u64)]) -> Tabulky {
     let vz: Vec<&VzorkaMeta> = meta.iter().filter(|v| v.stopa as usize == stopa).collect();
     let prve_dts = vz.first().map(|v| v.dts).unwrap_or(0);
     let min_pts = vz.iter().map(|v| v.pts).min().unwrap_or(0);
@@ -269,15 +413,50 @@ fn tabulky(
     }
 }
 
-fn trak(
-    id: u32,
+/// Opis stopy z výsledku spájania; `ramec` = rozmer obrazu (pre textové pole titulkov).
+fn opis(
     s: &StopaVystupu,
-    t: &Tabulky,
-    co64: bool,
-    film_trvanie: u64,
-) -> Vysledok<Vec<u8>> {
-    let video = s.info.druh() == Druh::Video;
-    let zapnuta = video || s.predvolena;
+    id: u32,
+    ramec: (u32, u32),
+    kapitoly: Option<u32>,
+) -> Vysledok<OpisStopy> {
+    let uloha = match s.info.druh() {
+        Druh::Video => Uloha::Obraz,
+        Druh::Zvuk => Uloha::Zvuk,
+        Druh::Titulky => Uloha::Titulky,
+    };
+    let (sirka, vyska) = match uloha {
+        Uloha::Obraz => (s.info.sirka, s.info.vyska),
+        Uloha::Titulky => ramec,
+        _ => (0, 0),
+    };
+    let roly = match (uloha, s.povodna) {
+        (Uloha::Zvuk, Some(true)) => vec!["main"],
+        (Uloha::Zvuk, Some(false)) => vec!["dub"],
+        _ => vec![],
+    };
+    Ok(OpisStopy {
+        uloha,
+        stsd: stsd(s, id, ramec)?,
+        jazyk: s.jazyk.clone().or_else(|| s.info.jazyk.clone()),
+        nazov: s.nazov.clone().unwrap_or_else(|| {
+            match uloha {
+                Uloha::Obraz => "Obraz",
+                Uloha::Zvuk => "Zvuk",
+                _ => "Titulky",
+            }
+            .into()
+        }),
+        // titulky predvolene vypnuté – zapneš ich v prehrávači
+        zapnuta: uloha == Uloha::Obraz || (uloha == Uloha::Zvuk && s.predvolena),
+        sirka,
+        vyska,
+        roly,
+        kapitoly,
+    })
+}
+
+fn trak(id: u32, o: &OpisStopy, t: &Tabulky, co64: bool) -> Vec<u8> {
     let trvanie_ms = (t.trvanie as u128 * 1000 / t.mierka as u128) as u64;
     let oneskorenie_ms = (t.zaciatok_ns / 1_000_000) as u64;
     // tkhd
@@ -286,16 +465,32 @@ fn trak(
     h.extend([0u8; 4]);
     h.extend(((oneskorenie_ms + trvanie_ms).min(u32::MAX as u64) as u32).to_be_bytes());
     h.extend([0u8; 8]);
-    h.extend(0u16.to_be_bytes()); // layer
-    h.extend((if video { 0u16 } else { 1 }).to_be_bytes()); // alternate_group: zvuky sú alternatívy
-    h.extend((if video { 0u16 } else { 0x0100 }).to_be_bytes());
+    // vrstva: titulky pred obrazom (−1); skupina: zvuky (1) aj titulky (2) sú alternatívy navzájom
+    let (vrstva, skupina): (i16, u16) = match o.uloha {
+        Uloha::Obraz | Uloha::Kapitoly => (0, 0),
+        Uloha::Zvuk => (0, 1),
+        Uloha::Titulky => (-1, 2),
+    };
+    h.extend(vrstva.to_be_bytes());
+    h.extend(skupina.to_be_bytes());
+    h.extend((if o.uloha == Uloha::Zvuk { 0x0100u16 } else { 0 }).to_be_bytes());
     h.extend([0u8; 2]);
     for x in MATICA {
         h.extend(x.to_be_bytes());
     }
-    h.extend((if video { s.info.sirka << 16 } else { 0 }).to_be_bytes());
-    h.extend((if video { s.info.vyska << 16 } else { 0 }).to_be_bytes());
-    let tkhd = plny(b"tkhd", 0, if zapnuta { 3 } else { 2 }, &h);
+    h.extend((o.sirka << 16).to_be_bytes());
+    h.extend((o.vyska << 16).to_be_bytes());
+    // príznaky: 1 = zapnutá, 2 = súčasť prezentácie (kapitoly nie sú ani jedno)
+    let priznaky = match (o.uloha, o.zapnuta) {
+        (Uloha::Kapitoly, _) => 0,
+        (_, true) => 3,
+        (_, false) => 2,
+    };
+    let tkhd = plny(b"tkhd", 0, priznaky, &h);
+    let tref = match o.kapitoly {
+        Some(k) => bx(b"tref", &bx(b"chap", &k.to_be_bytes())),
+        None => vec![],
+    };
     // edts: oneskorenie začiatku a posun prezentácie
     let mut e = vec![];
     let mut pocet = 0u32;
@@ -312,10 +507,9 @@ fn trak(
     let mut elst = pocet.to_be_bytes().to_vec();
     elst.extend(e);
     let edts = bx(b"edts", &plny(b"elst", 0, 0, &elst));
-    let _ = film_trvanie;
     // mdia
-    let jazyk = s.jazyk.clone().or_else(|| s.info.jazyk.clone());
-    let jazyk_b = jazyk
+    let jazyk_b = o
+        .jazyk
         .as_deref()
         .map(crate::spajanie::iso639_2)
         .unwrap_or_else(|| "und".into());
@@ -325,7 +519,7 @@ fn trak(
     md.extend(zbal_jazyk(&jazyk_t(&jazyk_b)).to_be_bytes());
     md.extend([0u8; 2]);
     let mdhd = plny(b"mdhd", 0, 0, &md);
-    let elng = match &jazyk {
+    let elng = match &o.jazyk {
         Some(j) if j.contains(['-', '_']) => {
             let mut z = j.replace('_', "-").into_bytes();
             z.push(0);
@@ -333,20 +527,21 @@ fn trak(
         }
         _ => vec![],
     };
-    let meno = s
-        .nazov
-        .clone()
-        .unwrap_or_else(|| if video { "Obraz".into() } else { "Zvuk".into() });
     let mut hd = vec![0u8; 4];
-    hd.extend(if video { b"vide" } else { b"soun" });
+    hd.extend(match o.uloha {
+        Uloha::Obraz => b"vide",
+        Uloha::Zvuk => b"soun",
+        Uloha::Titulky => b"sbtl",
+        Uloha::Kapitoly => b"text",
+    });
     hd.extend([0u8; 12]);
-    hd.extend(meno.as_bytes());
+    hd.extend(o.nazov.as_bytes());
     hd.push(0);
     let hdlr = plny(b"hdlr", 0, 0, &hd);
-    let hlavicka_media = if video {
-        plny(b"vmhd", 0, 1, &[0u8; 8])
-    } else {
-        plny(b"smhd", 0, 0, &[0u8; 4])
+    let hlavicka_media = match o.uloha {
+        Uloha::Obraz => plny(b"vmhd", 0, 1, &[0u8; 8]),
+        Uloha::Zvuk => plny(b"smhd", 0, 0, &[0u8; 4]),
+        _ => plny(b"nmhd", 0, 0, &[]),
     };
     let dref = plny(
         b"dref",
@@ -356,7 +551,7 @@ fn trak(
     );
     let dinf = bx(b"dinf", &dref);
     // stbl
-    let mut stbl = stsd(s, id)?;
+    let mut stbl = o.stsd.clone();
     let mut x = (t.stts.len() as u32).to_be_bytes().to_vec();
     for (n, d) in &t.stts {
         x.extend(n.to_be_bytes());
@@ -406,19 +601,39 @@ fn trak(
         &[hlavicka_media, dinf, bx(b"stbl", &stbl)].concat(),
     );
     let mdia = bx(b"mdia", &[mdhd, elng, hdlr, minf].concat());
-    Ok(bx(b"trak", &[tkhd, edts, mdia].concat()))
+    // udta stopy: názov (ako ho čítajú prehrávače a FFmpeg) a roly
+    let mut u = bx(b"name", o.nazov.as_bytes());
+    for r in &o.roly {
+        let mut k = SCHEMA_ROL.as_bytes().to_vec();
+        k.push(0);
+        k.extend(r.as_bytes());
+        k.push(0);
+        u.extend(plny(b"kind", 0, 0, &k));
+    }
+    let udta = bx(b"udta", &u);
+    bx(b"trak", &[tkhd, tref, edts, mdia, udta].concat())
 }
 
 pub struct ZapisovacMp4 {
     f: BufWriter<File>,
     ocakavane: Vec<u32>,
     dalsia: usize,
+    /// textové stopy: počítajú sa len vzorky s textom (prázdne vyplňujú medzery)
+    textove: Vec<bool>,
     pub pocty: Vec<u64>,
+    /// koľko kapitol sa zapísalo (chpl aj kapitolová stopa)
+    pub kapitoly: usize,
 }
 
 impl ZapisovacMp4 {
-    /// Zapíše ftyp + moov + hlavičku mdat; potom treba volať [`ZapisovacMp4::data`] pre každú vzorku v poradí `meta`.
-    pub fn new(cesta: &Path, stopy: &[StopaVystupu], meta: &[VzorkaMeta]) -> Vysledok<Self> {
+    /// Zapíše ftyp + moov + hlavičku mdat (a kapitoly na jej začiatok); potom treba volať
+    /// [`ZapisovacMp4::data`] pre každú vzorku v poradí `meta`.
+    pub fn new(
+        cesta: &Path,
+        stopy: &[StopaVystupu],
+        meta: &[VzorkaMeta],
+        doplnky: &Doplnky,
+    ) -> Vysledok<Self> {
         let ma_avc = stopy.iter().any(|s| s.info.kodek == Kodek::H264);
         let mut ft = b"isom".to_vec();
         ft.extend(0x200u32.to_be_bytes());
@@ -428,9 +643,48 @@ impl ZapisovacMp4 {
         }
         ft.extend(b"mp41");
         let ftyp = bx(b"ftyp", &ft);
-        // kúsky: súvislé behy vzoriek tej istej stopy
+        let ramec = stopy
+            .iter()
+            .find(|s| s.info.druh() == Druh::Video)
+            .map(|s| (s.info.sirka, s.info.vyska))
+            .unwrap_or((0, 0));
+        // dĺžka filmu (ms) z tabuliek vzoriek – potrebná pre koniec poslednej kapitoly
+        let mut film_ms = 0u64;
+        for (k, s) in stopy.iter().enumerate() {
+            let t = tabulky(meta, k, mierka(s), &[]);
+            film_ms = film_ms.max(
+                (t.zaciatok_ns / 1_000_000) as u64
+                    + (t.trvanie as u128 * 1000 / t.mierka as u128) as u64,
+            );
+        }
+        // kapitoly: vzorky textovej stopy na začiatku mdat (jeden kúsok)
+        let kapitoly = doplnky.kapitoly_do(film_ms as i64 * 1_000_000);
+        let kap_data: Vec<Vec<u8>> = kapitoly.iter().map(|k| tx3g_vzorka(&k.nazov)).collect();
+        let n_kap = stopy.len();
+        let kap_meta: Vec<VzorkaMeta> = kapitoly
+            .iter()
+            .enumerate()
+            .map(|(i, k)| {
+                let do_ = kapitoly
+                    .get(i + 1)
+                    .map(|n| n.od)
+                    .unwrap_or(film_ms as i64 * 1_000_000)
+                    .max(k.od + NS / 1000);
+                VzorkaMeta {
+                    stopa: n_kap as u16,
+                    velkost: kap_data[i].len() as u32,
+                    dts: k.od,
+                    pts: k.od,
+                    trvanie: do_ - k.od,
+                    kluc: true,
+                }
+            })
+            .collect();
+        let kap_bajty: u64 = kap_data.iter().map(|d| d.len() as u64).sum();
+        let id_kapitol = (!kapitoly.is_empty()).then_some(stopy.len() as u32 + 1);
+        // kúsky: súvislé behy vzoriek tej istej stopy (za kapitolami)
         let mut behy: Vec<(usize, usize, u64)> = vec![]; // (stopa, počet, relatívny ofset)
-        let mut rel = 0u64;
+        let mut rel = kap_bajty;
         for v in meta {
             match behy.last_mut() {
                 Some((s, n, _)) if *s == v.stopa as usize && *n < 1024 => *n += 1,
@@ -439,25 +693,39 @@ impl ZapisovacMp4 {
             rel += v.velkost as u64;
         }
         let spolu = rel;
+        let udta = udta_filmu(doplnky, &kapitoly);
         let postav = |zaklad: u64, co64: bool| -> Vysledok<Vec<u8>> {
             let mut traky = vec![];
             let mut film = 0u64;
-            let mut tab = vec![];
             for (k, s) in stopy.iter().enumerate() {
                 let ofs: Vec<(usize, u64)> = behy
                     .iter()
                     .filter(|b| b.0 == k)
                     .map(|b| (b.1, zaklad + b.2))
                     .collect();
-                let t = tabulky(meta, k, s, &ofs);
+                let t = tabulky(meta, k, mierka(s), &ofs);
                 film = film.max(
                     (t.zaciatok_ns / 1_000_000) as u64
                         + (t.trvanie as u128 * 1000 / t.mierka as u128) as u64,
                 );
-                tab.push(t);
+                // na kapitoly odkazuje prvá stopa (obraz, alebo prvý zvuk)
+                let o = opis(s, k as u32 + 1, ramec, id_kapitol.filter(|_| k == 0))?;
+                traky.extend(trak(k as u32 + 1, &o, &t, co64));
             }
-            for (k, s) in stopy.iter().enumerate() {
-                traky.extend(trak(k as u32 + 1, s, &tab[k], co64, film)?);
+            if let Some(id) = id_kapitol {
+                let t = tabulky(&kap_meta, n_kap, 1000, &[(kapitoly.len(), zaklad)]);
+                let o = OpisStopy {
+                    uloha: Uloha::Kapitoly,
+                    stsd: stsd_z(tx3g_opis(0, 0)),
+                    jazyk: None,
+                    nazov: "Kapitoly".into(),
+                    zapnuta: false,
+                    sirka: 0,
+                    vyska: 0,
+                    roly: vec![],
+                    kapitoly: None,
+                };
+                traky.extend(trak(id, &o, &t, co64));
             }
             let mut mv = vec![0u8; 8];
             mv.extend(1000u32.to_be_bytes());
@@ -469,9 +737,10 @@ impl ZapisovacMp4 {
                 mv.extend(x.to_be_bytes());
             }
             mv.extend([0u8; 24]);
-            mv.extend((stopy.len() as u32 + 1).to_be_bytes());
+            let dalsie_id = stopy.len() as u32 + 1 + id_kapitol.is_some() as u32;
+            mv.extend(dalsie_id.to_be_bytes());
             let mvhd = plny(b"mvhd", 0, 0, &mv);
-            Ok(bx(b"moov", &[mvhd, traky].concat()))
+            Ok(bx(b"moov", &[mvhd, traky, udta.clone()].concat()))
         };
         let skusobny = postav(0, false)?;
         let co64 = ftyp.len() as u64 + skusobny.len() as u64 * 2 + 16 + spolu > u32::MAX as u64;
@@ -487,11 +756,16 @@ impl ZapisovacMp4 {
         f.write_all(&1u32.to_be_bytes())?;
         f.write_all(b"mdat")?;
         f.write_all(&(spolu + 16).to_be_bytes())?;
+        for d in &kap_data {
+            f.write_all(d)?;
+        }
         Ok(ZapisovacMp4 {
             f,
             ocakavane: meta.iter().map(|v| v.velkost).collect(),
             dalsia: 0,
+            textove: stopy.iter().map(|s| s.info.kodek == Kodek::Srt).collect(),
             pocty: vec![0; stopy.len()],
+            kapitoly: kapitoly.len(),
         })
     }
 
@@ -501,7 +775,9 @@ impl ZapisovacMp4 {
             _ => return Err(Chyba::Format("MP4: druhý prechod nesedí s prvým".into())),
         }
         self.dalsia += 1;
-        self.pocty[stopa] += 1;
+        if !(self.textove[stopa] && d.len() <= 2) {
+            self.pocty[stopa] += 1;
+        }
         self.f.write_all(d)?;
         Ok(())
     }
@@ -528,6 +804,62 @@ mod testy {
         assert_eq!(jazyk_t("slo"), "slk");
         assert_eq!(zbal_jazyk("und"), 0x55C4);
         assert_eq!(zbal_jazyk("xx"), 0x55C4);
+    }
+
+    #[test]
+    fn tx3g_vzorky_a_opis() {
+        assert_eq!(
+            tx3g_vzorka("Ahoj\r\nsvet\n"),
+            b"\x00\x09Ahoj\nsvet".to_vec()
+        );
+        assert_eq!(tx3g_vzorka(""), TX3G_PRAZDNA.to_vec());
+        let o = tx3g_opis(1920, 1080);
+        assert_eq!(&o[4..8], b"tx3g");
+        // 8 hlavička + 8 SampleEntry + 4 displayFlags + 2 zarovnanie + 4 pozadie
+        assert_eq!(&o[26..34], &[0, 0, 0, 0, 0x04, 0x38, 0x07, 0x80]);
+        assert_eq!(&o[38..42], &[0, 1, 0, 54]); // písmo č. 1, obyčajné, 1080 / 20
+        assert_eq!(&o[o.len() - 19..o.len() - 15], b"ftab"); // ftab: 23 B s písmom Sans-Serif
+        assert_eq!(
+            u32::from_be_bytes(o[..4].try_into().unwrap()) as usize,
+            o.len()
+        );
+    }
+
+    #[test]
+    fn udaje_a_kapitoly() {
+        let d = Doplnky {
+            titul: "Film".into(),
+            autor: Some("Kanál".into()),
+            kapitoly: vec![
+                Kapitola {
+                    od: 0,
+                    nazov: "Začiatok".into(),
+                },
+                Kapitola {
+                    od: 61 * NS,
+                    nazov: "Druhá".into(),
+                },
+            ],
+            ..Default::default()
+        };
+        let u = udta_filmu(&d, &d.kapitoly_do(0));
+        let hladaj = |vzor: &[u8]| u.windows(vzor.len()).position(|w| w == vzor);
+        let c = hladaj(b"chpl").unwrap();
+        assert_eq!(u[c + 4], 1); // verzia 1
+        assert_eq!(u[c + 12], 2); // dve kapitoly
+        assert_eq!(&u[c + 13..c + 22], &[0, 0, 0, 0, 0, 0, 0, 0, 9]); // prvá od 0, názov 9 B
+        let druha = c + 13 + 8 + 1 + "Začiatok".len();
+        assert_eq!(
+            u64::from_be_bytes(u[druha..druha + 8].try_into().unwrap()),
+            610_000_000 // 61 s v 100 ns
+        );
+        assert!(hladaj(b"\xA9namdata").is_none()); // medzi nimi je veľkosť
+        let n = hladaj(b"\xA9nam").unwrap();
+        assert_eq!(&u[n + 8..n + 12], b"data");
+        assert_eq!(&u[n + 12..n + 16], &[0, 0, 0, 1]);
+        assert_eq!(&u[n + 20..n + 24], b"Film");
+        assert!(hladaj(b"mdirappl").is_some());
+        assert!(hladaj(b"covr").is_none());
     }
 
     #[test]

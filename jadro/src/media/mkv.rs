@@ -1,10 +1,12 @@
 //! Zápis Matroska (MKV/MKA) – vlastný zapisovač EBML – a kontrola zapísaného súboru.
 //!
-//! Štruktúra: EBML hlavička, Segment { SeekHead (v rezervovanom mieste), Info, Tracks, Cluster…, Cues }.
+//! Štruktúra: EBML hlavička, Segment { SeekHead (v rezervovanom mieste), Info, Tracks, Tags,
+//! Attachments (obrázok videa), Cluster…, Chapters, Cues }. Kapitoly idú až za clustre, lebo
+//! koniec poslednej kapitoly je koniec videa, ktorý sa zistí až pri zápise.
 //! Clustre začínajú na kľúčových snímkach obrazu, aby sa dalo rýchlo pretáčať. Veľkosti, trvanie
 //! a odkazy sa po zápise doplnia na svoje miesta.
 
-use super::{Druh, InfoStopy, Kodek};
+use super::{Doplnky, Druh, InfoStopy, Kapitola, Kodek};
 use crate::chyba::{Chyba, Vysledok};
 use crate::spajanie::iso639_2;
 use std::fs::File;
@@ -25,6 +27,9 @@ const CUES: u32 = 0x1C53_BB6B;
 const VOID: u32 = 0xEC;
 const TIMESTAMP: u32 = 0xE7;
 const SIMPLEBLOCK: u32 = 0xA3;
+const CHAPTERS: u32 = 0x1043_A770;
+const ATTACHMENTS: u32 = 0x1941_A469;
+const TAGS: u32 = 0x1254_C367;
 
 /// Stopa výsledného súboru: čo o nej vie čítač + jazyk, názov a predvolenosť.
 #[derive(Clone, Debug)]
@@ -34,6 +39,8 @@ pub struct StopaVystupu {
     pub jazyk: Option<String>,
     pub nazov: Option<String>,
     pub predvolena: bool,
+    /// v pôvodnom jazyku videa (Some(true)), preklad/dabing (Some(false)), nevie sa (None)
+    pub povodna: Option<bool>,
 }
 
 fn id_bajty(id: u32) -> Vec<u8> {
@@ -172,6 +179,9 @@ fn stopa_prvok(cislo: usize, s: &StopaVystupu) -> Vysledok<Vec<u8>> {
     t.extend(uint(0xB9, 1)); // FlagEnabled
     t.extend(uint(0x88, s.predvolena as u64)); // FlagDefault (predvolená hodnota je 1 – zapisuje sa vždy)
     t.extend(uint(0x55AA, 0)); // FlagForced
+    if let Some(p) = s.povodna {
+        t.extend(uint(0x55AE, p as u64)); // FlagOriginal (Matroska v4)
+    }
     t.extend(uint(0x9C, 0)); // FlagLacing
     let jazyk = s.jazyk.clone().or_else(|| i.jazyk.clone());
     match &jazyk {
@@ -237,7 +247,72 @@ fn stopa_prvok(cislo: usize, s: &StopaVystupu) -> Vysledok<Vec<u8>> {
     Ok(prvok(0xAE, &t))
 }
 
-const REZERVA_SEEKHEAD: usize = 160;
+const REZERVA_SEEKHEAD: usize = 256;
+
+/// Tags: údaje o celom videu (cieľ 50 = film/epizóda) – názvy podľa zoznamu značiek Matroska.
+fn znacky(d: &Doplnky) -> Vec<u8> {
+    let mut polozky: Vec<(&str, &str)> = vec![];
+    if !d.titul.is_empty() {
+        polozky.push(("TITLE", &d.titul));
+    }
+    for (meno, hodnota) in [
+        ("ARTIST", &d.autor),
+        ("DATE_RELEASED", &d.datum),
+        ("DESCRIPTION", &d.popis),
+        ("URL", &d.zdroj),
+    ] {
+        if let Some(h) = hodnota.as_deref().filter(|h| !h.trim().is_empty()) {
+            polozky.push((meno, h));
+        }
+    }
+    if polozky.is_empty() {
+        return vec![];
+    }
+    // len TargetTypeValue 50 (bez názvu cieľa) – prehrávače to berú ako údaje celého súboru
+    let mut tag = prvok(0x63C0, &uint(0x68CA, 50));
+    for (meno, hodnota) in polozky {
+        let mut st = text(0x45A3, meno);
+        st.extend(text(0x447A, "und"));
+        st.extend(uint(0x4484, 1));
+        st.extend(text(0x4487, hodnota));
+        tag.extend(prvok(0x67C8, &st));
+    }
+    prvok(TAGS, &prvok(0x7373, &tag))
+}
+
+/// Attachments: obrázok videa ako „cover.jpg/png“ – tak ho hľadajú prehrávače a knižnice médií.
+fn prilohy(d: &Doplnky) -> Vec<u8> {
+    let Some(o) = &d.obal else { return vec![] };
+    let mut f = text(0x467E, "Obrázok videa");
+    f.extend(text(0x466E, &format!("cover.{}", o.pripona())));
+    f.extend(text(0x4660, o.mime()));
+    f.extend(prvok(0x465C, &o.data));
+    f.extend(uint(0x46AE, uid(0xC0FE)));
+    prvok(ATTACHMENTS, &prvok(0x61A7, &f))
+}
+
+/// Chapters: jedno vydanie, každá kapitola od svojho začiatku po začiatok ďalšej (posledná po koniec).
+fn kapitoly(k: &[Kapitola], koniec_ns: i64) -> Vec<u8> {
+    if k.is_empty() {
+        return vec![];
+    }
+    let mut ed = uint(0x45BC, uid(0xED17));
+    ed.extend(uint(0x45BD, 0)); // EditionFlagHidden
+    ed.extend(uint(0x45DB, 1)); // EditionFlagDefault
+    for (i, x) in k.iter().enumerate() {
+        let do_ = k.get(i + 1).map(|n| n.od).unwrap_or(koniec_ns).max(x.od);
+        let mut a = uint(0x73C4, uid(0xCA00 + i as u64));
+        a.extend(uint(0x91, x.od.max(0) as u64));
+        a.extend(uint(0x92, do_.max(0) as u64));
+        a.extend(uint(0x98, 0)); // ChapterFlagHidden
+        a.extend(uint(0x4598, 1)); // ChapterFlagEnabled
+        let mut zobraz = text(0x85, &x.nazov);
+        zobraz.extend(text(0x437C, "und"));
+        a.extend(prvok(0x80, &zobraz));
+        ed.extend(prvok(0xB6, &a));
+    }
+    prvok(CHAPTERS, &prvok(0x45B9, &ed))
+}
 
 pub struct ZapisovacMkv {
     f: BufWriter<File>,
@@ -246,6 +321,9 @@ pub struct ZapisovacMkv {
     trvanie_poz: u64,
     info_poz: u64,
     tracks_poz: u64,
+    /// ďalšie prvky pred clustrami (Tags, Attachments): (ID, pozícia v Segmente)
+    dalsie_poz: Vec<(u32, u64)>,
+    kapitoly: Vec<Kapitola>,
     pocet_stop: usize,
     video: Option<usize>,
     klaster: Vec<u8>,
@@ -260,7 +338,8 @@ pub struct ZapisovacMkv {
 }
 
 impl ZapisovacMkv {
-    pub fn new(cesta: &Path, stopy: &[StopaVystupu], titul: &str) -> Vysledok<Self> {
+    pub fn new(cesta: &Path, stopy: &[StopaVystupu], doplnky: &Doplnky) -> Vysledok<Self> {
+        let titul = doplnky.titul.as_str();
         if stopy.is_empty() || stopy.len() > 126 {
             return Err(Chyba::Format("nesprávny počet stôp pre MKV".into()));
         }
@@ -285,8 +364,9 @@ impl ZapisovacMkv {
         let info_poz = f.stream_position()? - seg_data;
         let mut info = vec![];
         info.extend(uint(0x2AD7B1, 1_000_000)); // TimestampScale: 1 ms
-        info.extend(text(0x4D80, concat!("Kometa ", env!("CARGO_PKG_VERSION"))));
-        info.extend(text(0x5741, concat!("Kometa ", env!("CARGO_PKG_VERSION"))));
+        let app = format!("Kometa {}", crate::VERZIA);
+        info.extend(text(0x4D80, &app));
+        info.extend(text(0x5741, &app));
         if !titul.is_empty() {
             info.extend(text(0x7BA9, titul));
         }
@@ -307,6 +387,13 @@ impl ZapisovacMkv {
             t.extend(stopa_prvok(k, s)?);
         }
         f.write_all(&prvok(TRACKS, &t))?;
+        let mut dalsie_poz = vec![];
+        for (id, telo) in [(TAGS, znacky(doplnky)), (ATTACHMENTS, prilohy(doplnky))] {
+            if !telo.is_empty() {
+                dalsie_poz.push((id, f.stream_position()? - seg_data));
+                f.write_all(&telo)?;
+            }
+        }
         Ok(ZapisovacMkv {
             f,
             seg_data,
@@ -314,6 +401,8 @@ impl ZapisovacMkv {
             trvanie_poz,
             info_poz,
             tracks_poz,
+            dalsie_poz,
+            kapitoly: doplnky.kapitoly.clone(),
             pocet_stop: stopy.len(),
             video: stopy.iter().position(|s| s.info.druh() == Druh::Video),
             klaster: vec![],
@@ -400,8 +489,25 @@ impl ZapisovacMkv {
     }
 
     /// Dokončí súbor (Cues, SeekHead, trvanie, veľkosť) a vráti počty vzoriek podľa stôp.
-    pub fn dokonci(mut self) -> Vysledok<Vec<u64>> {
+    pub fn dokonci(self) -> Vysledok<Vec<u64>> {
+        self.dokonci_s().map(|(p, _)| p)
+    }
+
+    /// Ako [`ZapisovacMkv::dokonci`], navyše vráti počet zapísaných kapitol.
+    pub fn dokonci_s(mut self) -> Vysledok<(Vec<u64>, usize)> {
         self.zavri_klaster()?;
+        let mut ciele = vec![(INFO, self.info_poz), (TRACKS, self.tracks_poz)];
+        ciele.extend(self.dalsie_poz.iter().copied());
+        let kap = Doplnky {
+            kapitoly: std::mem::take(&mut self.kapitoly),
+            ..Default::default()
+        }
+        .kapitoly_do(self.koniec_ns);
+        let k = kapitoly(&kap, self.koniec_ns);
+        if !k.is_empty() {
+            ciele.push((CHAPTERS, self.f.stream_position()? - self.seg_data));
+            self.f.write_all(&k)?;
+        }
         let cues_poz = self.f.stream_position()? - self.seg_data;
         let mut c = vec![];
         for (cas, stopa, poz) in &self.cues {
@@ -418,7 +524,6 @@ impl ZapisovacMkv {
         let koniec = self.f.stream_position()?;
         // SeekHead do rezervovaného miesta
         let mut sh = vec![];
-        let mut ciele = vec![(INFO, self.info_poz), (TRACKS, self.tracks_poz)];
         if !c.is_empty() {
             ciele.push((CUES, cues_poz));
         }
@@ -442,7 +547,7 @@ impl ZapisovacMkv {
         let f = self.f.into_inner().map_err(|e| Chyba::Io(e.into_error()))?;
         f.sync_all()?;
         let _ = self.pocet_stop;
-        Ok(self.pocty)
+        Ok((self.pocty, kap.len()))
     }
 }
 
@@ -467,8 +572,46 @@ fn citaj_vint(d: &[u8], i: &mut usize, id: bool) -> Option<u64> {
     Some(v)
 }
 
+/// Čo našla kontrola v zapísanom MKV.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct KontrolaMkv {
+    pub pocty: Vec<u64>,
+    pub kapitoly: usize,
+    pub prilohy: usize,
+    pub znacky: usize,
+}
+
 /// Overí štruktúru súboru a počty blokov podľa stôp. Vráti počty blokov.
 pub fn over(cesta: &Path, pocet_stop: usize) -> Vysledok<Vec<u64>> {
+    over_vsetko(cesta, pocet_stop).map(|k| k.pocty)
+}
+
+/// Počet detí s daným ID (o jednu úroveň nižšie) v tele prvku.
+fn pocet_deti(telo: &[u8], hladane: u32, vnorit: &[u32]) -> usize {
+    let mut q = 0;
+    let mut n = 0;
+    while q < telo.len() {
+        let (Some(id), Some(vel)) = (
+            citaj_vint(telo, &mut q, true),
+            citaj_vint(telo, &mut q, false),
+        ) else {
+            break;
+        };
+        let koniec = (q + vel as usize).min(telo.len());
+        if id as u32 == hladane {
+            n += 1;
+        } else if let Some((prvy, zvysok)) = vnorit.split_first() {
+            if id as u32 == *prvy {
+                n += pocet_deti(&telo[q..koniec], hladane, zvysok);
+            }
+        }
+        q = koniec;
+    }
+    n
+}
+
+/// Overí štruktúru, počty blokov podľa stôp a spočíta kapitoly, prílohy a značky.
+pub fn over_vsetko(cesta: &Path, pocet_stop: usize) -> Vysledok<KontrolaMkv> {
     let zle = |s: &str| Chyba::Format(format!("kontrola MKV: {s}"));
     let mut f = File::open(cesta)?;
     let dlzka = f.metadata()?.len();
@@ -495,6 +638,7 @@ pub fn over(cesta: &Path, pocet_stop: usize) -> Vysledok<Vec<u64>> {
         return Err(zle("veľkosť Segmentu nesedí s dĺžkou súboru"));
     }
     let mut pocty = vec![0u64; pocet_stop];
+    let (mut kap, mut pril, mut zn) = (0usize, 0usize, 0usize);
     let (mut ma_info, mut ma_tracks) = (false, false);
     let mut poz = seg;
     let mut hl = [0u8; 16];
@@ -511,6 +655,16 @@ pub fn over(cesta: &Path, pocet_stop: usize) -> Vysledok<Vec<u64>> {
         match id as u32 {
             INFO => ma_info = true,
             TRACKS => ma_tracks = true,
+            CHAPTERS | ATTACHMENTS | TAGS if vel < 64 << 20 => {
+                let mut b = vec![0u8; vel as usize];
+                f.seek(SeekFrom::Start(telo))?;
+                f.read_exact(&mut b)?;
+                match id as u32 {
+                    CHAPTERS => kap += pocet_deti(&b, 0xB6, &[0x45B9]),
+                    ATTACHMENTS => pril += pocet_deti(&b, 0x61A7, &[]),
+                    _ => zn += pocet_deti(&b, 0x67C8, &[0x7373]),
+                }
+            }
             CLUSTER => {
                 let mut k = vec![0u8; vel as usize];
                 f.seek(SeekFrom::Start(telo))?;
@@ -554,7 +708,12 @@ pub fn over(cesta: &Path, pocet_stop: usize) -> Vysledok<Vec<u64>> {
     if !ma_info || !ma_tracks {
         return Err(zle("chýba Info alebo Tracks"));
     }
-    Ok(pocty)
+    Ok(KontrolaMkv {
+        pocty,
+        kapitoly: kap,
+        prilohy: pril,
+        znacky: zn,
+    })
 }
 
 #[cfg(test)]

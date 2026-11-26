@@ -17,6 +17,7 @@ import threading
 import unicodedata
 from pathlib import Path
 
+from . import common
 from .common import (DEFAULT_LANGS, NO_WINDOW, Cancelled, check_dependencies, format_duration,
                      load_config, reserve_path, safe_name, unique_path, ydl_opts)
 
@@ -340,15 +341,102 @@ def download_subtitles(url: str, ext: str, dest: Path) -> int:
     return len(cues)
 
 
-def mux(out_path: Path, inputs: list[dict], title: str) -> None:
+def thumbnail_urls(info: dict) -> list[str]:
+    """Adresy obrázka videa od najlepšieho – len JPEG/PNG (WebP prehrávače v súbore neukážu)."""
+    def ok(u: str) -> bool:
+        return re.search(r"\.(jpe?g|png)$", u.split("?")[0].split("#")[0], re.I) is not None
+    cand = [((t.get("preference") or 0), (t.get("width") or 0) * (t.get("height") or 0), t["url"])
+            for t in info.get("thumbnails") or [] if t.get("url") and ok(t["url"])]
+    urls = [u for _, _, u in sorted(cand, key=lambda x: (x[0], x[1]), reverse=True)]
+    if info.get("thumbnail") and ok(info["thumbnail"]) and info["thumbnail"] not in urls:
+        urls.append(info["thumbnail"])
+    return urls[:4]
+
+
+def download_cover(urls: list[str], dest_stem: Path) -> Path | None:
+    """Stiahne prvý dostupný obrázok (JPEG/PNG do 10 MB); inak None."""
+    import requests
+    for u in urls:
+        try:
+            r = requests.get(u, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
+        except Exception:  # noqa: BLE001 – obrázok nie je podmienkou
+            continue
+        d = r.content if r.ok else b""
+        if 0 < len(d) <= 10 << 20 and (d[:3] == b"\xff\xd8\xff" or d[:8] == b"\x89PNG\r\n\x1a\n"):
+            dest = dest_stem.with_suffix(".png" if d[:4] == b"\x89PNG" else ".jpg")
+            dest.write_bytes(d)
+            return dest
+    return None
+
+
+def extras_from_info(info: dict, vlozit: dict | None = None) -> dict:
+    """Údaje o videu, kapitoly a adresy obrázka z informácií yt-dlp podľa nastavení „vlozit_*“."""
+    v = vlozit if vlozit is not None else common.VLOZIT
+    d: dict = {"duration": info.get("duration")}
+    if v.get("udaje"):
+        ud = info.get("release_date") or info.get("upload_date") or ""
+        d.update(artist=info.get("uploader") or info.get("channel"),
+                 date=f"{ud[:4]}-{ud[4:6]}-{ud[6:]}" if re.fullmatch(r"\d{8}", ud) else None,
+                 comment=info.get("webpage_url") or info.get("original_url"),
+                 description=(info.get("description") or "").strip() or None)
+    if v.get("kapitoly"):
+        d["chapters"] = [(float(c["start_time"]), c.get("title") or "") for c in info.get("chapters") or []
+                         if c.get("start_time") is not None]
+    if v.get("obal"):
+        d["cover_urls"] = thumbnail_urls(info)
+    return d
+
+
+def chapters_ffmetadata(chapters: list[tuple[float, str]], duration: float | None) -> str | None:
+    """Kapitoly vo formáte FFMETADATA: zoradené, prvá od nuly, koniec = začiatok ďalšej (posledná = dĺžka)."""
+    ch = sorted({round(s * 1000): t for s, t in chapters if s >= 0 and (not duration or s < duration)}.items())
+    if not ch:
+        return None
+    if 0 < ch[0][0] < 1000:
+        ch[0] = (0, ch[0][1])
+    elif ch[0][0] > 0:
+        ch.insert(0, (0, "Úvod"))
+    end_all = round(duration * 1000) if duration else None
+
+    def esc(t: str) -> str:
+        return re.sub(r"([=;#\\\n])", r"\\\1", t)
+
+    out = [";FFMETADATA1"]
+    for i, (start, t) in enumerate(ch):
+        end = ch[i + 1][0] if i + 1 < len(ch) else (end_all if end_all and end_all > start else start + 1000)
+        name = " ".join(t.split()) or f"Kapitola {i + 1}"
+        out += ["[CHAPTER]", "TIMEBASE=1/1000", f"START={start}", f"END={end}", f"title={esc(name)}"]
+    return "\n".join(out) + "\n"
+
+
+def mux(out_path: Path, inputs: list[dict], title: str, extras: dict | None = None) -> None:
     """Spojí vstupy do jedného súboru bez prekódovania – Matroska (.mkv/.mka) alebo MP4 (.mp4/.m4a) podľa prípony.
 
-    inputs: {"path", "kind": "existing"|"video"|"audio"|"subtitle", "lang3", "title", "audio_count"}
+    inputs: {"path", "kind": "existing"|"video"|"audio"|"subtitle", "lang3", "title", "audio_count",
+             "povodny": True (pôvodný jazyk) | False (dabing) | None}
+    extras: údaje o videu (artist, date, comment, description), chapters [(s, názov)], duration, cover (cesta)
     """
+    extras = extras or {}
+    mp4 = out_path.suffix.lower() in (".mp4", ".m4a")
     cmd = [_ffmpeg(), "-hide_banner", "-loglevel", "error", "-y"]
     for inp in inputs:
         cmd += ["-i", str(inp["path"])]
+    temp: list[Path] = []
+    nxt = len(inputs)
+    chapters_in = cover_in = None
+    ffm = chapters_ffmetadata(extras.get("chapters") or [], extras.get("duration"))
+    if ffm:
+        f = out_path.with_name(out_path.name + ".kapitoly.txt")
+        f.write_text(ffm, encoding="utf-8")
+        temp.append(f)
+        cmd += ["-i", str(f)]
+        chapters_in, nxt = nxt, nxt + 1
+    cover = extras.get("cover")
+    if cover and mp4:
+        cmd += ["-i", str(cover)]
+        cover_in = nxt
     maps, meta, tail = [], [], []
+    roles: list = []
     a = 0
     for i, inp in enumerate(inputs):
         if inp["kind"] == "existing":
@@ -364,6 +452,7 @@ def mux(out_path: Path, inputs: list[dict], title: str) -> None:
             meta += [f"-metadata:s:a:{a}", f"language={inp['lang3']}",
                      f"-metadata:s:a:{a}", f"title={inp['title']}",
                      f"-metadata:s:a:{a}", f"handler_name={inp['title']}"]   # názov stopy v MP4
+            roles.append(inp.get("povodny"))
             a += 1
     for inp in inputs:
         if inp["kind"] == "existing":
@@ -375,20 +464,38 @@ def mux(out_path: Path, inputs: list[dict], title: str) -> None:
     maps += tail
     disp = []
     for k in range(a):
-        disp += [f"-disposition:a:{k}", "default" if k == 0 else "0"]
-    mp4 = out_path.suffix.lower() in (".mp4", ".m4a")
+        flags = (["default"] if k == 0 else []) + (
+            {True: ["original"], False: ["dub"]}.get(roles[k] if k < len(roles) else None, []))
+        disp += [f"-disposition:a:{k}", "+".join(flags) or "0"]
     subs = [(i, inp) for i, inp in enumerate(inputs) if inp["kind"] == "subtitle"]
     for k, (i, inp) in enumerate(subs):
         maps += ["-map", f"{i}:0"]
         meta += [f"-metadata:s:s:{k}", f"language={inp['lang3']}", f"-metadata:s:s:{k}", f"title={inp['title']}",
                  f"-metadata:s:s:{k}", f"handler_name={inp['title']}"]
-        disp += [f"-disposition:s:{k}", "0"]
+        disp += [f"-disposition:s:{k}", "original" if inp.get("povodny") else "0"]
+    if cover_in is not None:
+        maps += ["-map", f"{cover_in}:0"]
+        has_video = any(x["kind"] in ("video", "existing") for x in inputs)
+        disp += [f"-disposition:v:{1 if has_video else 0}", "attached_pic"]
+    if chapters_in is not None:
+        maps += ["-map_chapters", str(chapters_in)]
     cmd += maps + ["-c", "copy"] + (["-c:s", "mov_text" if mp4 else "srt"] if subs else []) + meta + disp + [
         "-metadata", f"title={title}"]
+    for k in ("artist", "date", "comment", "description"):
+        if extras.get(k):
+            cmd += ["-metadata", f"{k}={extras[k]}"]
+    if cover and not mp4:
+        png = str(cover).lower().endswith(".png")
+        cmd += ["-attach", str(cover), "-metadata:s:t:0", f"mimetype={'image/png' if png else 'image/jpeg'}",
+                "-metadata:s:t:0", f"filename=cover.{'png' if png else 'jpg'}"]
     if mp4:
         cmd += ["-movflags", "+faststart"]       # prehrávanie môže začať skôr, než sa súbor celý načíta
     cmd.append(str(out_path))
-    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", **NO_WINDOW)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", **NO_WINDOW)
+    finally:
+        for f in temp:
+            f.unlink(missing_ok=True)
     if r.returncode != 0 or not out_path.exists():
         hint = ("MP4 tieto stopy neudrží – vyber formát MKV.\n" if mp4 and re.search(
             r"codec not currently supported|Could not find tag|not supported in container", r.stderr or "") else "")
@@ -558,12 +665,22 @@ def run_job(job: dict, log=print, progress=lambda frac, text: None, cancel: thre
             for p, codec in got:
                 suffix = (" – AAC" if codec == "aac" else " – Opus") if len(got) > 1 else ""
                 inputs.append({"path": p, "kind": "audio", "lang3": iso3(t["code"]),
-                               "title": t["label"] + (" – originál" if t["original"] else "") + suffix})
+                               "title": t["label"] + (" – originál" if t["original"] else "") + suffix,
+                               "povodny": bool(t["original"]) if original else None})
         for t, p, automatic in subtitles:
             inputs.append({"path": p, "kind": "subtitle", "lang3": iso3(t["code"]),
-                           "title": t["label"] + (" (automatické)" if automatic else "")})
+                           "title": t["label"] + (" (automatické)" if automatic else ""),
+                           "povodny": bool(t["original"]) if original else None})
+        extras = extras_from_info(info, job.get("vlozit"))
+        if extras.get("cover_urls"):
+            extras["cover"] = download_cover(extras["cover_urls"], tmp / "cover")
+        added = [x for x, ok in (("údaje o videu", extras.get("comment") or extras.get("artist")),
+                                 (f"kapitoly ({len(extras.get('chapters') or [])})", extras.get("chapters")),
+                                 ("obrázok", extras.get("cover"))) if ok]
+        if added:
+            log("🏷 Do súboru: " + ", ".join(added))
         try:
-            mux(out, inputs, title)
+            mux(out, inputs, title, extras)
         except BaseException:
             if out.exists() and out.stat().st_size == 0:   # zabraný názov uvoľniť
                 out.unlink()

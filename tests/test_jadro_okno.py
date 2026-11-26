@@ -107,6 +107,12 @@ class Server(http.server.SimpleHTTPRequestHandler):
         if u.path == "/stranka-viac":
             return self.posli(200, f"""<html><head><title>Dve videá</title></head><body>
                 <video src="{BASE}/media/a.mp4"></video><video src="{BASE}/media/b.mp4"></video></body></html>""")
+        if u.path.startswith("/aktualizacia/"):
+            meno = u.path.rsplit("/", 1)[1]
+            if meno == "latest":
+                return self.posli(200, (D / "akt" / "latest.json").read_text(encoding="utf-8"), "application/json")
+            f = D / "akt" / meno
+            return self.posli(200, f.read_bytes(), "application/octet-stream") if f.is_file() else self.posli(404, "")
         if u.path == "/vydania/SHA2-256SUMS":
             return self.posli(200, f"{hashlib.sha256(FALOSNY_YTDLP).hexdigest()}  yt-dlp_linux\n"
                               f"{'0' * 64}  yt-dlp.exe\n", "text/plain")
@@ -752,14 +758,37 @@ def priecinky():
         o.zatvor()
 
 
+def sonda(p: Path) -> dict:
+    """Celý prehľad zo ffprobe: stopy (aj príznaky), kapitoly a údaje o súbore."""
+    r = subprocess.run([FP, "-v", "error", "-show_streams", "-show_chapters", "-show_format", "-of", "json", str(p)],
+                       capture_output=True, text=True)
+    return json.loads(r.stdout or "{}")
+
+
+def doplnky(p: Path) -> tuple:
+    """(kapitoly, údaje o súbore malými písmenami, obrázok vložený, roly zvukov [(jazyk, dabing, originál)])."""
+    j = sonda(p)
+    kap = [(round(float(c["start_time"]), 2), c.get("tags", {}).get("title")) for c in j.get("chapters", [])]
+    tagy = {k.lower(): v for k, v in j.get("format", {}).get("tags", {}).items()}
+    obal = any(x.get("disposition", {}).get("attached_pic") or x.get("tags", {}).get("filename", "").startswith("cover.")
+               for x in j.get("streams", []))
+    roly = [(x.get("tags", {}).get("language"), x["disposition"].get("dub", 0), x["disposition"].get("original", 0))
+            for x in j.get("streams", []) if x["codec_type"] == "audio"]
+    return kap, tagy, obal, roly
+
+
 def prud(p: Path):
-    """[(typ, kodek, jazyk, názov, predvolená)] zo ffprobe."""
+    """[(typ, kodek, jazyk, názov, predvolená)] zo ffprobe (bez vloženého obrázka videa)."""
     r = subprocess.run([FP, "-v", "error", "-show_entries",
-                        "stream=codec_type,codec_name:stream_tags=language,title,handler_name:stream_disposition=default",
+                        "stream=codec_type,codec_name:stream_tags=language,title,handler_name,filename"
+                        ":stream_disposition=default,attached_pic",
                         "-of", "json", str(p)], capture_output=True, text=True)
     out = []
     for x in json.loads(r.stdout or "{}").get("streams", []):
         t = x.get("tags", {})
+        if (x.get("disposition", {}).get("attached_pic") or t.get("filename", "").startswith("cover.")
+                or x["codec_type"] == "data"):   # obrázok a kapitolová stopa MP4 sa kontrolujú zvlášť
+            continue
         out.append((x["codec_type"], x["codec_name"], t.get("language", ""), t.get("title") or t.get("handler_name", ""),
                     x.get("disposition", {}).get("default", 0)))
     return out
@@ -778,6 +807,8 @@ def priprav_jazyky() -> tuple[Path, str]:
         ff(*ton, "-c:a", "libopus", "-b:a", "64k", f"{jazyk}.webm")
         if jazyk != "sk":  # slovenčina len v Opus – AAC treba dorobiť (alebo ostane Opus)
             ff(*ton, "-c:a", "aac", f"{jazyk}.m4a")
+    ff("-f", "lavfi", "-i", "color=c=orange:size=160x90", "-frames:v", "1", "obal.jpg")
+    (m / "obal.webp").write_bytes(b"RIFF\x00\x00\x00\x00WEBPVP8 ")
     ff("-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25", "-f", "lavfi", "-i", "sine=frequency=900", "-t", "3",
        "-c:v", "libx264", "-bf", "2", "-pix_fmt", "yuv420p", "-c:a", "aac", "-metadata:s:a:0", "language=eng",
        "-metadata:s:a:0", "title=Pôvodný zvuk", str(D / "moje.mkv"))
@@ -785,7 +816,12 @@ def priprav_jazyky() -> tuple[Path, str]:
     zvuk = lambda i, jazyk, kodek, n, poznamka, pref: {  # noqa: E731
         "format_id": i, "ext": n.rsplit(".", 1)[1], "vcodec": "none", "acodec": kodek, "abr": 64, "language": jazyk,
         "language_preference": pref, "format_note": poznamka, "protocol": "http", "url": u(n)}
-    info = {"id": "dQw4w9WgXcQ", "title": "Jazyková skúška", "uploader": "Kanál", "duration": 3, "formats": [
+    info = {"id": "dQw4w9WgXcQ", "title": "Jazyková skúška", "uploader": "Kanál", "duration": 3,
+            "upload_date": "20240517", "webpage_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "description": "Popis skúšky", "thumbnail": u("obal.webp"),
+            "thumbnails": [{"url": u("obal.webp"), "preference": 0}, {"url": u("obal.jpg"), "preference": -1}],
+            "chapters": [{"start_time": 0.0, "end_time": 1.5, "title": "Začiatok"},
+                         {"start_time": 1.5, "end_time": 3.0, "title": "Koniec"}], "formats": [
         {"format_id": "248", "ext": "webm", "vcodec": "vp9", "acodec": "none", "height": 240, "tbr": 300,
          "protocol": "http", "url": u("v.webm")},
         {"format_id": "137", "ext": "mp4", "vcodec": "avc1.4d400d", "acodec": "none", "height": 240, "tbr": 200,
@@ -902,6 +938,14 @@ def jazyky(out: Path):
                   ("audio", "opus", "eng", "Angličtina – originál – Opus", 0)]
         skontroluj("MKV: obraz VP9, stopy CZ (AAC), CZ (Opus), SK (AAC), SK (Opus), originál (AAC, Opus)",
                    s["text"] == "Hotovo" and f.name == "Jazyková skúška [cs+sk+en].mkv" and p == cakane, (s, p))
+        kap, tagy, obal, roly = doplnky(f)
+        skontroluj("MKV: kapitoly, údaje o videu, obrázok (JPEG, nie WebP) a roly (dabing, originál)",
+                   kap == [(0.0, "Začiatok"), (1.5, "Koniec")] and tagy.get("artist") == "Kanál"
+                   and tagy.get("date_released") == "2024-05-17" and tagy.get("url", "").endswith("dQw4w9WgXcQ")
+                   and obal and roly == [("cze", 1, 0), ("cze", 1, 0), ("slo", 1, 0), ("slo", 1, 0),
+                                         ("eng", 0, 1), ("eng", 0, 1)]
+                   and any("Do súboru: údaje o videu, kapitoly (2), obrázok" in r for r in s["log"]),
+                   (kap, tagy, obal, roly))
         skontroluj("načítanie: titulky od autora a automatické", n["titulky"] == ["cs", "sk"] and n["auto_titulky"] is True, n)
         s, f = uloha(o, {"poradie": ["cs", "sk"], "rezim": "video", "original": True, "zvuk": "aac",
                          "kontajner": "mkv", "titulky": "jazyky"})
@@ -924,8 +968,25 @@ def jazyky(out: Path):
         s, f = uloha(o, {"poradie": ["cs", "sk"], "rezim": "video", "original": False, "zvuk": "aac",
                          "kontajner": "mp4", "titulky": "jazyky"})
         srt = sorted(x.name for x in f.parent.iterdir() if x.name.startswith(f.stem + ".") and x.suffix == ".srt") if f else []
-        skontroluj("MP4: titulky vedľa videa ako .srt", srt == [f"{f.stem}.cs.srt", f"{f.stem}.sk.srt"]
-                   and "Ahoj, svet" in (f.parent / srt[0]).read_text(encoding="utf-8"), srt)
+        tit = [x for x in (prud(f) if f else []) if x[0] == "subtitle"]
+        r = subprocess.run([FF, "-v", "error", "-i", str(f), "-map", "0:s:0", "-f", "srt", "-"], capture_output=True,
+                           text=True) if f else None
+        skontroluj("MP4: titulky vložené do súboru (tx3g), nie vedľa videa",
+                   s["text"] == "Hotovo" and srt == [] and tit == [("subtitle", "mov_text", "ces", "Čeština", 0),
+                                                                   ("subtitle", "mov_text", "slk", "Slovenčina", 0)]
+                   and r is not None and "Ahoj, svet" in r.stdout and "Druhý titulok" in r.stdout, (s, srt, tit))
+        kap, tagy, obal, roly = doplnky(f)
+        skontroluj("MP4: kapitoly, údaje o videu, obrázok a roly (dabing)",
+                   kap == [(0.0, "Začiatok"), (1.5, "Koniec")] and tagy.get("artist") == "Kanál"
+                   and tagy.get("date") == "2024-05-17" and tagy.get("comment", "").endswith("dQw4w9WgXcQ")
+                   and tagy.get("title") == "Jazyková skúška" and obal and roly == [("ces", 1, 0), ("slk", 1, 0)],
+                   (kap, tagy, obal, roly))
+        o.data("ulozit_nastavenia", {"vlozit_udaje": False, "vlozit_kapitoly": False, "vlozit_obal": False})
+        s, f = uloha(o, {"poradie": ["cs"], "rezim": "audio", "zvuk": "aac", "kontajner": "mp4"})
+        kap, tagy, obal, _ = doplnky(f) if f else ([1], {}, True, [])
+        skontroluj("nastavenia: bez údajov, kapitol a obrázka", s["text"] == "Hotovo" and kap == [] and not obal
+                   and "artist" not in tagy and tagy.get("title") == "Jazyková skúška", (kap, tagy, obal))
+        o.data("ulozit_nastavenia", {"vlozit_udaje": True, "vlozit_kapitoly": True, "vlozit_obal": True})
         s, f = uloha(o, {"poradie": ["cs", "sk", "en"], "rezim": "audio", "zvuk": "oboje", "kontajner": "mkv",
                          "zvuky": {"cs": "aac", "sk": "aac", "en": "opus"}})
         p = prud(f) if f else []
@@ -1057,6 +1118,91 @@ def rozhranie(o: Okno, out: Path):
         b.close()
 
 
+def vydanie(verzia: str, obsah: bytes, zly_sucet: bool = False):
+    """Falošné vydanie na GitHube: latest.json, inštalátor a SHA256SUMS.txt."""
+    a = D / "akt"
+    a.mkdir(exist_ok=True)
+    meno = f"Kometa-{verzia}-windows-x64-setup.exe"
+    (a / meno).write_bytes(obsah)
+    sucet = "0" * 64 if zly_sucet else hashlib.sha256(obsah).hexdigest()
+    (a / "SHA256SUMS.txt").write_text(f"# Kometa {verzia}\n{sucet}  {meno}\n", encoding="utf-8")
+    url = lambda n: f"{BASE}/aktualizacia/{n}"  # noqa: E731
+    (a / "latest.json").write_text(json.dumps({
+        "tag_name": f"v{verzia}", "html_url": "https://github.com/tarzanislav/kometa/releases/tag/v" + verzia,
+        "assets": [{"name": meno, "size": len(obsah), "browser_download_url": url(meno),
+                    "digest": "sha256:" + hashlib.sha256(obsah).hexdigest()},
+                   {"name": "SHA256SUMS.txt", "browser_download_url": url("SHA256SUMS.txt")}]}), encoding="utf-8")
+
+
+def aktualizacie():
+    """Nová verzia: stiahnutie a overenie súčtom, inštalácia hneď aj pri ďalšom spustení (raz), ochrana."""
+    print("Automatická aktualizácia")
+    cfg = D / "cfg-akt"
+    env = dict(KOMETA_AKTUALIZACIE_ZAKLAD=BASE + "/aktualizacia/latest", KOMETA_AKTUALIZACIE_SKUSKA="1",
+               KOMETA_AKTUALIZACIE_BALIK="instalator")
+    spustene = cfg / "aktualizacia" / "spustene.txt"
+    vydanie("99.0.0", b"MZ falosny instalator")
+    o = Okno(cfg, **env)
+    try:
+        s = o.cakaj(lambda s: (s.get("aktualizacia") or {}).get("pripravena"), 30)["aktualizacia"]
+        skontroluj("nová verzia stiahnutá a overená (SHA256SUMS aj odtlačok GitHubu), pri ďalšom spustení sama",
+                   s["najnovsia"] == "99.0.0" and s["pri_starte"] and s["balik"] == "instalator"
+                   and (cfg / "aktualizacia" / "Kometa-99.0.0-windows-x64-setup.exe").read_bytes() == b"MZ falosny instalator"
+                   and s["stranka"].endswith("v99.0.0"), s)
+        r = o.volaj("aktualizacia_instaluj")
+        skontroluj("Nainštalovať teraz: spustí overený inštalátor", r["ok"] and spustene.is_file()
+                   and spustene.read_text().startswith("Instalator") and "99.0.0" in spustene.read_text(), r)
+    finally:
+        o.zatvor()
+    spustene.unlink()
+    o = Okno(cfg, **env)
+    try:
+        s = o.cakaj(lambda s: (s.get("aktualizacia") or {}).get("chyba"), 15)["aktualizacia"]
+        time.sleep(2)
+        skontroluj("nedokončená inštalácia sa pri štarte neopakuje dookola, okno to povie",
+                   not spustene.exists() and "minule nedokončila" in s["chyba"] and s["pripravena"], s)
+        o.data("aktualizacia_pri_starte")
+    finally:
+        o.zatvor()
+    o = Okno(cfg, **env)
+    try:
+        time.sleep(3)
+        skontroluj("Pri ďalšom spustení: nainštaluje sa sama", spustene.is_file(), list((cfg / "aktualizacia").iterdir()))
+    finally:
+        o.zatvor()
+    # poškodený stiahnutý súbor sa nepoužije – stiahne sa znova a overí
+    spustene.unlink()
+    (cfg / "aktualizacia" / "Kometa-99.0.0-windows-x64-setup.exe").write_bytes(b"podvrh")
+    o = Okno(cfg, **env)
+    try:
+        s = o.cakaj(lambda s: (s.get("aktualizacia") or {}).get("pripravena"), 30)["aktualizacia"]
+        time.sleep(2)
+        skontroluj("zmenený súbor aktualizácie sa nespustí, stiahne sa znova",
+                   not spustene.exists() and (cfg / "aktualizacia" / "Kometa-99.0.0-windows-x64-setup.exe").read_bytes()
+                   == b"MZ falosny instalator", s)
+    finally:
+        o.zatvor()
+    # zlý súčet vo vydaní: nič sa nepripraví
+    vydanie("99.0.1", b"MZ iny", zly_sucet=True)
+    cfg2 = D / "cfg-akt2"
+    o = Okno(cfg2, **env)
+    try:
+        s = o.cakaj(lambda s: (s.get("aktualizacia") or {}).get("chyba"), 30)["aktualizacia"]
+        skontroluj("súbor, ktorý nesedí so súčtom, sa odmietne", not s["pripravena"]
+                   and ("nesedí" in s["chyba"] or "líšia" in s["chyba"])
+                   and not (cfg2 / "aktualizacia" / "Kometa-99.0.1-windows-x64-setup.exe").exists(), s)
+    finally:
+        o.zatvor()
+    # rovnaká alebo staršia verzia: nič
+    vydanie("0.0.1", b"MZ stara")
+    o = Okno(D / "cfg-akt3", **env)
+    try:
+        s = o.cakaj(lambda s: (s.get("aktualizacia") or {}).get("kontrola"), 30)["aktualizacia"]
+        skontroluj("staršia verzia na GitHube: bez oznamu", not s["najnovsia"] and not s["pripravena"], s)
+    finally:
+        o.zatvor()
+
+
 def main() -> int:
     global BASE
     try:
@@ -1093,6 +1239,7 @@ def main() -> int:
             doinstalovanie()
             priecinky()
             jazyky(out)
+        aktualizacie()
         restart(out)
     finally:
         srv.shutdown()

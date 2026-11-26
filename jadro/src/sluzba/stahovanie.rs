@@ -526,12 +526,13 @@ async fn cez_ytdlp(
     exe: &Path,
 ) -> Vysledok<Koniec> {
     let ffmpeg = v.nastroje.ffmpeg();
-    let (prehliadac, zvuk, spojenia) = {
+    let (prehliadac, zvuk, spojenia, volby) = {
         let n = v.nastavenia.lock().unwrap();
         (
             n.text("cookies_browser"),
             n.text("audio_mode"),
             n.cislo("connections", 4).clamp(1, 16) as usize,
+            super::doplnky::Volby::z_nastaveni(&n),
         )
     };
     let spolocne = Spolocne {
@@ -564,6 +565,7 @@ async fn cez_ytdlp(
             zvuk: &zvuk,
             spojenia,
             spolocne,
+            doplnky: super::doplnky::argumenty_ytdlp(volby, &p.format),
         };
         return ytdlp::stiahni(&u, z, h, &meta, &docasny)
             .await
@@ -620,14 +622,32 @@ async fn cez_ytdlp(
             },
             jazyk: f.jazyk.clone(),
             nazov: None,
+            povodny: None,
         });
     }
+    let mut doplnky = super::doplnky::z_info(&info, volby).await;
+    if doplnky.titul.is_empty() {
+        doplnky.titul = titul.clone();
+    }
     if vstupy.len() == 1 && !formaty[0].hls {
+        // jeden súbor: údaje, kapitoly a obrázok sa doňho vložia prebalením (ak to formát dovolí)
+        let co_vlozit =
+            doplnky.ma_udaje() || !doplnky.kapitoly.is_empty() || doplnky.obal.is_some();
+        // priamy súbor z bežnej stránky (yt-dlp „Generic“) ostane presne taký, ako je na webe
+        let genericky = info
+            .get("extractor_key")
+            .and_then(|e| e.as_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("generic"));
+        let prebalit = co_vlozit && !genericky && matches!(pripona, "mp4" | "m4a");
+        if prebalit && spajanie::spoj_s(&vstupy, &c, &doplnky).await.is_ok() {
+            let _ = tokio::fs::remove_file(&vstupy[0].cesta).await;
+            return Ok(Koniec::Subor(c));
+        }
         tokio::fs::rename(&vstupy[0].cesta, &c).await?;
         return Ok(Koniec::Subor(c));
     }
     v.zapis("Spájam stopy…");
-    let vysledok = spajanie::spoj(&vstupy, &c, &titul).await?;
+    let vysledok = spajanie::spoj_s(&vstupy, &c, &doplnky).await?;
     for x in &vstupy {
         let _ = tokio::fs::remove_file(&x.cesta).await;
     }

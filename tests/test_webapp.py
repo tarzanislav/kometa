@@ -107,6 +107,58 @@ def main() -> int:
                                     "-of", "csv=p=0", str(d / f"o.{ext}")], capture_output=True, text=True)
                 assert ("subtitle" in r.stdout and "cze" in r.stdout
                         and ("subrip" if ext == "mkv" else "mov_text") in r.stdout), (ext, r.stdout)
+            # údaje o videu, kapitoly, obrázok a roly (dabing/originál) – ako vo vlastnom spájaní jadra
+            subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=500", "-t", "2", "-c:a", "aac",
+                            str(d / "a.m4a")], check=True)
+            subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=red:size=64x36", "-frames:v", "1",
+                            str(d / "obal.jpg")], check=True)
+            ex = jz.extras_from_info({"uploader": "Kanál", "upload_date": "20240517", "webpage_url": "https://e.org/v",
+                                      "description": "Popis", "duration": 2,
+                                      "chapters": [{"start_time": 0, "title": "Úvod"}, {"start_time": 1, "title": "B=c"}]},
+                                     {"udaje": True, "kapitoly": True, "obal": False})
+            ex["cover"] = d / "obal.jpg"
+            for ext in ("mkv", "mp4"):
+                jz.mux(d / f"m.{ext}", [{"path": d / "v.mp4", "kind": "video"},
+                                        {"path": d / "a.m4a", "kind": "audio", "lang3": "cze", "title": "Čeština",
+                                         "povodny": False}], "Názov", ex)
+                j = json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_streams", "-show_chapters",
+                                               "-show_format", "-of", "json", str(d / f"m.{ext}")],
+                                              capture_output=True, text=True).stdout)
+                tagy = {k.lower(): v for k, v in j["format"].get("tags", {}).items()}
+                kap = [c["tags"]["title"] for c in j["chapters"]]
+                obal = [x for x in j["streams"] if x["disposition"].get("attached_pic")
+                        or x.get("tags", {}).get("filename") == "cover.jpg"]
+                dub = [x["disposition"]["dub"] for x in j["streams"] if x["codec_type"] == "audio"]
+                assert kap == ["Úvod", "B=c"] and tagy.get("artist") == "Kanál" and tagy.get("title") == "Názov" \
+                    and len(obal) == 1 and dub == [1] and not list(d.glob("*.kapitoly.txt")), (ext, kap, tagy, obal, dub)
+
+        # aktualizácia Kometa pre Python: porovnanie verzií, súčty, inštalácia raz, nič mimo priečinka
+        import hashlib
+        import io as io_
+        import zipfile as zf
+        from kometa import aktualizacia as akt
+        assert akt.newer("1.10.0", "1.9.0") and not akt.newer("1.9", "1.9.0") and akt.newer("v2", "1.99.9")
+        assert akt.sum_from_list("# Kometa 2\n" + "a" * 64 + "  Kometa-2.zip\n", "Kometa-2.zip") == "a" * 64
+        ak = TMP / "akt"
+        akt.ROOT, akt.DIR = ak / "program", ak / "cfg"
+        (ak / "program").mkdir(parents=True)
+        (ak / "program" / "app.py").write_text("stary")
+        buf = io_.BytesIO()
+        with zf.ZipFile(buf, "w") as z:
+            z.writestr("Kometa/app.py", "novy")
+            z.writestr("Kometa/kometa/x.py", "x")
+            z.writestr("Kometa/../von.txt", "zlo")
+        akt.DIR.mkdir()
+        (akt.DIR / "Kometa-99.0.zip").write_bytes(buf.getvalue())
+        akt.STATE["balik"] = "zip"
+        akt._save({"verzia": "99.0", "subor": "Kometa-99.0.zip", "sha256": hashlib.sha256(buf.getvalue()).hexdigest(),
+                   "pri_starte": True, "pokusy": 0})
+        assert akt.apply_pending(log=lambda *_: None) is True
+        assert (ak / "program" / "app.py").read_text() == "novy" and (ak / "program" / "kometa" / "x.py").exists()
+        assert not (ak / "von.txt").exists() and not (TMP / "von.txt").exists()
+        assert akt.apply_pending(log=lambda *_: None) is False and "nedokončila" in akt.status()["chyba"]
+        (akt.DIR / "Kometa-99.0.zip").write_bytes(b"podvrh")
+        assert akt.apply_pending(log=lambda *_: None) is False and not akt.DIR.exists()
 
         # archívy: rozpoznanie častí, rozbalenie ZIP (aj rozdeleného), nič mimo priečinka
         import io

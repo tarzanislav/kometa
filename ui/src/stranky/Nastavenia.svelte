@@ -3,6 +3,7 @@
   import { TEMY } from '../lib/temy'
   import Ikona from '../components/Ikona.svelte'
   import Prepinac from '../components/Prepinac.svelte'
+  import type { StavAktualizacie } from '../lib/typy'
   import Segment from '../components/Segment.svelte'
   import NahladTemy from './NahladTemy.svelte'
 
@@ -28,6 +29,23 @@
   async function zmenitPriecinok() {
     const p = await skus<string>('vybrat_priecinok')
     if (p && app.nastavenia) app.nastavenia.outdir = p
+  }
+
+  const akt = $derived(app.stav?.aktualizacia)
+  const stavAktualizacie = $derived.by(() => {
+    const a = akt
+    if (!a) return ''
+    if (a.stahuje) return 'Pozerám, či je nová verzia…'
+    if (a.instaluje) return `Inštalujem Kometu ${a.najnovsia}…`
+    if (a.nainstalovana) return `Kometa ${a.najnovsia} je nainštalovaná – platí od ďalšieho spustenia.`
+    if (a.pripravena) return `Pripravená je Kometa ${a.najnovsia} (stiahnutá a overená).`
+    if (a.najnovsia) return `Je dostupná Kometa ${a.najnovsia} – tu sa nainštaluje z GitHubu ručne.`
+    if (a.chyba) return a.chyba
+    return a.kontrola ? `Máš najnovšiu verziu ${a.verzia}.` : `Verzia ${a.verzia}.`
+  })
+
+  async function skontrolovat() {
+    await skus<StavAktualizacie>('aktualizacia_skontroluj')
   }
 </script>
 
@@ -132,6 +150,30 @@
     </div>
   </section>
 
+  <section class="plocha blok" aria-labelledby="h-vlozit">
+    <h2 id="h-vlozit">Do stiahnutého videa vložiť</h2>
+    <div class="riadky">
+      <Prepinac
+        nazov="Údaje o videu"
+        zapnute={n.vlozit_udaje ?? true}
+        popis="Názov, autor (kanál), dátum zverejnenia, odkaz na video a popis – ukážu ich prehrávače aj vlastnosti súboru."
+        zmena={(v) => nastav({ vlozit_udaje: v })}
+      />
+      <Prepinac
+        nazov="Kapitoly"
+        zapnute={n.vlozit_kapitoly ?? true}
+        popis="Ak ich video má (napr. na YouTube), v prehrávači preskočíš priamo na kapitolu."
+        zmena={(v) => nastav({ vlozit_kapitoly: v })}
+      />
+      <Prepinac
+        nazov="Obrázok videa"
+        zapnute={n.vlozit_obal ?? true}
+        popis="Náhľad videa ako obrázok súboru – uvidíš ho v priečinku aj v knižnici médií."
+        zmena={(v) => nastav({ vlozit_obal: v })}
+      />
+    </div>
+  </section>
+
   <section class="plocha blok" aria-labelledby="h-archivy">
     <h2 id="h-archivy">Archívy</h2>
     <div class="riadky">
@@ -218,6 +260,24 @@
       </div>
     </section>
   {/if}
+
+  <section class="plocha blok" aria-labelledby="h-aktualizacie">
+    <h2 id="h-aktualizacie">Aktualizácie</h2>
+    <div class="riadky">
+      <Prepinac
+        nazov="Aktualizovať automaticky"
+        zapnute={n.aktualizacie ?? true}
+        popis="Kometa sa občas pozrie na GitHub. Novú verziu stiahne, overí kontrolným súčtom a nainštaluje, keď potvrdíš – inak sama pri ďalšom spustení."
+        zmena={(v) => nastav({ aktualizacie: v })}
+      />
+      <div class="riadok-zvuk">
+        <p class="male tlmene" role="status">{stavAktualizacie}</p>
+        <button class="tl" onclick={skontrolovat} disabled={akt?.stahuje || akt?.instaluje}>
+          {akt?.stahuje ? 'Kontrolujem…' : 'Skontrolovať teraz'}
+        </button>
+      </div>
+    </div>
+  </section>
 
   <section class="o-programe" aria-label="O programe">
     <p class="male tlmene">
