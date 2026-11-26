@@ -55,9 +55,11 @@ pub const METODY: &[&str] = &[
     "vycistit_hotove",
     "vycistit_front",
     "zadat_heslo",
+    "nastavit_heslo",
     "rozbalit",
     "schranka_stiahnut",
     "schranka_zahodit",
+    "schranka_heslo",
     "kurz_otvorit",
     "kurz_nacitat",
     "kurz_stiahnut",
@@ -351,17 +353,35 @@ impl Sluzba {
                 }
                 Value::Null
             }
+            "nastavit_heslo" => {
+                let (ids, heslo) = (arg::<Vec<String>>(a, 0)?, arg::<String>(a, 1)?);
+                json!(self.nastavit_heslo(&ids, heslo.trim()))
+            }
             "rozbalit" => {
                 stahovanie::skus_rozbalit(v, &arg::<String>(a, 0)?, None, true);
                 Value::Null
+            }
+            "schranka_heslo" => {
+                let (ids, heslo) = (arg::<Option<Vec<String>>>(a, 0)?, arg::<String>(a, 1)?);
+                json!(strazca::nastav_heslo(v, ids.as_deref(), &heslo))
             }
             "schranka_stiahnut" => {
                 let ids = arg::<Option<Vec<String>>>(a, 0)?;
                 let preset = self.preset(&arg::<String>(a, 1)?);
                 let vybrane = strazca::vyber(v, ids.as_deref());
                 let (kolekcie, ostatne): (Vec<_>, Vec<_>) = vybrane.into_iter().partition(|z| z.kolekcia);
-                let urls: Vec<String> = ostatne.into_iter().map(|z| z.url).collect();
-                let n = self.pridat_odkazy(&urls, &preset, "");
+                // každé heslo ide so svojimi odkazmi (rôzne skupiny môžu mať rôzne heslá)
+                let mut podla_hesla: Vec<(String, Vec<String>)> = vec![];
+                for z in ostatne {
+                    match podla_hesla.iter_mut().find(|(h, _)| *h == z.heslo) {
+                        Some((_, u)) => u.push(z.url),
+                        None => podla_hesla.push((z.heslo, vec![z.url])),
+                    }
+                }
+                let n: usize = podla_hesla
+                    .iter()
+                    .map(|(heslo, urls)| self.pridat_odkazy(urls, &preset, heslo))
+                    .sum();
                 json!({"pridane": n, "kolekcie": kolekcie.into_iter().map(|z| z.url).collect::<Vec<_>>()})
             }
             "schranka_zahodit" => {
@@ -683,6 +703,45 @@ impl Sluzba {
         Ok(json!({"pridane": n, "uz_vo_fronte": pocet - n, "kolekcie": kolekcie}))
     }
 
+    /// Heslo vopred pre položky frontu (prázdne = zrušiť). Čakajúce a sťahované ho použijú, keď
+    /// príde na rad (úložisko alebo archív); tie, čo už na heslo čakajú, hneď pokračujú – archív
+    /// sa rozbalí, súbor z úložiska sa stiahne. Vráti počet položiek.
+    fn nastavit_heslo(&self, ids: &[String], heslo: &str) -> usize {
+        let v = &self.v;
+        let (n, rozbalit) = {
+            let mut f = v.fronta.lock().unwrap();
+            let mut rozbalit = vec![];
+            let mut znova = vec![];
+            let mut n = 0;
+            for id in ids {
+                let Some(p) = f.najdi(id).cloned() else {
+                    continue;
+                };
+                n += 1;
+                f.uprav(id, |x| x.heslo = heslo.to_string());
+                if heslo.is_empty() {
+                    continue;
+                }
+                match p.stav {
+                    Stav::Hotovo if p.rozbalenie.as_ref().is_some_and(|r| r.stav == "heslo") => {
+                        rozbalit.push(id.clone())
+                    }
+                    Stav::Chyba if !p.treba_heslo.is_empty() => znova.push(id.clone()),
+                    _ => {}
+                }
+            }
+            if !znova.is_empty() {
+                f.spusti(&znova);
+            }
+            (n, rozbalit)
+        };
+        for id in &rozbalit {
+            stahovanie::skus_rozbalit(v, id, Some(heslo.to_string()), true);
+        }
+        v.naplanuj();
+        n
+    }
+
     /// Pridá jednotlivé odkazy (nie playlisty) do frontu; vráti počet nových položiek.
     pub fn pridat_odkazy(&self, jednotlive: &[String], preset: &str, heslo: &str) -> usize {
         let priecinok = self.v.priecinok_vystupu();
@@ -888,6 +947,7 @@ fn polozka_pre_okno(p: &Polozka) -> Value {
         "podiel": p.podiel, "krok": p.krok,
         "jazyky": p.jazyky.as_ref().map(jazyky::popis_volieb),
         "treba_heslo": p.treba_heslo,
+        "s_heslom": !p.heslo.is_empty(),
         "rozbalenie": p.rozbalenie.as_ref().map(|r| json!({
             "stav": r.stav, "text": r.text, "podiel": r.podiel,
             "ciel": Path::new(&r.ciel).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),

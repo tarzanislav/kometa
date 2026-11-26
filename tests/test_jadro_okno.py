@@ -598,13 +598,25 @@ def archivy(o: Okno, out: Path):
     o.data("pridat", ur, "video")
     s = o.cakaj(lambda s: polozka(s, ur)["stav"] == "hotovo"
                 and (polozka(s, ur).get("rozbalenie") or {}).get("stav") in ("hotovo", "heslo", "chyba"), 30)
-    skontroluj("RAR s heslom: vypýta si heslo k archívu", polozka(s, ur)["rozbalenie"]["stav"] == "heslo",
-               polozka(s, ur)["rozbalenie"])
-    o.data("zadat_heslo", polozka(s, ur)["id"], "unrar")
-    s = o.cakaj(lambda s: polozka(s, ur)["rozbalenie"]["stav"] in ("hotovo", "chyba"), 30)
-    r = polozka(s, ur)["rozbalenie"]
-    skontroluj("RAR so správnym heslom rozbalený bez nového sťahovania", r["stav"] == "hotovo"
-               and (out / r["ciel"]).read_text() == "target\nCargo.lock\n", r)
+    skontroluj("RAR s heslom: vypýta si heslo (heslá iných súborov vo fronte nesedia)",
+               polozka(s, ur)["rozbalenie"]["stav"] == "heslo", polozka(s, ur)["rozbalenie"])
+    ur2 = ur + "?druhy"
+    o.data("pridat", ur2, "video")
+    s = o.cakaj(lambda s: polozka(s, ur2)["stav"] == "hotovo"
+                and (polozka(s, ur2).get("rozbalenie") or {}).get("stav") in ("hotovo", "heslo", "chyba"), 30)
+    n = o.data("nastavit_heslo", [polozka(s, ur)["id"], polozka(s, ur2)["id"]], "unrar")
+    s = o.cakaj(lambda s: all(polozka(s, x)["rozbalenie"]["stav"] in ("hotovo", "chyba") for x in (ur, ur2)), 30)
+    r, r2 = polozka(s, ur)["rozbalenie"], polozka(s, ur2)["rozbalenie"]
+    skontroluj("jedno heslo pre viac archívov naraz: oba rozbalené bez nového sťahovania", n == 2
+               and r["stav"] == r2["stav"] == "hotovo" and r["ciel"] != r2["ciel"]
+               and (out / r["ciel"]).read_text() == (out / r2["ciel"]).read_text() == "target\nCargo.lock\n", (n, r, r2))
+    ur3 = ur + "?treti"
+    o.data("pridat", ur3, "video")
+    s = o.cakaj(lambda s: polozka(s, ur3)["stav"] == "hotovo"
+                and (polozka(s, ur3).get("rozbalenie") or {}).get("stav") in ("hotovo", "heslo", "chyba"), 30)
+    r3 = polozka(s, ur3)["rozbalenie"]
+    skontroluj("ďalší archív sa rozbalí sám heslom zadaným pri inom súbore", r3["stav"] == "hotovo"
+               and "heslo z iného súboru" in r3["text"] and polozka(s, ur3)["s_heslom"], r3)
     o.data("ulozit_nastavenia", {"rozbalovat": False})
     ub = BASE + "/archivy/Balik.zip?druhy"
     o.data("pridat", ub, "video")
@@ -711,6 +723,25 @@ def strazca(out: Path):
         s = o.data("stav")
         skontroluj("stiahnuť zachytené: do frontu, zoznam prázdny", r["pridane"] == 1 and s["zachytene"] == []
                    and polozka(s, "https://youtu.be/dQw4w9WgXcQ") is not None, (r, s["zachytene"]))
+        # heslo v skopírovanom texte: priradí sa odkazom z tej istej kópie, archívy sa rozbalia samé
+        ra, rb = BASE + "/media/Archiv.rar?schranka-a", BASE + "/media/Archiv.rar?schranka-b"
+        schr.write_text(f"Archív z fóra:\n{ra}\n{rb}\nHeslo: unrar\n", encoding="utf-8")
+        s = o.cakaj(lambda s: len([z for z in s["zachytene"] if "schranka-" in z["url"]]) == 2, 15)
+        zz = [z for z in s["zachytene"] if "schranka-" in z["url"]]
+        skontroluj("heslo zo skopírovaného textu: obom odkazom, jedna skupina",
+                   all(z["heslo"] == "unrar" and z["heslo_zo_schranky"] for z in zz) and len({z["skupina"] for z in zz}) == 1,
+                   zz)
+        o.data("schranka_heslo", [zz[0]["id"]], "zlé")
+        n = o.data("schranka_heslo", [z["id"] for z in zz], "unrar")
+        zz = [z for z in o.data("stav")["zachytene"] if "schranka-" in z["url"]]
+        skontroluj("jedno heslo pre označené odkazy v schránke", n == 2
+                   and all(z["heslo"] == "unrar" and not z["heslo_zo_schranky"] for z in zz), zz)
+        o.data("schranka_stiahnut", [z["id"] for z in zz], "video")
+        s = o.cakaj(lambda s: all((polozka(s, u) or {}).get("rozbalenie", {}) and polozka(s, u)["rozbalenie"]["stav"]
+                                  in ("hotovo", "heslo", "chyba") for u in (ra, rb)), 30)
+        skontroluj("zo schránky s heslom: stiahnuté a rozbalené bez pýtania",
+                   all(polozka(s, u)["rozbalenie"]["stav"] == "hotovo" and polozka(s, u)["s_heslom"] for u in (ra, rb)),
+                   [polozka(s, u) for u in (ra, rb)])
         o.data("ulozit_nastavenia", {"strazca_rezim": "stiahnut"})
         ua = BASE + "/media/a.mp4?zo-schranky"
         schr.write_text(f"{ua}\nhttps://www.youtube.com/playlist?list=PL123", encoding="utf-8")

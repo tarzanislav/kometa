@@ -726,6 +726,24 @@ pub async fn uprac(p: Polozka, uloha: Option<tokio::task::JoinHandle<()>>) {
 /// Po dokončení: ak je výsledok archív a rozbaľovanie je zapnuté (alebo `rucne`), rozbalí ho vedľa
 /// neho. Pri rozdelenom archíve sa čaká, kým sú hotové všetky jeho časti vo fronte; rozbaľuje
 /// položka s najnižším číslom časti. `heslo` = nové heslo zadané pri položke.
+/// Heslá zadané pri iných položkách frontu (najnovšie prvé, bez opakovania), ktoré sa skúsia,
+/// keď archív zadané heslo neprijme. Nanajvýš osem – rozbalenie s cudzím heslom sa rýchlo vzdá.
+fn zname_hesla(f: &super::fronta::Fronta, okrem: &str) -> Vec<String> {
+    let mut polozky: Vec<&super::fronta::Polozka> =
+        f.polozky.iter().filter(|p| !p.heslo.is_empty()).collect();
+    polozky.sort_by(|a, b| b.pridane.total_cmp(&a.pridane));
+    let mut out: Vec<String> = vec![];
+    for p in polozky {
+        if p.heslo != okrem && !out.contains(&p.heslo) {
+            out.push(p.heslo.clone());
+        }
+        if out.len() == 8 {
+            break;
+        }
+    }
+    out
+}
+
 pub fn skus_rozbalit(v: &Arc<Vnutro>, id: &str, heslo: Option<String>, rucne: bool) {
     use super::archivy;
     use super::fronta::Rozbalenie;
@@ -739,7 +757,7 @@ pub fn skus_rozbalit(v: &Arc<Vnutro>, id: &str, heslo: Option<String>, rucne: bo
             })
         });
     };
-    let (vlastnik, archiv, heslo) = {
+    let (vlastnik, archiv, heslo, zname) = {
         let mut f = v.fronta.lock().unwrap();
         let Some(p) = f.najdi(id).cloned() else {
             return;
@@ -815,7 +833,12 @@ pub fn skus_rozbalit(v: &Arc<Vnutro>, id: &str, heslo: Option<String>, rucne: bo
                 podiel: Some(0.0),
             })
         });
-        (vlastnik, PathBuf::from(vp.subor), heslo)
+        (
+            vlastnik,
+            PathBuf::from(vp.subor),
+            heslo.clone(),
+            zname_hesla(&f, &heslo),
+        )
     };
     let v2 = v.clone();
     v.rt_spawn(async move {
@@ -824,7 +847,7 @@ pub fn skus_rozbalit(v: &Arc<Vnutro>, id: &str, heslo: Option<String>, rucne: bo
         let a = archiv.clone();
         let r = tokio::task::spawn_blocking(move || {
             let posledne = std::cell::Cell::new(Instant::now());
-            archivy::rozbal(&a, &heslo, &|hotovo, celkom| {
+            let priebeh = |hotovo: u64, celkom: u64| {
                 if celkom > 0 && posledne.get().elapsed().as_millis() >= 200 {
                     posledne.set(Instant::now());
                     v3.fronta.lock().unwrap().uprav(&vl, |x| {
@@ -833,9 +856,38 @@ pub fn skus_rozbalit(v: &Arc<Vnutro>, id: &str, heslo: Option<String>, rucne: bo
                         }
                     });
                 }
-            })
+            };
+            let mut r = archivy::rozbal(&a, &heslo, &priebeh);
+            // archív chce iné heslo: skúsiť tie, ktoré si zadal pri iných súboroch (často je
+            // jedno heslo pre celú skupinu) – až potom sa opýtať
+            let mut sedi = None;
+            if matches!(r, Err(archivy::ChybaRozbalenia::Heslo(_))) {
+                for h in &zname {
+                    match archivy::rozbal(&a, h, &priebeh) {
+                        Err(archivy::ChybaRozbalenia::Heslo(_)) => continue,
+                        x => {
+                            if x.is_ok() {
+                                sedi = Some(h.clone());
+                            }
+                            r = x;
+                            break;
+                        }
+                    }
+                }
+            }
+            (r, sedi)
         })
         .await;
+        let (r, sedi) = match r {
+            Ok((r, sedi)) => (Ok(r), sedi),
+            Err(e) => (Err(e), None),
+        };
+        if let Some(h) = &sedi {
+            v.fronta
+                .lock()
+                .unwrap()
+                .uprav(&vlastnik, |x| x.heslo = h.clone());
+        }
         let meno = archiv
             .file_name()
             .unwrap_or_default()
@@ -851,6 +903,9 @@ pub fn skus_rozbalit(v: &Arc<Vnutro>, id: &str, heslo: Option<String>, rucne: bo
                         _ => "súborov",
                     }
                 );
+                if sedi.is_some() {
+                    text.push_str(" – sedelo heslo z iného súboru");
+                }
                 if v.nastavenia.lock().unwrap().text("po_rozbaleni") == "kos" {
                     let casti = archivy::casti(&archiv);
                     let zmazane = tokio::task::spawn_blocking(move || {

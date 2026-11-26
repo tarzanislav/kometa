@@ -28,6 +28,8 @@ export interface Polozka {
   jazyky?: string | null
   /** „subor“ = úložisko chce heslo k súboru */
   treba_heslo?: string
+  /** heslo je zadané vopred */
+  s_heslom?: boolean
   /** rozbaľovanie archívu po stiahnutí */
   rozbalenie?: Rozbalenie | null
 }
@@ -65,6 +67,12 @@ export interface Zachyteny {
   kolekcia: boolean
   ulozisko: boolean
   cas: number
+  /** heslo k súboru alebo archívu (zadané vopred) */
+  heslo?: string
+  /** heslo našla Kometa v skopírovanom texte */
+  heslo_zo_schranky?: boolean
+  /** odkazy skopírované naraz */
+  skupina?: string
 }
 
 export interface Lekcia {

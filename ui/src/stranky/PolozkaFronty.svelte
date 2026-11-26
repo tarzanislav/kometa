@@ -7,15 +7,32 @@
   import Kometa from '../components/Kometa.svelte'
   import Menu from '../components/Menu.svelte'
 
-  let { p }: { p: Polozka } = $props()
+  let {
+    p,
+    vybrana = false,
+    prepni,
+  }: { p: Polozka; vybrana?: boolean; prepni?: () => void } = $props()
   let podrobnosti = $state(false)
   let noveHeslo = $state('')
+  // heslo vopred (pred stiahnutím a rozbalením)
+  let vopred = $state(false)
+  let hesloVopred = $state('')
   const rozb = $derived(p.rozbalenie)
+  // heslo má zmysel pri všetkom, čo ešte nie je hotové, a pri archívoch, ktoré čakajú na rozbalenie
+  const mozeHeslo = $derived(p.stav !== 'hotovo' && p.stav !== 'rozbalene')
 
   async function zadatHeslo() {
     if (!noveHeslo) return
     await skus('zadat_heslo', p.id, noveHeslo)
     noveHeslo = ''
+  }
+
+  async function ulozitVopred(h: string) {
+    const n = await skus<number>('nastavit_heslo', [p.id], h)
+    if (n == null) return
+    vopred = false
+    hesloVopred = ''
+    toast(h ? 'Heslo je uložené – použije sa pri stiahnutí aj rozbalení.' : 'Heslo je odstránené.', 'ok')
   }
   let bezObrazka = $state(false)
 
@@ -47,7 +64,16 @@
   }
 </script>
 
-<article class="polozka {p.stav}" aria-label={p.nazov || p.url}>
+<article class="polozka {p.stav}" class:vybrana aria-label={p.nazov || p.url}>
+  {#if prepni}
+    <input
+      type="checkbox"
+      class="volba"
+      checked={vybrana}
+      onchange={prepni}
+      aria-label="Označiť {p.nazov || p.url}"
+    />
+  {/if}
   <div class="nahlad" class:hotovo={p.stav === 'hotovo'}>
     {#if p.nahlad && !bezObrazka}
       <img src={p.nahlad} alt="" loading="lazy" referrerpolicy="no-referrer" onerror={() => (bezObrazka = true)} />
@@ -70,7 +96,31 @@
       {/if}
       {#if velkostText}<span class="cisla">{velkostText}</span>{/if}
       {#if p.autor && p.stav !== 'hotovo'}<span class="autor">{p.autor}</span>{/if}
+      {#if p.s_heslom && p.stav !== 'hotovo'}
+        <span class="s-heslom" title="Heslo je zadané vopred"><Ikona meno="zamok" velkost={13} /> S heslom</span>
+      {/if}
     </div>
+    {#if vopred}
+      <form
+        class="heslo"
+        onsubmit={(e) => {
+          e.preventDefault()
+          if (hesloVopred.trim()) ulozitVopred(hesloVopred.trim())
+        }}
+      >
+        <input
+          class="pole"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          bind:value={hesloVopred}
+          placeholder="Heslo k súboru alebo archívu"
+          aria-label="Heslo k súboru alebo archívu"
+        />
+        <button class="tl hlavne" disabled={!hesloVopred.trim()}>Uložiť</button>
+        {#if p.s_heslom}<button type="button" class="tl tiche" onclick={() => ulozitVopred('')}>Odstrániť</button>{/if}
+      </form>
+    {/if}
     {#if p.stav === 'stahuje' || p.stav === 'pauza' || p.stav === 'caka'}
       <div class="priebeh"><Kometa hodnota={podiel} stav={kometaStav} popis="Priebeh sťahovania" /></div>
     {:else if p.stav === 'chyba'}
@@ -146,6 +196,18 @@
   </div>
 
   <div class="akcie">
+    {#if mozeHeslo}
+      <button
+        class="tl ikona"
+        class:zapnute={p.s_heslom}
+        title={p.s_heslom ? 'Zmeniť heslo' : 'Zadať heslo vopred'}
+        aria-label={p.s_heslom ? 'Zmeniť heslo' : 'Zadať heslo vopred'}
+        aria-expanded={vopred}
+        onclick={() => (vopred = !vopred)}
+      >
+        <Ikona meno="zamok" />
+      </button>
+    {/if}
     {#if p.stav === 'stahuje' || p.stav === 'caka'}
       <button class="tl ikona" title="Pozastaviť" aria-label="Pozastaviť" onclick={() => skus('pozastavit', [p.id])}>
         <Ikona meno="pauza" />
@@ -227,6 +289,28 @@
   .male-tl {
     height: 28px;
     padding: 0 var(--s3);
+  }
+  .s-heslom {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .zapnute {
+    color: var(--accent);
+  }
+  .volba {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  .polozka.vybrana {
+    background: var(--accent-soft);
+  }
+  .polozka:has(.volba) {
+    grid-template-columns: auto auto minmax(0, 1fr) auto auto;
   }
   .polozka {
     display: grid;

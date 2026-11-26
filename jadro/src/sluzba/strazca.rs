@@ -28,6 +28,15 @@ pub struct Zachyteny {
     pub ulozisko: bool,
     #[serde(default)]
     pub cas: f64,
+    /// heslo k súboru alebo archívu – zadané vopred, platí aj po pridaní do sťahovania
+    #[serde(default)]
+    pub heslo: String,
+    /// heslo našla Kometa v skopírovanom texte („Heslo: …“)
+    #[serde(default)]
+    pub heslo_zo_schranky: bool,
+    /// odkazy skopírované naraz majú spoločnú skupinu (často jedno heslo pre všetky)
+    #[serde(default)]
+    pub skupina: String,
 }
 
 #[derive(Default)]
@@ -196,6 +205,8 @@ pub fn skontroluj(v: &Arc<Vnutro>) {
         return;
     }
     let stiahnut = rezim == "stiahnut";
+    let heslo = zdroje::heslo_z_textu(&text);
+    let skupina = super::fronta::nove_id();
     let mut do_frontu = vec![];
     let mut odlozene = vec![];
     for url in nove {
@@ -211,12 +222,25 @@ pub fn skontroluj(v: &Arc<Vnutro>) {
                 kolekcia,
                 ulozisko: zdroje::je_ulozisko(&url),
                 cas: teraz(),
+                heslo: heslo.clone().unwrap_or_default(),
+                heslo_zo_schranky: heslo.is_some(),
+                skupina: skupina.clone(),
                 url,
             });
         }
     }
     if !do_frontu.is_empty() {
-        let n = super::Sluzba::from(v.clone()).pridat_odkazy(&do_frontu, &format, "");
+        let n = super::Sluzba::from(v.clone()).pridat_odkazy(
+            &do_frontu,
+            &format,
+            heslo.as_deref().unwrap_or(""),
+        );
+        if heslo.is_some() {
+            v.zapis(
+                "🔑 V skopírovanom texte bolo heslo – Kometa ho použije pri týchto súboroch."
+                    .to_string(),
+            );
+        }
         v.prostredie.oznam(
             "Kometa – zo schránky",
             &if n == 1 {
@@ -283,6 +307,27 @@ fn nacitaj_nazov(v: &Arc<Vnutro>, z: &Zachyteny) {
             uloz(&v2);
         }
     });
+}
+
+/// Nastaví heslo vybraným zachyteným odkazom (alebo všetkým pri `None`); prázdne heslo ho zruší.
+/// Vráti počet zmenených.
+pub fn nastav_heslo(v: &Vnutro, ids: Option<&[String]>, heslo: &str) -> usize {
+    let heslo = heslo.trim();
+    let mut n = 0;
+    for z in v
+        .strazca
+        .lock()
+        .unwrap()
+        .zoznam
+        .iter_mut()
+        .filter(|z| ids.map_or(true, |ids| ids.contains(&z.id)))
+    {
+        z.heslo = heslo.to_string();
+        z.heslo_zo_schranky = false;
+        n += 1;
+    }
+    uloz(v);
+    n
 }
 
 /// Odloží odkazy (alebo všetky pri `None`) zo zoznamu a vráti ich.

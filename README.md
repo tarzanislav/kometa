@@ -116,10 +116,14 @@ Automatickú aktualizáciu vypneš v *Nastaveniach → Aktualizácie*; tam je aj
 - **Súbor chránený heslom** (Webshare, Datoid): heslo zadaj vopred tlačidlom **Heslo** pod poľom na odkazy, alebo neskôr – položka sa hneď na začiatku zastaví a pri nej je políčko na heslo.
 - **Archív po stiahnutí:** ZIP, 7z a RAR sa samy rozbalia vedľa archívu. Jediný súbor alebo priečinok z archívu sa dá rovno vedľa neho, viac súborov do priečinka s menom archívu. Zaheslovaný archív si vypýta heslo pri položke (nič sa nesťahuje znova); heslo zadané vopred sa použije aj pre archív. Nič z archívu sa nezapíše mimo cieľového priečinka.
 - **Rozdelené archívy** (`.part1.rar`, `.r00`, `.7z.001`, `.zip.001`): rozbaľuje sa, keď sú stiahnuté všetky časti; dovtedy položka čaká.
+- **Heslá vopred pre veľa súborov naraz:** vo fronte aj v karte *Zo schránky* označ položky (zaškrtávacie políčka, aj „všetko v časti“) a zadaj **jedno heslo pre všetky označené**. Pri jednej položke stačí ikona zámku. Položky s heslom majú štítok *S heslom* – stiahnu sa a rozbalia bez pýtania.
+- **Zabudnuté heslo:** keď archív zadané heslo neprijme alebo heslo chýba, Kometa najprv skúsi heslá, ktoré si zadal pri iných súboroch vo fronte (často má celá skupina jedno heslo). Až keď nesedí žiadne, opýta sa pri položke.
 - V *Nastaveniach → Archívy* vypneš automatické rozbaľovanie (archív potom rozbalíš tlačidlom pri položke) a zvolíš, či archív po rozbalení ostane, alebo pôjde do Koša.
 
 ### Zo schránky (aplikácia)
 Zapni **Sledovať schránku**. Keď potom skopíruješ odkaz na YouTube, Webshare, Fastshare, Datoid, Vimeo, TikTok a pod. alebo priamy odkaz na video či archív, objaví sa v karte *Zo schránky* (pri YouTube s názvom a náhľadom). Odtiaľ ho stiahneš alebo zahodíš. Pri voľbe **Hneď stiahnuť** ide odkaz rovno do sťahovania zvoleným formátom; playlisty a kanály vždy počkajú na výber videí. Text, ktorý bol v schránke pred zapnutím, sa nezachytí, a ten istý odkaz sa nezachytí dvakrát.
+
+Odkazy skopírované naraz (napr. všetky diely z fóra) sú pod spoločným nadpisom *Skopírované naraz* – celú skupinu označíš jedným kliknutím a priradíš jej heslo. Keď je heslo priamo v skopírovanom texte (riadok „Heslo: …“, „Password: …“), Kometa ho priradí odkazom z tej istej kópie sama (štítok *Heslo zo schránky*).
 
 ### Kurzy (aplikácia)
 Pre kurzy, na ktoré si prihlásený:

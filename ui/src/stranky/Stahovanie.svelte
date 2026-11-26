@@ -63,6 +63,33 @@
     ].filter((s) => s.p.length && s.filtre.includes(filter)),
   )
 
+  // výber viacerých položiek (heslo pre všetky, pozastaviť, spustiť, odstrániť)
+  let vybrane = $state<string[]>([])
+  const oznacene = $derived(vybrane.filter((id) => polozky.some((p) => p.id === id)))
+  let hromadneHeslo = $state('')
+
+  function prepni(id: string) {
+    vybrane = oznacene.includes(id) ? oznacene.filter((x) => x !== id) : [...oznacene, id]
+  }
+
+  function prepniViac(ids: string[], zapnut: boolean) {
+    vybrane = zapnut ? [...new Set([...oznacene, ...ids])] : oznacene.filter((x) => !ids.includes(x))
+  }
+
+  async function hesloOznacenym() {
+    const h = hromadneHeslo.trim()
+    if (!h) return
+    const n = await skus<number>('nastavit_heslo', oznacene, h)
+    if (n == null) return
+    hromadneHeslo = ''
+    toast(`Heslo je uložené: ${pocet(n, 'položka', 'položky', 'položiek')}. Archívy sa rozbalia samé.`, 'ok')
+  }
+
+  async function hromadne(metoda: 'pozastavit' | 'spustit' | 'odstranit') {
+    await skus(metoda, oznacene)
+    if (metoda === 'odstranit') vybrane = []
+  }
+
   const aktivnych = $derived(skupiny.stahuje.length + skupiny.caka.length)
   const pozastavenych = $derived(skupiny.caka.filter((p) => p.stav === 'pauza').length)
 
@@ -274,12 +301,51 @@
       </div>
     </div>
 
+    {#if oznacene.length}
+      <form
+        class="hromadne-front"
+        aria-label="Označené položky"
+        onsubmit={(e) => {
+          e.preventDefault()
+          hesloOznacenym()
+        }}
+      >
+        <span class="cisla pocet-oznacenych">Označené: {oznacene.length}</span>
+        <label class="skryte" for="front-heslo">Heslo pre označené položky</label>
+        <input
+          id="front-heslo"
+          class="pole"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          bind:value={hromadneHeslo}
+          placeholder="Jedno heslo pre všetky označené"
+        />
+        <button class="tl" disabled={!hromadneHeslo.trim()}><Ikona meno="zamok" velkost={16} /> Priradiť heslo</button>
+        <button type="button" class="tl tiche" onclick={() => hromadne('pozastavit')}><Ikona meno="pauza" velkost={16} /> Pozastaviť</button>
+        <button type="button" class="tl tiche" onclick={() => hromadne('spustit')}><Ikona meno="play" velkost={16} /> Spustiť</button>
+        <button type="button" class="tl tiche nebezpecne" onclick={() => hromadne('odstranit')}>
+          <Ikona meno="kos" velkost={16} /> Odstrániť zo zoznamu
+        </button>
+        <button type="button" class="tl tiche" onclick={() => (vybrane = [])}>Zrušiť výber</button>
+      </form>
+    {/if}
+
     {#each sekcie as s (s.id)}
       <section class="sekcia" aria-labelledby="sekcia-{s.id}">
-        <h2 id="sekcia-{s.id}">{s.nazov} <span class="tlmene cisla">{s.p.length}</span></h2>
+        <h2 id="sekcia-{s.id}">
+          <input
+            type="checkbox"
+            class="volba"
+            checked={s.p.every((p) => oznacene.includes(p.id))}
+            onchange={(e) => prepniViac(s.p.map((p) => p.id), e.currentTarget.checked)}
+            aria-label="Označiť všetko v časti {s.nazov}"
+          />
+          {s.nazov} <span class="tlmene cisla">{s.p.length}</span>
+        </h2>
         <div class="zoznam">
           {#each s.p as p (p.id)}
-            <PolozkaFronty {p} />
+            <PolozkaFronty {p} vybrana={oznacene.includes(p.id)} prepni={() => prepni(p.id)} />
           {/each}
         </div>
       </section>
@@ -407,6 +473,36 @@
   }
   .sekcia {
     margin-top: var(--s5);
+  }
+  .sekcia h2 .volba {
+    align-self: center;
+  }
+  .volba {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  .hromadne-front {
+    position: sticky;
+    top: var(--s2);
+    z-index: 2;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2);
+    margin-top: var(--s3);
+    padding: var(--s2) var(--s3);
+    border: 1px solid var(--accent);
+    border-radius: var(--r-ctl);
+    background: var(--panel);
+  }
+  .hromadne-front .pole {
+    width: 260px;
+    height: 34px;
+  }
+  .pocet-oznacenych {
+    font-weight: 600;
   }
   .sekcia h2 {
     display: flex;

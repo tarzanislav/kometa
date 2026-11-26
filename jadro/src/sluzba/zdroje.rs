@@ -166,6 +166,73 @@ pub fn odkazy(text: &str) -> Vec<String> {
     out
 }
 
+/// Heslo uvedené v skopírovanom texte („Heslo: …“, „Password = …“, „pw - …“), aké býva pri
+/// odkazoch na fórach a v správach. Riadok musí začínať slovom heslo/password (aj „Heslo k
+/// archívu:“) a hneď za ním oddeľovač. Keď je v texte viac rôznych hesiel, nevie sa, ku ktorému
+/// odkazu patria – vtedy `None` a heslo zadá človek.
+pub fn heslo_z_textu(text: &str) -> Option<String> {
+    let mut najdene: Vec<String> = vec![];
+    for riadok in text.lines() {
+        let r = riadok
+            .trim_start_matches(|c: char| !c.is_alphanumeric())
+            .trim();
+        let Some(i) = r.find([':', '=', '-', '–', '—']) else {
+            continue;
+        };
+        let (stitok, hodnota) = (r[..i].trim().to_lowercase(), &r[i..]);
+        let mut slova = stitok.split_whitespace();
+        let prve = slova.next().unwrap_or("");
+        // „Heslo k archívu“, „heslo na rozbalenie“, „password for archive“ – nie „password reset“
+        const DOPLNKY: [&str; 22] = [
+            "k",
+            "ku",
+            "na",
+            "pre",
+            "do",
+            "je",
+            "archívu",
+            "archivu",
+            "archívom",
+            "archivom",
+            "rozbalenie",
+            "súboru",
+            "suboru",
+            "súborom",
+            "suborom",
+            "for",
+            "is",
+            "archive",
+            "archives",
+            "file",
+            "files",
+            "rar",
+        ];
+        let je_stitok = matches!(
+            prve,
+            "heslo" | "hesla" | "heslá" | "password" | "passwort" | "pass" | "pw" | "pwd"
+        ) && slova.all(|w| DOPLNKY.contains(&w));
+        if !je_stitok {
+            continue;
+        }
+        let h = hodnota
+            .trim_start_matches([':', '=', '-', '–', '—'])
+            .trim()
+            .trim_matches(|c| matches!(c, '"' | '\'' | '„' | '“' | '”' | '`'));
+        // heslo je jedno slovo, nanajvýš pár slov – nie celá veta
+        if h.is_empty()
+            || h.chars().count() > 128
+            || h.contains("http")
+            || h.split_whitespace().count() > 3
+        {
+            continue;
+        }
+        if !najdene.iter().any(|x| x == h) {
+            najdene.push(h.to_string());
+        }
+    }
+    (najdene.len() == 1).then(|| najdene.remove(0))
+}
+
 /// Bezpečný názov súboru pre Windows, macOS aj Linux .
 pub fn bezpecny_nazov(text: &str, limit: usize) -> String {
     let mut s = String::with_capacity(text.len());
@@ -208,6 +275,30 @@ pub fn bezpecny_nazov(text: &str, limit: usize) -> String {
 
 #[cfg(test)]
 mod testy {
+    #[test]
+    fn heslo_zo_skopirovaneho_textu() {
+        let t = "Film 2024\nhttps://webshare.cz/#/file/abc/film.part1.rar\nHeslo: KometaLeti\n";
+        assert_eq!(heslo_z_textu(t).as_deref(), Some("KometaLeti"));
+        assert_eq!(
+            heslo_z_textu("• Heslo k archívu: „tajne 1“").as_deref(),
+            Some("tajne 1")
+        );
+        assert_eq!(
+            heslo_z_textu("Password = abc123").as_deref(),
+            Some("abc123")
+        );
+        assert_eq!(heslo_z_textu("pw - x\nPW: x").as_deref(), Some("x"));
+        // bez hesla, viac rôznych hesiel, heslo je odkaz, „heslo“ uprostred vety
+        assert_eq!(heslo_z_textu("https://webshare.cz/#/file/abc"), None);
+        assert_eq!(heslo_z_textu("Heslo: a\nHeslo: b"), None);
+        assert_eq!(heslo_z_textu("Heslo: https://example.com/x"), None);
+        assert_eq!(heslo_z_textu("Zabudol som heslo: neviem"), None);
+        assert_eq!(
+            heslo_z_textu("Password reset - klikni sem a zmeň si ho"),
+            None
+        );
+    }
+
     use super::*;
 
     #[test]

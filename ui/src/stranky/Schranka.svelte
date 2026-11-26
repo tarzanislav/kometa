@@ -1,5 +1,7 @@
 <script lang="ts">
   // Odkazy zachytené zo schránky (Ctrl+C) – stiahnuť, otvoriť výber z playlistu alebo zahodiť.
+  // Heslá k súborom a archívom sa dajú zadať hneď tu – jednému odkazu, skupine skopírovanej naraz
+  // alebo všetkým označeným; po stiahnutí sa archívy rozbalia samé.
   import { app, nastav, skus, toast } from '../lib/app.svelte'
   import { pocet } from '../lib/format'
   import { ikonaZdroja } from '../lib/ikony'
@@ -15,9 +17,65 @@
   const videa = $derived(zoznam.filter((z) => !z.kolekcia))
   const formaty = $derived(app.init?.formaty ?? [])
 
+  // výber viacerých odkazov (len tie, ktoré v zozname ešte sú)
+  let vybrane = $state<string[]>([])
+  const oznacene = $derived(vybrane.filter((id) => zoznam.some((z) => z.id === id)))
+  const vsetkyOznacene = $derived(zoznam.length > 0 && oznacene.length === zoznam.length)
+  let hromadneHeslo = $state('')
+  // položka s otvoreným poľom na heslo
+  let upravuje = $state<string | null>(null)
+  let heslo = $state('')
+
+  // odkazy skopírované naraz spolu, najnovšie hore
+  const skupiny = $derived.by(() => {
+    const out: { id: string; polozky: Zachyteny[] }[] = []
+    for (const z of zoznam) {
+      const k = z.skupina || z.id
+      const s = out.find((x) => x.id === k)
+      if (s) s.polozky.unshift(z)
+      else out.push({ id: k, polozky: [z] })
+    }
+    // v skupine v poradí, v akom boli v skopírovanom texte
+    return out
+  })
+
+  function prepni(id: string) {
+    vybrane = oznacene.includes(id) ? oznacene.filter((x) => x !== id) : [...oznacene, id]
+  }
+
+  function prepniViac(ids: string[], zapnut: boolean) {
+    vybrane = zapnut ? [...new Set([...oznacene, ...ids])] : oznacene.filter((x) => !ids.includes(x))
+  }
+
+  async function priraditHeslo(ids: string[], h: string): Promise<boolean> {
+    const n = await skus<number>('schranka_heslo', ids, h)
+    if (n == null) return false
+    toast(
+      h.trim()
+        ? `Heslo je priradené: ${pocet(n, 'odkaz', 'odkazy', 'odkazov')}. Archívy sa po stiahnutí rozbalia samé.`
+        : 'Heslo je odstránené.',
+      'ok',
+    )
+    return true
+  }
+
+  async function hromadne() {
+    if (hromadneHeslo.trim() && (await priraditHeslo(oznacene, hromadneHeslo))) hromadneHeslo = ''
+  }
+
+  function upravit(z: Zachyteny) {
+    upravuje = upravuje === z.id ? null : z.id
+    heslo = z.heslo ?? ''
+  }
+
+  async function ulozitHeslo(ids: string[], h: string) {
+    if (await priraditHeslo(ids, h)) upravuje = null
+  }
+
   async function stiahnut(ids: string[] | null) {
     const r = await skus<{ pridane: number; kolekcie: string[] }>('schranka_stiahnut', ids, format)
     if (!r) return
+    vybrane = []
     if (r.pridane) toast(`Pridané do sťahovania: ${pocet(r.pridane, 'položka', 'položky', 'položiek')}.`, 'ok')
     if (r.kolekcie.length) app.dialog = { druh: 'playlist', url: r.kolekcie[0] }
   }
@@ -97,42 +155,161 @@
         </button>
       </div>
     </div>
-    <ul class="zoznam">
-      {#each zoznam as z (z.id)}
-        <li class="plocha polozka">
-          <div class="nahlad">
-            {#if z.nahlad}<img src={z.nahlad} alt="" loading="lazy" />{:else}<Ikona
-                meno={z.kolekcia ? 'playlist' : ikonaZdroja(z.zdroj)}
-                velkost={22}
-              />{/if}
-          </div>
-          <div class="text">
-            <h3 title={z.url}>{z.nazov || z.url}</h3>
-            <p class="meta">
-              <span class="stitok">{z.kolekcia ? `${z.zdroj} – playlist` : z.zdroj}</span>
-              {#if z.ulozisko}<span>Súbor</span>{/if}
-              <span class="tlmene cisla">{cas(z.cas)}</span>
-              {#if z.nazov}<span class="tlmene odkaz vyber-text">{z.url}</span>{/if}
-            </p>
-          </div>
-          <div class="tlacidla">
-            {#if z.kolekcia}
-              <button class="tl" onclick={() => vybrat(z)}><Ikona meno="playlist" velkost={16} /> Vybrať videá</button>
-            {:else}
-              <button class="tl" onclick={() => stiahnut([z.id])}><Ikona meno="stiahnut" velkost={16} /> Stiahnuť</button>
-            {/if}
-            <button
-              class="tl ikona nebezpecne"
-              title="Zahodiť"
-              aria-label="Zahodiť"
-              onclick={() => skus('schranka_zahodit', [z.id])}
-            >
-              <Ikona meno="zavriet" />
-            </button>
-          </div>
-        </li>
-      {/each}
-    </ul>
+    <p class="male tlmene rada">
+      Heslo k archívom zadaj hneď tu (ikona zámku) – po stiahnutí sa rozbalia samé. Keď je heslo v skopírovanom
+      texte („Heslo: …“), Kometa ho doplní sama.
+    </p>
+    <div class="vyber-riadok">
+      <label class="oznacit">
+        <input
+          type="checkbox"
+          checked={vsetkyOznacene}
+          onchange={(e) => prepniViac(zoznam.map((z) => z.id), e.currentTarget.checked)}
+        />
+        Označiť všetko
+      </label>
+      {#if oznacene.length}
+        <form
+          class="hromadne"
+          onsubmit={(e) => {
+            e.preventDefault()
+            hromadne()
+          }}
+        >
+          <span class="cisla pocet-oznacenych">Označené: {oznacene.length}</span>
+          <label class="skryte" for="hromadne-heslo">Heslo pre označené odkazy</label>
+          <input
+            id="hromadne-heslo"
+            class="pole"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            bind:value={hromadneHeslo}
+            placeholder="Jedno heslo pre všetky označené"
+          />
+          <button class="tl" disabled={!hromadneHeslo.trim()}><Ikona meno="zamok" velkost={16} /> Priradiť heslo</button>
+          <button type="button" class="tl hlavne" onclick={() => stiahnut(oznacene)}>
+            <Ikona meno="stiahnut" velkost={16} /> Stiahnuť označené
+          </button>
+          <button type="button" class="tl tiche" onclick={() => skus('schranka_zahodit', oznacene)}>
+            <Ikona meno="vycistit" velkost={16} /> Zahodiť označené
+          </button>
+          <button type="button" class="tl tiche" onclick={() => (vybrane = [])}>Zrušiť výber</button>
+        </form>
+      {/if}
+    </div>
+    {#each skupiny as sk (sk.id)}
+      {#if sk.polozky.length > 1}
+        <div class="skupina">
+          <label class="oznacit">
+            <input
+              type="checkbox"
+              checked={sk.polozky.every((z) => oznacene.includes(z.id))}
+              onchange={(e) => prepniViac(sk.polozky.map((z) => z.id), e.currentTarget.checked)}
+            />
+            Skopírované naraz: {pocet(sk.polozky.length, 'odkaz', 'odkazy', 'odkazov')}
+          </label>
+          <span class="tlmene cisla">{cas(sk.polozky[0].cas)}</span>
+        </div>
+      {/if}
+      <ul class="zoznam">
+        {#each sk.polozky as z (z.id)}
+          <li class="plocha polozka" class:oznacena={oznacene.includes(z.id)}>
+            <input
+              type="checkbox"
+              class="volba"
+              checked={oznacene.includes(z.id)}
+              onchange={() => prepni(z.id)}
+              aria-label="Označiť {z.nazov || z.url}"
+            />
+            <div class="nahlad">
+              {#if z.nahlad}<img src={z.nahlad} alt="" loading="lazy" />{:else}<Ikona
+                  meno={z.kolekcia ? 'playlist' : ikonaZdroja(z.zdroj)}
+                  velkost={22}
+                />{/if}
+            </div>
+            <div class="text">
+              <h3 title={z.url}>{z.nazov || z.url}</h3>
+              <p class="meta">
+                <span class="stitok">{z.kolekcia ? `${z.zdroj} – playlist` : z.zdroj}</span>
+                {#if z.ulozisko}<span>Súbor</span>{/if}
+                {#if z.heslo}
+                  <span
+                    class="s-heslom"
+                    title={z.heslo_zo_schranky ? 'Heslo našla Kometa v skopírovanom texte' : 'Heslo je zadané'}
+                  >
+                    <Ikona meno="zamok" velkost={13} />
+                    {z.heslo_zo_schranky ? 'Heslo zo schránky' : 'S heslom'}
+                  </span>
+                {/if}
+                <span class="tlmene cisla">{cas(z.cas)}</span>
+                {#if z.nazov}<span class="tlmene odkaz vyber-text">{z.url}</span>{/if}
+              </p>
+              {#if upravuje === z.id}
+                <form
+                  class="heslo-riadok"
+                  onsubmit={(e) => {
+                    e.preventDefault()
+                    ulozitHeslo([z.id], heslo)
+                  }}
+                >
+                  <input
+                    class="pole"
+                    type="text"
+                    autocomplete="off"
+                    spellcheck="false"
+                    bind:value={heslo}
+                    placeholder="Heslo k súboru alebo archívu"
+                    aria-label="Heslo k súboru alebo archívu"
+                  />
+                  <button class="tl hlavne" disabled={!heslo.trim()}>Uložiť</button>
+                  {#if sk.polozky.length > 1}
+                    <button
+                      type="button"
+                      class="tl"
+                      disabled={!heslo.trim()}
+                      onclick={() => ulozitHeslo(sk.polozky.map((x) => x.id), heslo)}
+                    >
+                      Celej skupine ({sk.polozky.length})
+                    </button>
+                  {/if}
+                  {#if z.heslo}
+                    <button type="button" class="tl tiche" onclick={() => ulozitHeslo([z.id], '')}>Odstrániť heslo</button>
+                  {/if}
+                </form>
+              {/if}
+            </div>
+            <div class="tlacidla">
+              {#if !z.kolekcia}
+                <button
+                  class="tl ikona"
+                  class:zapnute={!!z.heslo}
+                  title={z.heslo ? 'Zmeniť heslo' : 'Zadať heslo'}
+                  aria-label={z.heslo ? 'Zmeniť heslo' : 'Zadať heslo'}
+                  aria-expanded={upravuje === z.id}
+                  onclick={() => upravit(z)}
+                >
+                  <Ikona meno="zamok" />
+                </button>
+              {/if}
+              {#if z.kolekcia}
+                <button class="tl" onclick={() => vybrat(z)}><Ikona meno="playlist" velkost={16} /> Vybrať videá</button>
+              {:else}
+                <button class="tl" onclick={() => stiahnut([z.id])}><Ikona meno="stiahnut" velkost={16} /> Stiahnuť</button>
+              {/if}
+              <button
+                class="tl ikona nebezpecne"
+                title="Zahodiť"
+                aria-label="Zahodiť"
+                onclick={() => skus('schranka_zahodit', [z.id])}
+              >
+                <Ikona meno="zavriet" />
+              </button>
+            </div>
+          </li>
+        {/each}
+      </ul>
+    {/each}
   {:else}
     <div class="prazdne">
       <Ikona meno="schranka" velkost={34} />
@@ -200,9 +377,87 @@
     list-style: none;
     padding: 0;
   }
+  .rada {
+    margin-bottom: var(--s3);
+  }
+  .vyber-riadok {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s3);
+    margin-bottom: var(--s3);
+  }
+  .oznacit {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    font-size: var(--t-s);
+    cursor: pointer;
+  }
+  input[type='checkbox'] {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  .hromadne {
+    position: sticky;
+    top: var(--s2);
+    z-index: 2;
+    display: flex;
+    flex: 1;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2);
+    padding: var(--s2) var(--s3);
+    border: 1px solid var(--accent);
+    border-radius: var(--r-ctl);
+    background: var(--panel);
+  }
+  .hromadne .pole {
+    width: 230px;
+  }
+  .pocet-oznacenych {
+    font-weight: 600;
+  }
+  .skupina {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s3);
+    margin: var(--s5) 0 var(--s2);
+    padding: 0 var(--s1);
+    font-weight: 600;
+  }
+  .zoznam + .zoznam {
+    margin-top: var(--s2);
+  }
+  .polozka.oznacena {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  .s-heslom {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .heslo-riadok {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s2);
+    margin-top: var(--s2);
+  }
+  .heslo-riadok .pole {
+    width: 280px;
+  }
+  .zapnute {
+    color: var(--accent);
+  }
   .polozka {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
     align-items: center;
     gap: var(--s4);
     padding: var(--s3);
