@@ -85,6 +85,8 @@ FALOSNY_YTDLP = b"#!/bin/sh\necho 2099.01.01\n" + b"#" * 4096
 FALOSNE_DENO = b"#!/bin/sh\necho deno 2.5.6\n"
 # vydania pomocníkov na „GitHube“: verzie a Deno v ZIP (súčet vo formáte PowerShellu)
 GH = {"ytdlp": "2099.01.01", "deno": "v2.5.6"}
+# simulované rozhranie prehrávača YouTube: stav odpovede a prijaté požiadavky
+PREHRAVAC = {"stav": "OK", "poziadavky": [], "profil": None}
 
 
 def deno_zip() -> bytes:
@@ -173,6 +175,9 @@ class Server(http.server.SimpleHTTPRequestHandler):
                 return self.posli(200, (D / "akt" / "latest.json").read_text(encoding="utf-8"), "application/json")
             f = D / "akt" / meno
             return self.posli(200, f.read_bytes(), "application/octet-stream") if f.is_file() else self.posli(404, "")
+        if u.path == "/yt/profil.json":
+            p = PREHRAVAC["profil"]
+            return self.posli(200, json.dumps(p), "application/json") if p else self.posli(404, "")
         if u.path == "/gh/ytdlp-latest":
             return self.posli(200, json.dumps({"tag_name": GH["ytdlp"]}), "application/json")
         if u.path == "/gh/deno-latest":
@@ -264,7 +269,8 @@ class Server(http.server.SimpleHTTPRequestHandler):
     def do_POST(self):  # noqa: N802
         u = urllib.parse.urlparse(self.path)
         n = int(self.headers.get("Content-Length") or 0)
-        f = {k: v[0] for k, v in urllib.parse.parse_qs(self.rfile.read(n).decode()).items()}
+        telo = self.rfile.read(n).decode()
+        f = {k: v[0] for k, v in urllib.parse.parse_qs(telo).items()}
         if u.path.startswith("/ws/api/"):
             m = u.path[8:].strip("/")
             ok = lambda x="": f"<?xml version='1.0'?><response><status>OK</status>{x}</response>"  # noqa: E731
@@ -295,6 +301,10 @@ class Server(http.server.SimpleHTTPRequestHandler):
                         return self.posli(200, "<response><status>FATAL</status><code>FILE_LINK_FATAL_5</code>"
                                                "<message>Bad password</message></response>", "text/xml")
                 return self.posli(200, ok(f"<link>{BASE}/ws/subor.bin</link>"), "text/xml")
+        if u.path == "/yt/youtubei/v1/player":
+            PREHRAVAC["poziadavky"].append({"hlavicky": {k.lower(): v for k, v in self.headers.items()},
+                                            "telo": json.loads(telo or "{}")})
+            return self.posli(200, json.dumps(odpoved_prehravaca(PREHRAVAC["stav"])), "application/json")
         if u.path == "/fastshare/sql.php":
             if f.get("login") == "ja" and f.get("heslo") == "fs-heslo":
                 return self.posli(200, '<a href="/logout.php">x</a>', hlavicky=[("Set-Cookie", "fs=ok; Path=/")])
@@ -320,7 +330,8 @@ class Okno:
                       KOMETA_POMOCNICI="nie", KOMETA_YTDLP_API=BASE + "/gh/ytdlp-latest",
                       KOMETA_DENO_API=BASE + "/gh/deno-latest", KOMETA_DENO_ZAKLAD=BASE + "/deno",
                       KOMETA_WEBSHARE_ZAKLAD=BASE + "/ws/api", KOMETA_FASTSHARE_ZAKLAD=BASE + "/fastshare",
-                      KOMETA_DATOID_ZAKLAD=BASE + "/datoid")
+                      KOMETA_DATOID_ZAKLAD=BASE + "/datoid", KOMETA_YOUTUBE="ytdlp",
+                      KOMETA_YOUTUBE_ZAKLAD=BASE + "/yt", KOMETA_YOUTUBE_PROFIL=BASE + "/yt/profil.json")
         e = dict(os.environ, **dict(zaklad, **env))
         self.p = subprocess.Popen([str(EXE), "okno", "--bez-okna"], stdout=subprocess.PIPE, text=True, env=e)
         self.url = ""
@@ -956,6 +967,82 @@ def priprav_jazyky() -> tuple[Path, str]:
     return nastroj, "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
 
+def odpoved_prehravaca(stav: str) -> dict:
+    """Vymyslená odpoveď rozhrania prehrávača: tie isté médiá ako simulovaný yt-dlp (EN originál, CZ, SK)."""
+    u = lambda n: f"{BASE}/media/yt/{n}"  # noqa: E731
+    velkost = lambda n: str((D / "web" / "media" / "yt" / n).stat().st_size)  # noqa: E731
+
+    def zvuk(itag, mime, n, nazov, stopa, predvoleny):
+        return {"itag": itag, "url": u(n), "mimeType": mime, "bitrate": 64000, "contentLength": velkost(n),
+                "audioTrack": {"displayName": nazov, "id": stopa, "audioIsDefault": predvoleny}}
+    aac, opus = 'audio/mp4; codecs="mp4a.40.2"', 'audio/webm; codecs="opus"'
+    return {
+        "playabilityStatus": {"status": stav, "reason": "Sign in to confirm your age"},
+        "videoDetails": {"videoId": "dQw4w9WgXcQ", "title": "Vlastné čítanie", "author": "Kanál",
+                         "lengthSeconds": "3", "shortDescription": "Popis skúšky"},
+        "streamingData": {"adaptiveFormats": [
+            {"itag": 248, "url": u("v.webm"), "mimeType": 'video/webm; codecs="vp9"', "bitrate": 300000,
+             "width": 320, "height": 240, "fps": 25, "qualityLabel": "240p", "contentLength": velkost("v.webm")},
+            {"itag": 133, "url": u("v.mp4"), "mimeType": 'video/mp4; codecs="avc1.4d400d"', "bitrate": 200000,
+             "width": 320, "height": 240, "fps": 25, "qualityLabel": "240p", "contentLength": velkost("v.mp4")},
+            zvuk(140, aac, "en.m4a", "English original", "en.4", True),
+            zvuk(251, opus, "en.webm", "English original", "en.4", True),
+            zvuk(140, aac, "cs.m4a", "Czech", "cs.3", False),
+            zvuk(251, opus, "cs.webm", "Czech", "cs.3", False),
+            zvuk(251, opus, "sk.webm", "Slovak", "sk.3", False)]},
+        "captions": {"playerCaptionsTracklistRenderer": {"captionTracks": [
+            {"baseUrl": u("cs.json3"), "name": {"simpleText": "Czech"}, "languageCode": "cs"}]}},
+    }
+
+
+def youtube_vlastne(out: Path):
+    """YouTube vlastným kódom (rozhranie prehrávača) a záloha yt-dlp, keď to nevyjde."""
+    print("YouTube vlastným kódom, yt-dlp ako záloha")
+    znacka = D / "ytdlp-volany"
+    nastroj = D / "falosny-yt-dlp-znacka"
+    nastroj.write_text(f"#!/bin/sh\ntouch '{znacka}'\ncat '{D / 'info.json'}'\n", encoding="utf-8")
+    nastroj.chmod(0o755)
+    url = "https://youtu.be/dQw4w9WgXcQ"
+    PREHRAVAC.update(stav="OK", poziadavky=[])
+    o = Okno(D / "cfg-ytv", KOMETA_YTDLP=str(nastroj), KOMETA_YOUTUBE="vlastne", KOMETA_FFMPEG="nie")
+    try:
+        o.data("ulozit_nastavenia", {"outdir": str(out / "ytv")})
+        n = o.data("jazyky_nacitat", url)
+        p = PREHRAVAC["poziadavky"][-1] if PREHRAVAC["poziadavky"] else {"telo": {}, "hlavicky": {}}
+        t, h = p["telo"], p["hlavicky"]
+        skontroluj("jazyky z vlastného čítania (bez yt-dlp): originál, CZ, SK",
+                   [(x["kod"], x["original"], x["aac"]) for x in n["stopy"]]
+                   == [("en", True, True), ("cs", False, True), ("sk", False, False)]
+                   and n["nazov"] == "Vlastné čítanie" and not znacka.exists(), (n, znacka.exists()))
+        skontroluj("požiadavka na rozhranie prehrávača: video, klient, hlavičky",
+                   t.get("videoId") == "dQw4w9WgXcQ" and h.get("x-youtube-client-name") == "28"
+                   and h.get("x-youtube-client-version") == t["context"]["client"]["clientVersion"]
+                   and h.get("user-agent", "").startswith("com.google"), p)
+        o.data("pridat", url, "video")
+        s = o.cakaj(lambda s: (polozka(s, url) or {}).get("stav") in ("hotovo", "chyba"), 60)
+        q = polozka(s, url)
+        f = out / "ytv" / q["subor"] if q.get("subor") else None
+        prudy = [(x[0], x[1], x[2]) for x in prud(f)] if f and f.exists() else []
+        skontroluj("video z vlastného čítania: VP9 + zvuk originálu AAC aj Opus, bez yt-dlp",
+                   q["stav"] == "hotovo" and q["subor"].endswith(".mkv") and not znacka.exists()
+                   and prudy == [("video", "vp9", ""), ("audio", "aac", "eng"), ("audio", "opus", "eng")], (q, prudy))
+        # YouTube odmietne (vek, prihlásenie) → yt-dlp, a v zázname je dôvod
+        PREHRAVAC["stav"] = "LOGIN_REQUIRED"
+        n = o.data("jazyky_nacitat", url)
+        s = o.data("stav")
+        skontroluj("keď vlastné čítanie nevyjde, nastúpi yt-dlp a záznam povie prečo",
+                   n["nazov"] == "Jazyková skúška" and znacka.exists()
+                   and any("vlastné čítanie nevyšlo" in z and "LOGIN_REQUIRED" in z for z in s["zaznam"]), s["zaznam"][-3:])
+        # vypnuté v nastaveniach → rovno yt-dlp, rozhranie prehrávača sa nevolá
+        znacka.unlink()
+        PREHRAVAC.update(stav="OK", poziadavky=[])
+        o.data("ulozit_nastavenia", {"youtube_vlastne": False})
+        n = o.data("jazyky_nacitat", url)
+        skontroluj("nastavenie vypne vlastné čítanie", znacka.exists() and not PREHRAVAC["poziadavky"], n["nazov"])
+    finally:
+        o.zatvor()
+
+
 def jazyky_rozhranie(o: Okno, yt):
     """Karta Jazykové stopy: viac odkazov naraz a kanál; okno playlistu s prepínačom jazykov."""
     from playwright.sync_api import sync_playwright
@@ -1246,9 +1333,16 @@ def pomocnici():
     n = cfg / "nastroje"
     env = dict(PATH="/usr/bin:/bin", KOMETA_POMOCNICI="hned", KOMETA_YTDLP_ZAKLAD=BASE + "/vydania")
     GH.update(ytdlp="2099.01.01", deno="v2.5.6")
+    PREHRAVAC["profil"] = {"verzia": 99, "klienti": [{"meno": "TVHTML5", "cislo": 7, "verzia": "7.20991231",
+                                                      "user_agent": "Mozilla/5.0 (skuska)"}]}
     o = Okno(cfg, **env)
     try:
         s = o.cakaj(lambda s: s["nastroje"]["ytdlp"] and s["nastroje"]["deno"] and not s["nastroje"]["instaluje"], 40)
+        o.cakaj(lambda s: (cfg / "youtube-profil.json").exists(), 10)
+        s = o.data("stav")
+        skontroluj("profil YouTube sa obnoví z repozitára (novšia verzia)",
+                   json.loads((cfg / "youtube-profil.json").read_text())["verzia"] == 99
+                   and any("Profil YouTube je obnovený (verzia 99)" in z for z in s["zaznam"]), s["zaznam"][-4:])
         skontroluj("po štarte sám doinštaluje yt-dlp a Deno (overené, s verziou)",
                    (n / "yt-dlp").read_bytes() == FALOSNY_YTDLP and (n / "deno").read_bytes() == FALOSNE_DENO
                    and os.access(n / "deno", os.X_OK) and (n / "yt-dlp.verzia").read_text() == "2099.01.01"
@@ -1403,6 +1497,7 @@ def main() -> int:
             doinstalovanie()
             priecinky()
             jazyky(out)
+            youtube_vlastne(out)
         aktualizacie()
         pomocnici()
         restart(out)

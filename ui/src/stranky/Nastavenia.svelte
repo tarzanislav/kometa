@@ -214,10 +214,18 @@
   {#if jadroRust}
     <section class="plocha blok" aria-labelledby="h-pomocnici">
       <h2 id="h-pomocnici">Pomocníci</h2>
+      <div class="riadky">
+        <Prepinac
+          nazov="YouTube vlastným kódom"
+          zapnute={n.youtube_vlastne ?? true}
+          popis="Údaje o videách z YouTube číta Kometa sama. yt-dlp nastúpi, len keď to nevyjde – napríklad hneď po zmene na YouTube, kým Kometa nedostane opravu."
+          zmena={(v) => nastav({ youtube_vlastne: v })}
+        />
+      </div>
       <div class="pomocnik">
         <div>
           <p class="pomocnik-nazov">yt-dlp</p>
-          <p class="male tlmene">YouTube, Instagram, TikTok, Facebook, playlisty a stovky ďalších stránok. Kometa ho doinštaluje a aktualizuje sama{nastroje?.ytdlp_verzia ? ` (verzia ${nastroje.ytdlp_verzia})` : ''}.</p>
+          <p class="male tlmene">Instagram, TikTok, Facebook, playlisty, stovky ďalších stránok a záloha pre YouTube. Kometa ho doinštaluje a aktualizuje sama{nastroje?.ytdlp_verzia ? ` (verzia ${nastroje.ytdlp_verzia})` : ''}.</p>
           {#if nastroje?.instaluje && nastroje.co === 'yt-dlp'}
             <div class="lista" role="progressbar" aria-label="Sťahovanie yt-dlp" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round((nastroje.podiel ?? 0) * 100)}>
               <span style:width="{Math.round((nastroje.podiel ?? 0) * 100)}%"></span>

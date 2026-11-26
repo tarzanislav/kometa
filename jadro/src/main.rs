@@ -48,6 +48,13 @@ enum Prikaz {
         #[command(flatten)]
         volby: Volby,
     },
+    /// Údaje o videu z YouTube vlastným kódom, bez yt-dlp – kontrola, či čítanie YouTube funguje
+    Youtube {
+        url: String,
+        /// Celé údaje ako JSON (v tvare, aký dáva yt-dlp)
+        #[arg(long)]
+        json: bool,
+    },
     /// Zistí, čo je na adrese (pri streame kvality, jazyky a stopy) – nič nesťahuje
     Info {
         url: String,
@@ -421,6 +428,20 @@ async fn spusti(cli: Cli, zrusenie: CancellationToken) -> Vysledok<()> {
             }
             Ok(())
         }
+        Prikaz::Youtube { url, json } => {
+            let k = klient::klient(&klient::Nastavenia::default())?;
+            let profil = kometa_jadro::youtube::Profil::vlozeny();
+            let info = kometa_jadro::youtube::info(&k, &url, &profil).await?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&info).unwrap_or_default()
+                );
+            } else {
+                println!("{}", prehlad_youtube(&info));
+            }
+            Ok(())
+        }
         Prikaz::Info { url, volby } => {
             let n = volby.nastavenia();
             let k = klient::klient(&n)?;
@@ -552,4 +573,88 @@ async fn main() {
             _ => 1,
         });
     }
+}
+
+/// Krátky prehľad údajov o videu YouTube (pre `kometa youtube` a dennú kontrolu).
+fn prehlad_youtube(info: &serde_json::Value) -> String {
+    use serde_json::Value;
+    let s = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+    let n = |v: &Value, k: &str| v.get(k).and_then(Value::as_f64).unwrap_or(0.0);
+    let formaty: Vec<&Value> = info["formats"]
+        .as_array()
+        .map(|a| a.iter().collect())
+        .unwrap_or_default();
+    let obraz = |f: &&Value| s(f, "vcodec") != "none";
+    let zvuk = |f: &&Value| s(f, "acodec") != "none";
+    let najlepsi = formaty.iter().filter(|f| obraz(f)).max_by(|a, b| {
+        (n(a, "height"), n(a, "tbr"))
+            .partial_cmp(&(n(b, "height"), n(b, "tbr")))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut jazyky: Vec<String> = vec![];
+    for f in formaty.iter().filter(|f| zvuk(f) && !obraz(f)) {
+        let j = s(f, "language");
+        if j.is_empty() {
+            continue;
+        }
+        let j = if f["language_preference"] == 10 {
+            format!("{j} (pôvodný)")
+        } else {
+            j
+        };
+        if !jazyky.contains(&j) {
+            jazyky.push(j);
+        }
+    }
+    let kluce = |k: &str| {
+        info[k]
+            .as_object()
+            .map(|m| m.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default()
+    };
+    let mut r = vec![
+        format!(
+            "Video: {} – {} ({} s)",
+            s(info, "title"),
+            s(info, "uploader"),
+            n(info, "duration")
+        ),
+        format!("Klient: {}", s(&info["_kometa"], "klient")),
+        format!(
+            "Formáty: {} (len obraz {}, len zvuk {}, spolu {})",
+            formaty.len(),
+            formaty.iter().filter(|f| obraz(f) && !zvuk(f)).count(),
+            formaty.iter().filter(|f| zvuk(f) && !obraz(f)).count(),
+            formaty.iter().filter(|f| zvuk(f) && obraz(f)).count()
+        ),
+    ];
+    if let Some(f) = najlepsi {
+        r.push(format!(
+            "Najlepší obraz: {}p {} {} fps",
+            n(f, "height"),
+            s(f, "vcodec"),
+            n(f, "fps")
+        ));
+    }
+    r.push(format!(
+        "Zvukové stopy: {}",
+        if jazyky.is_empty() {
+            "jedna (bez jazyka)".into()
+        } else {
+            jazyky.join(", ")
+        }
+    ));
+    r.push(format!(
+        "Titulky od autora: {}",
+        kluce("subtitles").join(", ")
+    ));
+    r.push(format!(
+        "Automatické titulky: {} jazykov",
+        kluce("automatic_captions").len()
+    ));
+    r.push(format!(
+        "Kapitoly: {}",
+        info["chapters"].as_array().map_or(0, Vec::len)
+    ));
+    r.join("\n")
 }

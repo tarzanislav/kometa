@@ -1,0 +1,4 @@
+# Videá, na ktorých denná kontrola (Strážca YouTube) skúša vlastné čítanie YouTube.
+# Jeden odkaz na riadok; riadky s # sa preskočia. Dobré je mať rôzne druhy videí:
+# staré a stabilné, s viacerými zvukovými stopami, s titulkami, s kapitolami v popise.
+https://www.youtube.com/watch?v=jNQXAC9IVRw

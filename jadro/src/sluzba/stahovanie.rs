@@ -551,7 +551,7 @@ async fn cez_ytdlp(
     let (info, vyber) = if p.format == "mp3" || plny {
         (None, None)
     } else {
-        let info = ytdlp::info(exe, &p.url, &spolocne, z).await?;
+        let info = super::youtube::info(v, exe, &p.url, &spolocne, z).await?;
         let vyber = ytdlp::vyber_formaty(&info, &p.format, &zvuk);
         (Some(info), vyber)
     };

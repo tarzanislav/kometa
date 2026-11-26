@@ -1,0 +1,108 @@
+# Strážca YouTube – denná kontrola vlastného čítania YouTube.
+#
+# 1. Kanárik: zostaví jadro a na videách z jadro/src/youtube/kanarik.txt spustí `kometa youtube`
+#    (vlastný kód, bez yt-dlp). Zlyhanie znamená, že YouTube niečo zmenil.
+# 2. yt-dlp: pozrie, či nové vydanie yt-dlp (za posledný deň) mení YouTube – podľa poznámok
+#    k vydaniu vieme, kde hľadať, a opravu napíšeme po svojom.
+# Keď treba konať, otvorí (alebo doplní) issue „Strážca YouTube“ – GitHub o ňom pošle e-mail.
+# Rýchla oprava bez nového vydania: zmena klientov v jadro/src/youtube/profil.json (zvýšiť verziu)
+# – bežiace Komety si profil obnovia do jedného dňa; dovtedy sťahuje záloha yt-dlp.
+name: Strážca YouTube
+
+on:
+  schedule:
+    - cron: '23 4 * * *'
+  workflow_dispatch:
+  push:
+    branches: [youtube]
+    paths: ['jadro/src/youtube/**', '.github/workflows/youtube-strazca.yml']
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  kontrola:
+    name: Kanárik a zmeny v yt-dlp
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Zostavenie jadra
+        run: cd jadro && cargo build --release --locked
+      - name: Kanárik – vlastné čítanie YouTube
+        id: kanarik
+        run: |
+          exe=target/release/kometa
+          zle=0; blok=0; spolu=0
+          {
+            echo "## Kanárik – vlastné čítanie YouTube"
+            echo
+          } > kanarik.md
+          while IFS= read -r u; do
+            case "$u" in ''|'#'*) continue;; esac
+            spolu=$((spolu + 1))
+            if "$exe" youtube "$u" > vystup.txt 2> chyba.txt; then
+              { echo "### ✅ $u"; echo '```'; cat vystup.txt; echo '```'; } >> kanarik.md
+            elif grep -qiE "not a bot|confirm you.re not|LOGIN_REQUIRED.*bot" chyba.txt; then
+              blok=$((blok + 1))
+              { echo "### ⚠️ $u – YouTube blokuje adresu GitHubu (nevypovedá o kóde)"; echo '```'; cat chyba.txt; echo '```'; } >> kanarik.md
+            else
+              zle=$((zle + 1))
+              { echo "### ❌ $u"; echo '```'; cat chyba.txt; echo '```'; } >> kanarik.md
+            fi
+          done < jadro/src/youtube/kanarik.txt
+          cat kanarik.md >> "$GITHUB_STEP_SUMMARY"
+          echo "zle=$zle" >> "$GITHUB_OUTPUT"
+          echo "blok=$blok" >> "$GITHUB_OUTPUT"
+          echo "spolu=$spolu" >> "$GITHUB_OUTPUT"
+      - name: Zmeny YouTube v novom yt-dlp
+        id: ytdlp
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api repos/yt-dlp/yt-dlp/releases/latest > vydanie.json
+          tag=$(jq -r .tag_name vydanie.json)
+          kedy=$(jq -r .published_at vydanie.json)
+          vek=$(( $(date +%s) - $(date -d "$kedy" +%s) ))
+          jq -r .body vydanie.json | grep -iE '\[ie/youtube' > zmeny.txt || true
+          nove=0
+          if [ "$vek" -lt 93600 ] && [ -s zmeny.txt ]; then nove=1; fi
+          {
+            echo "## yt-dlp $tag ($kedy)"
+            if [ -s zmeny.txt ]; then echo; echo "Zmeny YouTube:"; echo; sed 's/^/- /; s/^- [*-] /- /' zmeny.txt; else echo; echo "Bez zmien YouTube."; fi
+          } > ytdlp.md
+          cat ytdlp.md >> "$GITHUB_STEP_SUMMARY"
+          echo "nove=$nove" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Issue „Strážca YouTube“
+        if: github.event_name != 'push' && (steps.kanarik.outputs.zle != '0' || steps.ytdlp.outputs.nove == '1')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ZLE: ${{ steps.kanarik.outputs.zle }}
+          NOVE: ${{ steps.ytdlp.outputs.nove }}
+          BEH: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo "Denná kontrola $(date -u +%Y-%m-%d) – [priebeh]($BEH)"
+            echo
+            if [ "$ZLE" != "0" ]; then
+              echo "**Vlastné čítanie YouTube zlyhalo na $ZLE videách.** Kým príde oprava, Kometa sťahuje cez zálohu yt-dlp."
+              echo "Rýchla oprava: klienti v \`jadro/src/youtube/profil.json\` (zvýšiť verziu) – Komety si ho obnovia do dňa."
+              echo
+            fi
+            if [ "$NOVE" = "1" ]; then echo "**Nový yt-dlp mení YouTube** – pozrieť, či sa zmena týka aj nás."; echo; fi
+            cat kanarik.md
+            echo
+            cat ytdlp.md
+          } > sprava.md
+          cislo=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "Strážca YouTube in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$cislo" ]; then
+            gh issue comment "$cislo" --repo "$GITHUB_REPOSITORY" --body-file sprava.md
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "Strážca YouTube: treba pozrieť" --body-file sprava.md
+          fi
+      - name: Výsledok kanárika
+        if: steps.kanarik.outputs.zle != '0'
+        run: echo "::error::Vlastné čítanie YouTube zlyhalo (${{ steps.kanarik.outputs.zle }} z ${{ steps.kanarik.outputs.spolu }})." && exit 1

@@ -1,0 +1,19 @@
+{
+  "verzia": 1,
+  "poznamka": "Klienti rozhrania prehrávača YouTube v poradí, v akom ich Kometa skúša. Po zmene zvýš verziu – bežiace Komety si profil obnovia do jedného dňa.",
+  "klienti": [
+    {
+      "meno": "ANDROID_VR",
+      "cislo": 28,
+      "verzia": "1.65.10",
+      "user_agent": "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+      "klient": {
+        "deviceMake": "Oculus",
+        "deviceModel": "Quest 3",
+        "androidSdkVersion": 32,
+        "osName": "Android",
+        "osVersion": "12L"
+      }
+    }
+  ]
+}

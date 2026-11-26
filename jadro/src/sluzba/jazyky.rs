@@ -428,12 +428,12 @@ pub async fn zisti(v: &Arc<Vnutro>, urls: Vec<String>) -> Vysledok<Value> {
         .take(60)
         .collect();
     for (i, url) in urls.iter().cloned().enumerate() {
-        let (exe, sp, sem) = (exe.clone(), sp.clone(), sem.clone());
+        let (exe, sp, sem, v) = (exe.clone(), sp.clone(), sem.clone(), v.clone());
         ulohy.spawn(async move {
             let _p = sem.acquire_owned().await;
             let r = tokio::time::timeout(
                 std::time::Duration::from_secs(90),
-                ytdlp::info(&exe, &url, &sp, &CancellationToken::new()),
+                super::youtube::info(&v, &exe, &url, &sp, &CancellationToken::new()),
             )
             .await;
             (i, url, r)
@@ -527,7 +527,7 @@ pub async fn nacitaj(v: &Arc<Vnutro>, url: &str) -> Vysledok<Value> {
                 .into(),
         )
     })?;
-    let info = ytdlp::info(&exe, url, &spolocne(v), &CancellationToken::new()).await?;
+    let info = super::youtube::info(v, &exe, url, &spolocne(v), &CancellationToken::new()).await?;
     if info.get("formats").is_none() {
         return Err(Chyba::Ine(
             "Zadaj odkaz na jedno konkrétne video (nie na playlist alebo kanál).".into(),
@@ -819,7 +819,7 @@ pub async fn z_frontu(
                 .into(),
         )
     })?;
-    let info = ytdlp::info(&exe, &p.url, &spolocne(v), z).await?;
+    let info = super::youtube::info(v, &exe, &p.url, &spolocne(v), z).await?;
     let titul = [s(&info, "title"), s(&info, "id")]
         .into_iter()
         .find(|x| !x.is_empty())

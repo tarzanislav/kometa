@@ -139,6 +139,7 @@ export interface Nastavenia {
   vlozit_kapitoly?: boolean
   vlozit_obal?: boolean
   aktualizacie?: boolean
+  youtube_vlastne?: boolean
   mode: 'video' | 'existing' | 'audio'
   kontajner: 'mkv' | 'mp4'
   max_height: string

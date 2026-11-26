@@ -17,6 +17,7 @@ pub mod server;
 pub mod stahovanie;
 pub mod strazca;
 pub mod ucty;
+pub mod youtube;
 pub mod ytdlp;
 pub mod zdroje;
 

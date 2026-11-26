@@ -94,6 +94,10 @@ pub async fn udrzuj(v: &Arc<Vnutro>) {
             }
         }
     }
+    // profil YouTube (klienti pre vlastné čítanie) – dáta z repozitára Komety
+    if let Some(n) = crate::youtube::obnov_profil(&k, &v.priecinok).await {
+        v.zapis(format!("⬆ Profil YouTube je obnovený (verzia {n})."));
+    }
     // Deno: vlastná kópia; nová hlavná verzia sa stiahne, menšie nie
     if std::env::var_os("KOMETA_DENO").is_none() {
         if !v.nastroje.ma_vlastne_deno() {
