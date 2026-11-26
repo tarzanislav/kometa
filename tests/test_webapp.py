@@ -3,6 +3,7 @@
 Spustenie:  python tests/test_webapp.py
 """
 import json
+import os
 import subprocess
 import shutil
 import sys
@@ -159,6 +160,42 @@ def main() -> int:
         assert akt.apply_pending(log=lambda *_: None) is False and "nedokončila" in akt.status()["chyba"]
         (akt.DIR / "Kometa-99.0.zip").write_bytes(b"podvrh")
         assert akt.apply_pending(log=lambda *_: None) is False and not akt.DIR.exists()
+        # prechod na aplikáciu: inštalačka overená súčtom aj odtlačkom GitHubu, inak sa nespustí
+        import requests as rq
+        setup = b"MZ aplikacia"
+        meno = "Kometa-2.0.0-windows-x64-setup.exe"
+        hs = hashlib.sha256(setup).hexdigest()
+
+        class Odp:
+            def __init__(self, obsah):
+                self.content, self.text, self.ok = obsah, obsah.decode(errors="replace"), True
+
+            def json(self):
+                return json.loads(self.text)
+
+            def raise_for_status(self):
+                pass
+
+        def falosny(sucet):
+            udaje = {"tag_name": "v2.0.0", "assets": [
+                {"name": meno, "browser_download_url": "x/setup", "digest": "sha256:" + hs},
+                {"name": "SHA256SUMS.txt", "browser_download_url": "x/sums"}]}
+            return lambda url, **_: Odp({"x/setup": setup, "x/sums": f"# Kometa 2.0.0\n{sucet}  {meno}\n".encode()}
+                                        .get(url, json.dumps(udaje).encode()))
+        povodny = rq.get
+        os.environ.update(KOMETA_AKTUALIZACIE_ZAKLAD="x/latest", KOMETA_AKTUALIZACIE_SKUSKA="1")
+        try:
+            rq.get = falosny(hs)
+            r = akt.switch_to_app(log=lambda *_: None)
+            assert r["ok"] and (akt.DIR / "prechod.txt").read_text().endswith(meno), r
+            (akt.DIR / "prechod.txt").unlink()
+            rq.get = falosny("0" * 64)
+            r = akt.switch_to_app(log=lambda *_: None)
+            assert not r["ok"] and "nesedí" in r["text"] and not (akt.DIR / "prechod.txt").exists(), r
+        finally:
+            rq.get = povodny
+            for k in ("KOMETA_AKTUALIZACIE_ZAKLAD", "KOMETA_AKTUALIZACIE_SKUSKA"):
+                os.environ.pop(k, None)
 
         # archívy: rozpoznanie častí, rozbalenie ZIP (aj rozdeleného), nič mimo priečinka
         import io

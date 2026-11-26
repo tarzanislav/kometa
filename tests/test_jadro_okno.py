@@ -36,6 +36,20 @@ CHYBY: list[str] = []
 BASE = ""
 VELKY = bytes((i * 7 + (i >> 9)) & 0xFF for i in range(24 << 20))
 FALOSNY_YTDLP = b"#!/bin/sh\necho 2099.01.01\n" + b"#" * 4096
+FALOSNE_DENO = b"#!/bin/sh\necho deno 2.5.6\n"
+# vydania pomocníkov na „GitHube“: verzie a Deno v ZIP (súčet vo formáte PowerShellu)
+GH = {"ytdlp": "2099.01.01", "deno": "v2.5.6"}
+
+
+def deno_zip() -> bytes:
+    import io
+    import zipfile
+    b = io.BytesIO()
+    with zipfile.ZipFile(b, "w") as z:
+        i = zipfile.ZipInfo("deno")
+        i.external_attr = 0o755 << 16
+        z.writestr(i, FALOSNE_DENO)
+    return b.getvalue()
 WS_SUBOR = os.urandom(3 << 20)
 FF_ARCHIV: list[bytes] = []
 ARCHIVY: dict[str, bytes] = {}
@@ -113,6 +127,15 @@ class Server(http.server.SimpleHTTPRequestHandler):
                 return self.posli(200, (D / "akt" / "latest.json").read_text(encoding="utf-8"), "application/json")
             f = D / "akt" / meno
             return self.posli(200, f.read_bytes(), "application/octet-stream") if f.is_file() else self.posli(404, "")
+        if u.path == "/gh/ytdlp-latest":
+            return self.posli(200, json.dumps({"tag_name": GH["ytdlp"]}), "application/json")
+        if u.path == "/gh/deno-latest":
+            return self.posli(200, json.dumps({"tag_name": GH["deno"]}), "application/json")
+        if u.path == "/deno/deno-x86_64-unknown-linux-gnu.zip":
+            return self.posli(200, deno_zip(), "application/zip")
+        if u.path == "/deno/deno-x86_64-unknown-linux-gnu.zip.sha256sum":
+            h = hashlib.sha256(deno_zip()).hexdigest().upper()
+            return self.posli(200, f"\r\nAlgorithm : SHA256\r\nHash      : {h}\r\nPath      : C:\\a\\deno.zip\r\n")
         if u.path == "/vydania/SHA2-256SUMS":
             return self.posli(200, f"{hashlib.sha256(FALOSNY_YTDLP).hexdigest()}  yt-dlp_linux\n"
                               f"{'0' * 64}  yt-dlp.exe\n", "text/plain")
@@ -247,8 +270,12 @@ class Okno:
     def __init__(self, priecinok: Path, **env):
         self.priecinok = priecinok
         self.env = env
-        e = dict(os.environ, KOMETA_PRIECINOK=str(priecinok), KOMETA_BEZ_TREZORU="1", NO_PROXY="127.0.0.1,localhost",
-                 KOMETA_WEBSHARE_ZAKLAD=BASE + "/ws/api", KOMETA_FASTSHARE_ZAKLAD=BASE + "/fastshare", KOMETA_DATOID_ZAKLAD=BASE + "/datoid", **env)
+        zaklad = dict(KOMETA_PRIECINOK=str(priecinok), KOMETA_BEZ_TREZORU="1", NO_PROXY="127.0.0.1,localhost",
+                      KOMETA_POMOCNICI="nie", KOMETA_YTDLP_API=BASE + "/gh/ytdlp-latest",
+                      KOMETA_DENO_API=BASE + "/gh/deno-latest", KOMETA_DENO_ZAKLAD=BASE + "/deno",
+                      KOMETA_WEBSHARE_ZAKLAD=BASE + "/ws/api", KOMETA_FASTSHARE_ZAKLAD=BASE + "/fastshare",
+                      KOMETA_DATOID_ZAKLAD=BASE + "/datoid")
+        e = dict(os.environ, **dict(zaklad, **env))
         self.p = subprocess.Popen([str(EXE), "okno", "--bez-okna"], stdout=subprocess.PIPE, text=True, env=e)
         self.url = ""
         for _ in range(20):
@@ -723,7 +750,8 @@ def doinstalovanie():
         skontroluj("doinštalovaný a overený FFmpeg (aj ffprobe), bez zvyškov archívu",
                    s["nastroje"]["ffmpeg"] and s["nastroje"]["co"] == "FFmpeg"
                    and (n / "ffmpeg").read_bytes() == FF_ARCHIV[1] and os.access(n / "ffmpeg", os.X_OK)
-                   and (n / "ffprobe").exists() and sorted(x.name for x in n.iterdir()) == ["ffmpeg", "ffprobe", "yt-dlp"],
+                   and (n / "ffprobe").exists()
+                   and sorted(x.name for x in n.iterdir()) == ["ffmpeg", "ffprobe", "yt-dlp", "yt-dlp.verzia"],
                    (s["nastroje"], sorted(x.name for x in n.iterdir())))
     finally:
         o.zatvor()
@@ -1134,6 +1162,49 @@ def rozhranie(o: Okno, out: Path):
         b.close()
 
 
+def pomocnici():
+    """Kometa si sama doinštaluje vlastný yt-dlp a Deno, aktualizuje ich a Deno dá yt-dlp-u."""
+    print("Pomocníci: vlastný yt-dlp a Deno, aktualizácie")
+    cfg = D / "cfg-pom"
+    n = cfg / "nastroje"
+    env = dict(PATH="/usr/bin:/bin", KOMETA_POMOCNICI="hned", KOMETA_YTDLP_ZAKLAD=BASE + "/vydania")
+    GH.update(ytdlp="2099.01.01", deno="v2.5.6")
+    o = Okno(cfg, **env)
+    try:
+        s = o.cakaj(lambda s: s["nastroje"]["ytdlp"] and s["nastroje"]["deno"] and not s["nastroje"]["instaluje"], 40)
+        skontroluj("po štarte sám doinštaluje yt-dlp a Deno (overené, s verziou)",
+                   (n / "yt-dlp").read_bytes() == FALOSNY_YTDLP and (n / "deno").read_bytes() == FALOSNE_DENO
+                   and os.access(n / "deno", os.X_OK) and (n / "yt-dlp.verzia").read_text() == "2099.01.01"
+                   and (n / "deno.verzia").read_text() == "2.5.6" and s["nastroje"]["deno_vlastne"]
+                   and not [x for x in n.iterdir() if "rozbal" in x.name or "stahuje" in x.name], s["nastroje"])
+    finally:
+        o.zatvor()
+    cas_deno = (n / "deno").stat().st_mtime_ns
+    GH.update(ytdlp="2099.02.02", deno="v2.6.0")
+    o = Okno(cfg, **env)
+    try:
+        o.cakaj(lambda s: (n / "yt-dlp.verzia").read_text() == "2099.02.02" and not s["nastroje"]["instaluje"], 40)
+        time.sleep(1)
+        skontroluj("nový yt-dlp sa stiahne sám; Deno len pri novej hlavnej verzii",
+                   (n / "yt-dlp.verzia").read_text() == "2099.02.02" and (n / "deno").stat().st_mtime_ns == cas_deno)
+    finally:
+        o.zatvor()
+    # yt-dlp dostane cestu k Deno
+    zaznam = D / "ytdlp-args.txt"
+    nastroj = D / "ytdlp-zaznam"
+    nastroj.write_text(f"#!/bin/sh\necho \"$@\" >> {zaznam}\nexit 1\n")
+    nastroj.chmod(0o755)
+    o = Okno(D / "cfg-pom2", KOMETA_YTDLP=str(nastroj), KOMETA_DENO=str(n / "deno"))
+    try:
+        u = "https://www.youtube.com/watch?v=jsruntime01"
+        o.data("pridat", u, "video")
+        o.cakaj(lambda s: (polozka(s, u) or {}).get("stav") in ("hotovo", "chyba"), 30)
+        t = zaznam.read_text() if zaznam.exists() else ""
+        skontroluj("yt-dlp dostane Deno: --js-runtimes deno:…", f"--js-runtimes deno:{n / 'deno'}" in t, t[:300])
+    finally:
+        o.zatvor()
+
+
 def vydanie(verzia: str, obsah: bytes, zly_sucet: bool = False):
     """Falošné vydanie na GitHube: latest.json, inštalátor a SHA256SUMS.txt."""
     a = D / "akt"
@@ -1256,6 +1327,7 @@ def main() -> int:
             priecinky()
             jazyky(out)
         aktualizacie()
+        pomocnici()
         restart(out)
     finally:
         srv.shutdown()

@@ -142,6 +142,8 @@ export interface Nastavenia {
 }
 
 export interface Init {
+  /** Kometa pre Python: ukázať prechod na aplikáciu */
+  koniec_pythonu?: boolean
   verzia: string
   platforma: string
   nastavenia: Nastavenia
@@ -176,9 +178,12 @@ export interface Funkcie {
 
 export interface StavNastrojov {
   ytdlp: boolean
+  ytdlp_verzia?: string | null
+  deno?: boolean
+  deno_vlastne?: boolean
   ffmpeg: boolean
   instaluje: boolean
-  /** čo sa práve inštaluje: „yt-dlp“ alebo „FFmpeg“ */
+  /** čo sa práve inštaluje: „yt-dlp“, „Deno“ alebo „FFmpeg“ */
   co?: string
   text: string
   podiel: number

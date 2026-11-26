@@ -200,13 +200,68 @@ impl Fronta {
                 r.text = "Rozbaľovanie sa prerušilo – klikni na Rozbaliť.".into();
             }
         }
-        Fronta {
+        let mut f = Fronta {
             polozky,
             behy: HashMap::new(),
             subor,
             posledne_ulozenie: Instant::now(),
             zatvara: false,
+        };
+        if f.prevezmi_z_pythonu(priecinok) > 0 {
+            f.uloz(true);
         }
+        f
+    }
+
+    /// Prechod z Kometa pre Python: jej nedokončené sťahovania (`fronta.json`) sa raz prevezmú
+    /// do frontu aplikácie a súbor sa premenuje na `fronta.json.prevzate`. Vráti počet položiek.
+    pub fn prevezmi_z_pythonu(&mut self, priecinok: &Path) -> usize {
+        let stary = priecinok.join("fronta.json");
+        let Some(data) = std::fs::read_to_string(&stary)
+            .ok()
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        else {
+            return 0;
+        };
+        let text = |it: &serde_json::Value, k: &str| {
+            it.get(k)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_string()
+        };
+        let nove: Vec<Nova> = data
+            .get("items")
+            .and_then(serde_json::Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+            .iter()
+            .filter(|it| {
+                matches!(
+                    text(it, "status").as_str(),
+                    "caka" | "stahuje" | "pauza" | "chyba"
+                )
+            })
+            .map(|it| Nova {
+                url: text(it, "url"),
+                format: Some(text(it, "preset"))
+                    .filter(|f| !f.is_empty())
+                    .unwrap_or_else(|| "video".into()),
+                priecinok: text(it, "outdir"),
+                nazov: text(it, "title"),
+                zdroj: text(it, "source"),
+                referer: text(it, "referer"),
+                heslo: text(it, "password"),
+                zo_skenu: it
+                    .get("from_scan")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false),
+                jazyky: None,
+                prihlasenie: false,
+            })
+            .collect();
+        let pridane = self.pridaj(nove).len();
+        let _ = std::fs::rename(&stary, priecinok.join("fronta.json.prevzate"));
+        pridane
     }
 
     /// Uloží front; `vzdy = false` najviac raz za 3 s (počas sťahovania).
@@ -459,6 +514,33 @@ mod testy {
         assert_eq!(f.najdi(&ids[1]).unwrap().stav, Stav::Pauza);
         // po reštarte: rozbehnuté pokračuje, ak je zapnuté automatické pokračovanie
         let f2 = Fronta::nacitaj(&d, true);
+        // prechod z Kometa pre Python: nedokončené položky sa prevezmú raz
+        let py = d.join("py");
+        std::fs::create_dir_all(&py).unwrap();
+        std::fs::write(
+            py.join("fronta.json"),
+            r#"{"items": [
+                {"id": "a", "url": "https://example.org/a.mp4", "preset": "mp4", "outdir": "/tmp/x",
+                 "title": "A", "status": "pauza", "source": "Web", "password": "", "referer": ""},
+                {"id": "b", "url": "https://example.org/b.mp4", "preset": "video", "status": "hotovo"},
+                {"id": "c", "url": "https://webshare.cz/#/file/x", "preset": "subor", "status": "chyba",
+                 "password": "tajne"}
+            ]}"#,
+        )
+        .unwrap();
+        let p = Fronta::nacitaj(&py, true);
+        assert_eq!(
+            p.polozky
+                .iter()
+                .map(|x| (x.url.as_str(), x.format.as_str(), x.heslo.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("https://example.org/a.mp4", "mp4", ""),
+                ("https://webshare.cz/#/file/x", "subor", "tajne")
+            ]
+        );
+        assert!(py.join("fronta.json.prevzate").exists() && py.join("fronta-jadro.json").exists());
+        assert_eq!(Fronta::nacitaj(&py, true).polozky.len(), 2);
         assert_eq!(f2.najdi(&ids[0]).unwrap().stav, Stav::Caka);
         let _ = std::fs::remove_dir_all(&d);
     }

@@ -66,6 +66,8 @@ Kontrolné súčty všetkých súborov sú v `SHA256SUMS.txt`.
 
 ### Kometa pre Python (Windows 10/11)
 
+> **Kometa pre Python končí.** Aplikácia vyššie vie všetko, čo ona, a viac – bez Pythonu, s jedným inštalátorom. V Kometa pre Python klikni na **Prejsť na aplikáciu** (pás hore v okne): stiahne a overí inštalačku aplikácie a spustí ju. Aplikácia prevezme nastavenia, účty aj nedokončené sťahovania. Kometa 2.0 bude už len aplikácia.
+
 1. Stiahni Kometu z [Vydaní (Releases)](https://github.com/tarzanislav/kometa/releases): súbor `Kometa-X.Y.Z.zip`. Rozbaľ ho (napr. do `Dokumenty\Kometa`). Pri aktualizácii stačí rozbaliť cez staré súbory – nastavenia, účty a front ostanú.
 2. Dvakrát klikni na **`Instalacia.bat`**. Cez `winget` nainštaluje Python, FFmpeg, Deno a knižnice (yt-dlp, requests, keyring, pywebview) a na plochu dá ikonu **Kometa**.
    - Ak na konci napíše, že ho treba spustiť ešte raz (pri prvej inštalácii Pythonu), zavri okno a spusti ho znova.
@@ -174,7 +176,7 @@ Prihlásenie (cookies) sa vezme z okna prehliadača, drží sa len v pamäti a p
 - **Do stiahnutého videa vložiť:** údaje o videu, kapitoly, obrázok videa (každé sa dá vypnúť).
 - **Aktualizácie:** automaticky (predvolene zapnuté) a **Skontrolovať teraz**.
 - **Priečinok na sťahovanie.**
-- **Pomocníci** (aplikácia): yt-dlp a FFmpeg sa dajú doinštalovať jedným klikom. FFmpeg sa stiahne zo zostavení [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) (Windows, Linux) a pred použitím sa overí kontrolný súčet; v macOS ho nainštaluješ cez Homebrew (`brew install ffmpeg`).
+- **Pomocníci** (aplikácia): **yt-dlp** a **Deno** (JavaScript, ktorý yt-dlp potrebuje na YouTube) si Kometa doinštaluje sama chvíľu po prvom spustení a raz denne skontroluje, či nie je nový yt-dlp (Deno pri novej hlavnej verzii) – z oficiálnych vydaní, overené kontrolným súčtom. Nepoužíva tie zo systému, takže nezávisí od Pythonu ani od Kometa pre Python. FFmpeg (len MP3) sa dá doinštalovať jedným klikom. FFmpeg sa stiahne zo zostavení [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) (Windows, Linux) a pred použitím sa overí kontrolný súčet; v macOS ho nainštaluješ cez Homebrew (`brew install ffmpeg`).
 
 ## Ako funguje pokračovanie sťahovania
 

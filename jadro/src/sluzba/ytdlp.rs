@@ -36,6 +36,14 @@ pub struct Spolocne {
     pub heslo: String,
 }
 
+/// Deno pre yt-dlp (JavaScript na YouTube) – nastaví údržba pomocníkov, použije každé spustenie.
+static DENO: std::sync::RwLock<Option<PathBuf>> = std::sync::RwLock::new(None);
+
+/// Nastaví cestu k Deno, ktorú dostane yt-dlp (`--js-runtimes deno:…`).
+pub fn nastav_deno(p: Option<PathBuf>) {
+    *DENO.write().unwrap() = p;
+}
+
 impl Spolocne {
     /// Rovnaké voľby bez prihlásenia z prehliadača.
     fn bez_cookies(&self) -> Spolocne {
@@ -51,6 +59,9 @@ impl Spolocne {
             "--encoding".into(),
             "utf-8".into(),
         ];
+        if let Some(d) = DENO.read().unwrap().as_ref() {
+            a.extend(["--js-runtimes".into(), format!("deno:{}", d.display())]);
+        }
         if !self.prehliadac.is_empty() {
             a.extend(["--cookies-from-browser".into(), self.prehliadac.clone()]);
         }

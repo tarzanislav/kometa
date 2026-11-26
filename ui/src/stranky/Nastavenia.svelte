@@ -20,8 +20,8 @@
   const nastroje = $derived(app.stav?.nastroje)
   const jadroRust = $derived(app.init?.jadro === 'rust')
 
-  async function doinstalovat(co: 'ytdlp' | 'ffmpeg') {
-    await skus(co === 'ffmpeg' ? 'doinstalovat_ffmpeg' : 'doinstalovat_ytdlp')
+  async function doinstalovat(co: 'ytdlp' | 'ffmpeg' | 'deno') {
+    await skus(`doinstalovat_${co}`)
   }
   // priebeh a výsledok poslednej inštalácie patria k tomu pomocníkovi, ktorý sa inštaloval
   const instalujeFfmpeg = $derived(nastroje?.co === 'FFmpeg')
@@ -217,12 +217,12 @@
       <div class="pomocnik">
         <div>
           <p class="pomocnik-nazov">yt-dlp</p>
-          <p class="male tlmene">YouTube, Instagram, TikTok, Facebook, playlisty a stovky ďalších stránok. Stránky, prehrávače, streamy a súbory zvláda Kometa aj bez neho.</p>
-          {#if nastroje?.instaluje && !instalujeFfmpeg}
+          <p class="male tlmene">YouTube, Instagram, TikTok, Facebook, playlisty a stovky ďalších stránok. Kometa ho doinštaluje a aktualizuje sama{nastroje?.ytdlp_verzia ? ` (verzia ${nastroje.ytdlp_verzia})` : ''}.</p>
+          {#if nastroje?.instaluje && nastroje.co === 'yt-dlp'}
             <div class="lista" role="progressbar" aria-label="Sťahovanie yt-dlp" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round((nastroje.podiel ?? 0) * 100)}>
               <span style:width="{Math.round((nastroje.podiel ?? 0) * 100)}%"></span>
             </div>
-          {:else if nastroje?.text && !instalujeFfmpeg}
+          {:else if nastroje?.text && nastroje.co === 'yt-dlp'}
             <p class="male tlmene">{nastroje.text}</p>
           {/if}
         </div>
@@ -230,7 +230,27 @@
           <span class="stav-ok"><Ikona meno="fajka" velkost={16} /> Pripravený</span>
         {:else}
           <button class="tl" onclick={() => doinstalovat('ytdlp')} disabled={nastroje?.instaluje}>
-            {nastroje?.instaluje && !instalujeFfmpeg ? 'Sťahujem…' : 'Doinštalovať yt-dlp'}
+            {nastroje?.instaluje && nastroje.co === 'yt-dlp' ? 'Sťahujem…' : 'Doinštalovať yt-dlp'}
+          </button>
+        {/if}
+      </div>
+      <div class="pomocnik">
+        <div>
+          <p class="pomocnik-nazov">Deno</p>
+          <p class="male tlmene">JavaScript, ktorý yt-dlp potrebuje na YouTube. Kometa ho doinštaluje a aktualizuje sama.</p>
+          {#if nastroje?.instaluje && nastroje.co === 'Deno'}
+            <div class="lista" role="progressbar" aria-label="Sťahovanie Deno" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round((nastroje.podiel ?? 0) * 100)}>
+              <span style:width="{Math.round((nastroje.podiel ?? 0) * 100)}%"></span>
+            </div>
+          {:else if nastroje?.text && nastroje.co === 'Deno'}
+            <p class="male tlmene">{nastroje.text}</p>
+          {/if}
+        </div>
+        {#if nastroje?.deno}
+          <span class="stav-ok"><Ikona meno="fajka" velkost={16} /> Pripravené</span>
+        {:else}
+          <button class="tl" onclick={() => doinstalovat('deno')} disabled={nastroje?.instaluje}>
+            {nastroje?.instaluje && nastroje.co === 'Deno' ? 'Sťahujem…' : 'Doinštalovať Deno'}
           </button>
         {/if}
       </div>

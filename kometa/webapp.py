@@ -138,6 +138,8 @@ class Jadro:
             "zvuk": AUDIO_MODES,
             "chyba_ffmpeg": not deps.get("ffmpeg"),
             "chyba_ytdlp": not deps.get("yt-dlp"),
+            # Kometa pre Python končí – okno ponúkne prechod na aplikáciu
+            "koniec_pythonu": True,
         }
 
     # ------------------------------------------------------------------ stav (UI sa pýta ~2× za sekundu)
@@ -166,6 +168,10 @@ class Jadro:
     def aktualizacia_instaluj(self) -> dict:
         from . import aktualizacia
         return aktualizacia.install(self._log.append) or aktualizacia.status()
+
+    def prechod_na_aplikaciu(self) -> dict:
+        from . import aktualizacia
+        return aktualizacia.switch_to_app(self._log.append)
 
     def aktualizacia_pri_starte(self) -> dict:
         from . import aktualizacia
@@ -613,7 +619,8 @@ API_METHODS = ["init", "stav", "pridat", "rozpoznat", "kolekcia", "pridat_vybran
                "otvorit_subor", "schranka",
                "jazyky_nacitat", "jazyky_zistit", "jazyky_stiahnut", "jazyky_zrusit",
                "vybrat_priecinok", "vybrat_video", "prihlasit", "odhlasit", "ulozit_nastavenia",
-               "aktualizacia_skontroluj", "aktualizacia_instaluj", "aktualizacia_pri_starte"]
+               "aktualizacia_skontroluj", "aktualizacia_instaluj", "aktualizacia_pri_starte",
+               "prechod_na_aplikaciu"]
 
 
 def call(jadro: Jadro, name: str, args: list) -> dict:

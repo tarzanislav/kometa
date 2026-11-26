@@ -11,6 +11,7 @@ pub mod jazyky;
 pub mod kurzy;
 pub mod nastavenia;
 pub mod nastroje;
+pub mod pomocnici;
 pub mod prostredie;
 pub mod server;
 pub mod stahovanie;
@@ -20,7 +21,7 @@ pub mod ytdlp;
 pub mod zdroje;
 
 use crate::chyba::{Chyba, Vysledok};
-use crate::udalosti::{self, Udalost};
+use crate::udalosti;
 use crate::web::{skener::Skener, vzory};
 use fronta::{Fronta, Nova, Polozka, Stav};
 use nastavenia::Nastavenia;
@@ -78,6 +79,7 @@ pub const METODY: &[&str] = &[
     "ulozit_nastavenia",
     "doinstalovat_ytdlp",
     "doinstalovat_ffmpeg",
+    "doinstalovat_deno",
 ];
 
 /// Graf rýchlosti: jeden bod za sekundu, posledných 90 s.
@@ -88,7 +90,7 @@ struct Graf {
 
 #[derive(Default, Clone)]
 struct Instalacia {
-    /// čo sa inštaluje: „yt-dlp“ alebo „FFmpeg“
+    /// čo sa inštaluje: „yt-dlp“, „Deno“ alebo „FFmpeg“
     co: &'static str,
     bezi: bool,
     text: String,
@@ -248,6 +250,7 @@ impl Sluzba {
         s.v.naplanuj();
         ucty::over_pri_starte(&s.v);
         strazca::spusti(&s.v);
+        pomocnici::spusti(&s.v);
         aktualizacie::spusti(&s.v);
         s
     }
@@ -569,6 +572,10 @@ impl Sluzba {
                 self.doinstalovat("yt-dlp");
                 Value::Null
             }
+            "doinstalovat_deno" => {
+                self.doinstalovat("Deno");
+                Value::Null
+            }
             _ => return Err(chyba("Neznáma akcia.")),
         })
     }
@@ -643,6 +650,9 @@ impl Sluzba {
             "aktualizacia": *self.v.aktualizacia.lock().unwrap(),
             "nastroje": {
                 "ytdlp": self.v.nastroje.ytdlp().is_some(),
+                "ytdlp_verzia": self.v.nastroje.verzia("yt-dlp"),
+                "deno": self.v.nastroje.deno().is_some(),
+                "deno_vlastne": self.v.nastroje.ma_vlastne_deno(),
                 "ffmpeg": self.v.nastroje.ffmpeg().is_some(),
                 "instaluje": i.bezi,
                 "co": i.co,
@@ -855,51 +865,11 @@ impl Sluzba {
         json!({"pridane": n})
     }
 
-    /// Doinštaluje pomocníka („yt-dlp“ alebo „FFmpeg“) na pozadí; naraz beží len jedna inštalácia.
+    /// Doinštaluje pomocníka („yt-dlp“, „Deno“ alebo „FFmpeg“) na pozadí; naraz beží len jedna.
     fn doinstalovat(&self, co: &'static str) {
-        {
-            let mut i = self.v.instalacia.lock().unwrap();
-            if i.bezi {
-                return;
-            }
-            *i = Instalacia {
-                co,
-                bezi: true,
-                text: format!("Sťahujem {co}…"),
-                podiel: 0.0,
-            };
-        }
         let v = self.v.clone();
         self.v.rt.spawn(async move {
-            let v2 = Arc::downgrade(&v);
-            let h: udalosti::Hlasic = Arc::new(move |u| {
-                if let (
-                    Some(v),
-                    Udalost::Priebeh {
-                        stiahnute,
-                        celkom: Some(c),
-                        ..
-                    },
-                ) = (v2.upgrade(), u)
-                {
-                    v.instalacia.lock().unwrap().podiel = stiahnute as f64 / c.max(1) as f64;
-                }
-            });
-            let k = crate::klient::klient(&crate::klient::Nastavenia::default());
-            let r = match k {
-                Ok(k) if co == "FFmpeg" => v.nastroje.doinstaluj_ffmpeg(&k, &h).await,
-                Ok(k) => v.nastroje.doinstaluj_ytdlp(&k, &h).await,
-                Err(e) => Err(e),
-            };
-            let mut i = v.instalacia.lock().unwrap();
-            i.bezi = false;
-            i.podiel = 1.0;
-            i.text = match r {
-                Ok(_) => format!("{co} je pripravený."),
-                Err(e) => format!("{co} sa nepodarilo doinštalovať: {e}"),
-            };
-            drop(i);
-            v.zapis(v.instalacia.lock().unwrap().text.clone());
+            let _ = pomocnici::instaluj(&v, co).await;
         });
     }
 }

@@ -7,6 +7,7 @@
   import Logo from './components/Logo.svelte'
   import Toasty from './components/Toasty.svelte'
   import Aktualizacia from './components/Aktualizacia.svelte'
+  import Prechod from './components/Prechod.svelte'
   import Playlist from './dialogy/Playlist.svelte'
   import Skener from './dialogy/Skener.svelte'
   import Zmazat from './dialogy/Zmazat.svelte'
@@ -97,6 +98,7 @@
           <Ikona meno="pozor" velkost={18} /> Kometa neodpovedá. Ak si zatvoril jej okno, spusti ju znova.
         </div>
       {/if}
+      <Prechod />
       <Aktualizacia />
       {#if app.stranka === 'stahovanie'}
         <Stahovanie />

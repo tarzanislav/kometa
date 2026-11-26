@@ -243,3 +243,49 @@ def start(enabled, log=print) -> None:
                 check(True, log)
             time.sleep(12 * 3600)
     threading.Thread(target=loop, daemon=True).start()
+
+
+def switch_to_app(log=print) -> dict:
+    """Prechod na aplikáciu: stiahne inštalačku aplikácie (Windows), overí ju súčtom SHA-256
+    zo SHA256SUMS.txt aj odtlačkom GitHubu a spustí ju. Inde vráti odkaz na stránku vydaní."""
+    import os
+    import subprocess
+    import sys
+
+    import requests
+    page = "https://github.com/tarzanislav/kometa/releases/latest"
+    if sys.platform != "win32" and not os.environ.get("KOMETA_AKTUALIZACIE_ZAKLAD"):
+        return {"ok": False, "stranka": page,
+                "text": "Aplikáciu pre svoj systém stiahni zo stránky vydaní (macOS: DMG, Linux: AppImage alebo DEB)."}
+    try:
+        api = os.environ.get("KOMETA_AKTUALIZACIE_ZAKLAD") or API
+        h = {"Accept": "application/vnd.github+json", "User-Agent": "Kometa"}
+        info = requests.get(api, headers=h, timeout=30).json()
+        ver = str(info.get("tag_name") or "").lstrip("vV")
+        name = f"Kometa-{ver}-windows-x64-setup.exe"
+        assets = {a.get("name"): a for a in info.get("assets") or []}
+        if name not in assets or "SHA256SUMS.txt" not in assets:
+            raise RuntimeError(f"vo vydaní chýba {name} alebo SHA256SUMS.txt")
+        sums = requests.get(assets["SHA256SUMS.txt"]["browser_download_url"], headers=h, timeout=30).text
+        expected = sum_from_list(sums, name)
+        digest = str(assets[name].get("digest") or "")
+        if not expected or (digest.startswith("sha256:") and digest[7:].lower() != expected):
+            raise RuntimeError("súčet SHA-256 chýba alebo nesedí")
+        DIR.mkdir(parents=True, exist_ok=True)
+        r = requests.get(assets[name]["browser_download_url"], headers=h, timeout=120)
+        r.raise_for_status()
+        if hashlib.sha256(r.content).hexdigest() != expected:
+            raise RuntimeError("stiahnutá inštalačka nesedí so súčtom SHA-256 – nespustím ju")
+        dest = DIR / name
+        dest.write_bytes(r.content)
+        if os.environ.get("KOMETA_AKTUALIZACIE_SKUSKA") == "1":
+            (DIR / "prechod.txt").write_text(str(dest), encoding="utf-8")
+        else:
+            subprocess.Popen([str(dest)], close_fds=True)
+        log(f"Spúšťam inštaláciu aplikácie Kometa {ver}. Nedokončené sťahovania prevezme sama.")
+        return {"ok": True, "verzia": ver,
+                "text": f"Inštalácia aplikácie Kometa {ver} je spustená. Po inštalácii zatvor toto okno – "
+                        "aplikácia prevezme nastavenia, účty aj nedokončené sťahovania."}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "stranka": page, "text": f"Inštalačku sa nepodarilo pripraviť: {e}"}
+
