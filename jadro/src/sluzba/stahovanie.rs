@@ -48,7 +48,17 @@ pub async fn prace(v: Arc<Vnutro>, id: String, zrusenie: CancellationToken) {
         return;
     };
     let h = hlasic_polozky(&v, &id);
-    let vysledok = stiahni(&v, &p, &zrusenie, &h).await;
+    let mut vysledok = stiahni(&v, &p, &zrusenie, &h).await;
+    // bez prípony („.bin“): podľa obsahu súboru – MKV, MP4, RAR…
+    if let Ok(Koniec::Subor(c)) = &vysledok {
+        if let Some(novy) = oprav_priponu(c).await {
+            v.zapis(format!(
+                "Prípona podľa obsahu: {}",
+                novy.file_name().unwrap_or_default().to_string_lossy()
+            ));
+            vysledok = Ok(Koniec::Subor(novy));
+        }
+    }
     // skutočná veľkosť výsledku (pri streamoch sa počas sťahovania len odhaduje)
     let velkost = match &vysledok {
         Ok(Koniec::Subor(c)) => tokio::fs::metadata(c).await.ok().map(|m| m.len()),
@@ -69,7 +79,10 @@ pub async fn prace(v: Arc<Vnutro>, id: String, zrusenie: CancellationToken) {
                     x.docasne.clear();
                     x.podiel = None;
                     x.krok.clear();
-                    if x.nazov.is_empty() {
+                    // súbor z úložiska s názvom bez prípony (z odkazu): skutočný názov súboru
+                    if x.nazov.is_empty()
+                        || (x.zdroj == "Datoid" && !super::ucty::je_nazov_suboru(&x.nazov))
+                    {
                         x.nazov = cesta
                             .file_name()
                             .map(|n| n.to_string_lossy().into_owned())
@@ -213,6 +226,106 @@ fn ciel(v: &Vnutro, p: &Polozka, meno: &str, pripona: &str) -> PathBuf {
     let s = c.to_string_lossy().into_owned();
     uprav(v, &p.id, |x| x.ciel = s);
     c
+}
+
+/// Prípony, ktoré sa dajú poznať aj v názve „z odkazu“, kde sú bodky nahradené pomlčkami.
+const ZNAME_PRIPONY: [&str; 26] = [
+    "mkv", "mp4", "avi", "mov", "wmv", "m4v", "webm", "ts", "m2ts", "mpg", "mpeg", "flv", "mp3",
+    "m4a", "flac", "wav", "ogg", "opus", "aac", "zip", "rar", "7z", "iso", "srt", "pdf", "epub",
+];
+
+/// Názov súboru z „slugu“ odkazu, kde sú bodky pomlčkami: „film-2025-1080p-mkv“ →
+/// „film-2025-1080p.mkv“, „serial-part1-rar“ → „serial.part1.rar“ (aby sa časti archívu spoznali).
+/// Názov, ktorý príponu už má, ostane.
+pub(crate) fn nazov_zo_slugu(n: &str) -> String {
+    if super::ucty::je_nazov_suboru(n) {
+        return n.to_string();
+    }
+    let Some((a, b)) = n.rsplit_once(['-', '_']) else {
+        return n.to_string();
+    };
+    if a.is_empty() || !ZNAME_PRIPONY.contains(&b.to_ascii_lowercase().as_str()) {
+        return n.to_string();
+    }
+    // „…-part2“ pred príponou archívu je číslo časti
+    if let Some((kmen, cast)) = a.rsplit_once(['-', '_']) {
+        let cislo = cast.strip_prefix("part").unwrap_or("");
+        if !kmen.is_empty() && !cislo.is_empty() && cislo.bytes().all(|c| c.is_ascii_digit()) {
+            return format!("{kmen}.{cast}.{b}");
+        }
+    }
+    format!("{a}.{b}")
+}
+
+/// Prípona podľa prvých bajtov súboru – keď ju nepovie ani server, ani názov.
+pub(crate) fn pripona_podla_obsahu(b: &[u8]) -> Option<&'static str> {
+    let zacina = |x: &[u8]| b.starts_with(x);
+    let obsahuje = |x: &[u8]| b.windows(x.len()).any(|w| w == x);
+    Some(if zacina(&[0x1A, 0x45, 0xDF, 0xA3]) {
+        if obsahuje(b"webm") {
+            "webm"
+        } else {
+            "mkv"
+        }
+    } else if b.len() >= 12 && &b[4..8] == b"ftyp" {
+        match &b[8..12] {
+            b"qt  " => "mov",
+            b"M4A " | b"M4B " => "m4a",
+            _ => "mp4",
+        }
+    } else if zacina(b"RIFF") && b.len() >= 12 && &b[8..12] == b"AVI " {
+        "avi"
+    } else if zacina(b"RIFF") && b.len() >= 12 && &b[8..12] == b"WAVE" {
+        "wav"
+    } else if zacina(b"Rar!\x1a\x07") {
+        "rar"
+    } else if zacina(&[0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C]) {
+        "7z"
+    } else if zacina(b"PK\x03\x04") {
+        "zip"
+    } else if zacina(b"fLaC") {
+        "flac"
+    } else if zacina(b"OggS") {
+        "ogg"
+    } else if zacina(b"ID3") {
+        "mp3"
+    } else if zacina(b"FLV") {
+        "flv"
+    } else if zacina(b"%PDF") {
+        "pdf"
+    } else if zacina(&[0x30, 0x26, 0xB2, 0x75]) {
+        "wmv"
+    } else if zacina(&[0, 0, 1, 0xBA]) {
+        "mpg"
+    } else if b.len() > 376 && b[0] == 0x47 && b[188] == 0x47 && b[376] == 0x47 {
+        "ts"
+    } else {
+        return None;
+    })
+}
+
+/// Súbor stiahnutý s náhradnou príponou „.bin“ dostane správnu podľa obsahu (MKV, MP4, RAR…).
+async fn oprav_priponu(c: &Path) -> Option<PathBuf> {
+    if !c.extension().is_some_and(|e| e.eq_ignore_ascii_case("bin")) {
+        return None;
+    }
+    let mut zaciatok = vec![0u8; 4096];
+    let n = {
+        use tokio::io::AsyncReadExt;
+        let mut f = tokio::fs::File::open(c).await.ok()?;
+        f.read(&mut zaciatok).await.ok()?
+    };
+    let pripona = pripona_podla_obsahu(&zaciatok[..n])?;
+    let kmen = c.file_stem()?.to_string_lossy().into_owned();
+    let dir = c.parent()?;
+    let mut novy = dir.join(format!("{kmen}.{pripona}"));
+    let mut i = 2;
+    while novy.exists() {
+        novy = dir.join(format!("{kmen} ({i}).{pripona}"));
+        i += 1;
+    }
+    tokio::fs::rename(c, &novy).await.ok()?;
+    Some(novy)
 }
 
 /// Cieľ pre súbor s názvom aj príponou (Webshare, Fastshare, priamy súbor).
@@ -1040,6 +1153,56 @@ pub async fn zmaz_stiahnute(v: &Arc<Vnutro>, ids: Option<&[String]>) -> Value {
 
 #[cfg(test)]
 mod testy {
+    #[test]
+    fn nazov_z_odkazu_s_pomlckami() {
+        assert_eq!(
+            nazov_zo_slugu("sicko-web-dl-cz-kk-2025-1080p-mkv"),
+            "sicko-web-dl-cz-kk-2025-1080p.mkv"
+        );
+        assert_eq!(
+            nazov_zo_slugu("serial-s01-part2-rar"),
+            "serial-s01.part2.rar"
+        );
+        assert_eq!(nazov_zo_slugu("koncert_2024_flac"), "koncert_2024.flac");
+        assert_eq!(nazov_zo_slugu("Film.2025.1080p.mkv"), "Film.2025.1080p.mkv");
+        // bez známej prípony ostane, ako je
+        assert_eq!(
+            nazov_zo_slugu("nejaky-subor-bez-pripony"),
+            "nejaky-subor-bez-pripony"
+        );
+        assert_eq!(nazov_zo_slugu("mkv"), "mkv");
+    }
+
+    #[test]
+    fn pripona_z_obsahu() {
+        let mut mkv = vec![0x1A, 0x45, 0xDF, 0xA3, 0x9F, 0x42, 0x82, 0x88];
+        mkv.extend_from_slice(b"matroska");
+        assert_eq!(pripona_podla_obsahu(&mkv), Some("mkv"));
+        assert_eq!(
+            pripona_podla_obsahu(b"\x1aE\xdf\xa3\x9fB\x82\x84webm"),
+            Some("webm")
+        );
+        assert_eq!(
+            pripona_podla_obsahu(b"\0\0\0\x20ftypisom\0\0\x02\0"),
+            Some("mp4")
+        );
+        assert_eq!(pripona_podla_obsahu(b"\0\0\0\x14ftypqt  \0\0"), Some("mov"));
+        assert_eq!(pripona_podla_obsahu(b"RIFF\x10\0\0\0AVI LIST"), Some("avi"));
+        assert_eq!(pripona_podla_obsahu(b"Rar!\x1a\x07\x01\0"), Some("rar"));
+        assert_eq!(
+            pripona_podla_obsahu(&[0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C, 0, 4]),
+            Some("7z")
+        );
+        assert_eq!(pripona_podla_obsahu(b"PK\x03\x04\x14\0"), Some("zip"));
+        assert_eq!(pripona_podla_obsahu(b"ID3\x04\0"), Some("mp3"));
+        let mut ts = vec![0u8; 600];
+        ts[0] = 0x47;
+        ts[188] = 0x47;
+        ts[376] = 0x47;
+        assert_eq!(pripona_podla_obsahu(&ts), Some("ts"));
+        assert_eq!(pripona_podla_obsahu(b"nic zname"), None);
+    }
+
     use super::*;
 
     #[test]

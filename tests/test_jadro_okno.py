@@ -97,6 +97,8 @@ def deno_zip() -> bytes:
         z.writestr(i, FALOSNE_DENO)
     return b.getvalue()
 WS_SUBOR = os.urandom(3 << 20)
+# súbor z Datoidu bez názvu so službou: začiatok MKV, aby sa prípona dala určiť z obsahu
+DT_MKV = bytes([0x1A, 0x45, 0xDF, 0xA3, 0x9F, 0x42, 0x82, 0x88]) + b"matroska" + os.urandom(200_000)
 FF_ARCHIV: list[bytes] = []
 ARCHIVY: dict[str, bytes] = {}
 UNIKY: list[str] = []            # cookies kurzu, ktoré by odišli na cudziu doménu   # názov → obsah (vytvorí priprav_archivy())   # [archív tar.xz, program ffmpeg] – vytvorí priprav_ffmpeg()
@@ -219,13 +221,20 @@ class Server(http.server.SimpleHTTPRequestHandler):
             zamknuty = "zamknuty" in q.get("url", "")
             if zamknuty and q.get("password") != "dt-subor":
                 return j({"error": "File is password protected"})
+            bezmena = "bezmena" in q.get("url", "")
             if m == "get-file-details":
+                if bezmena:  # služba názov nepovie
+                    return j({"filesize_bytes": len(DT_MKV)})
                 return j({"filename": "Datoid súbor.mkv" if not zamknuty else "Datoid zamknutý.mkv",
                           "filesize_bytes": len(WS_SUBOR)})
             if m == "get-download-link":
                 if q.get("token") != "dt-tok":
                     return j({"error": "Bad token"})
+                if bezmena:
+                    return j({"download_link": f"{BASE}/datoid-subor/stiahni".replace("/", "\\/")})
                 return j({"download_link": f"{BASE}/ws/subor.bin".replace("/", "\\/")})
+        if u.path == "/datoid-subor/stiahni":
+            return self.rozsah(DT_MKV)
         if u.path == "/media/Archiv.rar":
             return self.posli(200, (KOREN / "jadro/testdata/zaheslovany.rar").read_bytes(), "application/octet-stream")
         if u.path.startswith("/archivy/"):
@@ -568,6 +577,15 @@ def ucty(o: Okno, out: Path):
                and (out / "Datoid súbor.mkv").read_bytes() == WS_SUBOR, polozka(s, d1))
     skontroluj("Datoid: heslo zadané vopred pri odkaze", polozka(s, d2)["stav"] == "hotovo"
                and (out / "Datoid zamknutý.mkv").exists(), polozka(s, d2))
+    d3, d4 = "https://datoid.cz/def456/film-bezmena-1080p-mkv", "https://datoid.cz/ghi789/bezmena-bez-pripony"
+    o.data("pridat", d3 + "\n" + d4, "video")
+    s = o.cakaj(lambda s: all(polozka(s, x)["stav"] in ("hotovo", "chyba") for x in (d3, d4)), 30)
+    skontroluj("Datoid bez názvu: prípona z odkazu („…-1080p-mkv“ → „….mkv“), nie .bin",
+               polozka(s, d3)["subor"] == "film-bezmena-1080p.mkv" and (out / "film-bezmena-1080p.mkv").read_bytes() == DT_MKV,
+               polozka(s, d3))
+    skontroluj("Datoid bez názvu aj prípony: prípona podľa obsahu súboru (MKV)",
+               polozka(s, d4)["subor"] == "bezmena-bez-pripony.mkv" and polozka(s, d4)["nazov"] == "bezmena-bez-pripony.mkv"
+               and not (out / "bezmena-bez-pripony.bin").exists(), polozka(s, d4))
 
 
 def archivy(o: Okno, out: Path):

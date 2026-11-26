@@ -434,11 +434,11 @@ impl Datoid {
         }
         let j = self.volaj("get-file-details", &q).await?;
         Ok(SuborDatoid {
-            nazov: j
-                .get("filename")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-                .filter(|n| !n.trim().is_empty()),
+            nazov: ["filename", "file_name", "name"]
+                .iter()
+                .find_map(|k| j.get(*k).and_then(Value::as_str))
+                .map(|n| n.trim().to_string())
+                .filter(|n| !n.is_empty()),
             velkost: cislo(j.get("filesize_bytes")).or_else(|| cislo(j.get("filesize"))),
         })
     }
@@ -1257,16 +1257,17 @@ pub async fn stiahni(
             Err(_) => datoid(v, true).await?.odkaz(&url, &p.heslo).await?, // token mohol vypršať
             Ok(o) => o,
         };
+        // názov: z Datoidu, z odkazu na stiahnutie, inak z adresy stránky („film-1080p-mkv“ →
+        // „film-1080p.mkv“); keď príponu nepovie nič, určí ju po stiahnutí obsah súboru
+        let z_odkazu = super::stahovanie::nazov_z_adresy(&odkaz);
         let nazov = match s.nazov.clone() {
-            Some(n) => n,
-            None => {
-                let n = super::stahovanie::nazov_z_adresy(&odkaz);
-                if je_nazov_suboru(&n) {
-                    n
-                } else {
-                    super::stahovanie::nazov_z_adresy(&url)
-                }
+            Some(n) if je_nazov_suboru(&n) => n,
+            _ if je_nazov_suboru(&z_odkazu) && !z_odkazu.to_lowercase().ends_with(".bin") => {
+                z_odkazu
             }
+            ina => super::stahovanie::nazov_zo_slugu(
+                &ina.unwrap_or_else(|| super::stahovanie::nazov_z_adresy(&url)),
+            ),
         };
         v.zapis(format!("⬇ Datoid: {nazov}"));
         v.fronta.lock().unwrap().uprav(&p.id, |x| {
