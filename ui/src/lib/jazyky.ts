@@ -69,7 +69,7 @@ export function vlozJazyk(poradie: string[], kod: string): string[] {
   return j < 0 ? [...poradie, kod] : [...poradie.slice(0, j), kod, ...poradie.slice(j)]
 }
 
-/** Voľby jazykov pre položky frontu – rovnaké kľúče ako jadro (Python aj Rust). */
+/** Voľby jazykov pre položky frontu – rovnaké kľúče ako jadro. */
 export interface VolbyJazykov {
   poradie: string[]
   original: boolean

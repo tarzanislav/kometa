@@ -1,4 +1,4 @@
-//! `kometa okno`: rozhranie v okne prehliadača bez Pythonu a bez inštalácie.
+//! `kometa okno`: rozhranie v okne prehliadača, bez inštalácie.
 //!
 //! Malý server HTTP/1.1 počúva len na 127.0.0.1. Rozhranie je vložené v programe; na volania
 //! odpovedá len s tajným 128-bitovým kľúčom (je v adrese za #, takže sa neposiela ďalej ani do

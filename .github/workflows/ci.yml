@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   rozhranie:
-    name: Rozhranie (typy, zostavenie, zhoda s kometa/webui)
+    name: Rozhranie (typy, zostavenie, zhoda s jadro/webui)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -29,19 +29,15 @@ jobs:
           npm run build
       - name: Preložené rozhranie zodpovedá zdrojom
         run: |
-          if [ -n "$(git status --porcelain -- kometa/webui)" ]; then
-            git status --short -- kometa/webui
-            echo "::error::kometa/webui nezodpovedá ui/ – spusti v priečinku ui príkaz npm run build a zmenu pridaj do commitu."
+          if [ -n "$(git status --porcelain -- jadro/webui)" ]; then
+            git status --short -- jadro/webui
+            echo "::error::jadro/webui nezodpovedá ui/ – spusti v priečinku ui príkaz npm run build a zmenu pridaj do commitu."
             exit 1
           fi
 
-  python:
-    name: Python (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, windows-2025, macos-15]
-    runs-on: ${{ matrix.os }}
+  skusky_kod:
+    name: Kód skúšok (pyflakes)
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -49,12 +45,8 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.13'
-      - name: Závislosti
-        run: python -m pip install -r requirements.txt pyflakes
-      - name: Kontrola kódu
-        run: python -m pyflakes app.py kometa tests
-      - name: Skúška nového rozhrania
-        run: python tests/test_webapp.py
+      - name: Kontrola kódu skúšok
+        run: python -m pip install -q pyflakes && python -m pyflakes tests
 
   jadro:
     name: Jadro v Ruste (${{ matrix.os }})
@@ -107,13 +99,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Verzia aplikácie = verzia Komety
+      - name: Verzia rozhrania = verzia Komety
         shell: bash
         run: |
-          py=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' kometa/__init__.py)
-          app=$(sed -n 's/^version = "\(.*\)"/\1/p' aplikacia/Cargo.toml | head -1)
-          echo "Kometa $py, aplikácia $app"
-          if [ "$py" != "$app" ]; then echo "::error::Verzia v aplikacia/Cargo.toml ($app) sa líši od kometa/__init__.py ($py)."; exit 1; fi
+          v=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\([0-9.]*\)"$/\1/p' Cargo.toml)
+          ui=$(sed -n 's/^  "version": "\(.*\)",$/\1/p' ui/package.json | head -1)
+          echo "Kometa $v, rozhranie $ui"
+          if [ -z "$v" ] || [ "$v" != "$ui" ]; then echo "::error::Verzia v ui/package.json ($ui) sa líši od Cargo.toml ($v)."; exit 1; fi
       - name: WebKitGTK (Linux)
         if: runner.os == 'Linux'
         run: |

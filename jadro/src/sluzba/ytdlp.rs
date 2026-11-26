@@ -2,7 +2,7 @@
 //! ďalších). yt-dlp beží ako samostatný program, jeho priebeh sa číta ako JSON po riadkoch.
 //!
 //! Dva spôsoby:
-//! * **s FFmpeg** – yt-dlp stiahne a spojí všetko sám (rovnaké formáty ako okno v Pythone, AAC aj Opus);
+//! * **s FFmpeg** – yt-dlp stiahne a spojí všetko sám (AAC aj Opus);
 //! * **bez FFmpeg** – yt-dlp len zistí formáty, vyberie ich jadro (obraz MP4 + zvuk M4A),
 //!   stiahne ich vlastným sťahovaním po úsekoch a spojí vlastným spájaním. Pozri [`vyber_formaty`].
 
@@ -308,7 +308,7 @@ pub async fn zoznam(exe: &Path, url: &str, s: &Spolocne) -> Vysledok<Value> {
     }))
 }
 
-/// Formát pre yt-dlp podľa voľby v okne (rovnaké ako `media.PRESETS` v Pythone).
+/// Formát pre yt-dlp podľa voľby v okne.
 pub fn format_ytdlp(format: &str, zvuk: &str, tiktok: bool) -> (String, Vec<String>) {
     let (mut f, mut extra): (String, Vec<&str>) = match format {
         "mp4" => (

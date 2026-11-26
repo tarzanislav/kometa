@@ -69,7 +69,8 @@ jobs:
       - name: Zbieranie
         shell: bash
         run: |
-          v="$(sed -n 's/^version = "\(.*\)"/\1/p' aplikacia/Cargo.toml | head -1)"
+          v="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\([0-9.]*\)"$/\1/p' Cargo.toml)"
+          [ -n "$v" ] || { echo "::error::V Cargo.toml chýba verzia."; exit 1; }
           mkdir dist
           case "$RUNNER_OS" in
             Windows)

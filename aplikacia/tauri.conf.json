@@ -3,7 +3,7 @@
   "productName": "Kometa",
   "identifier": "io.github.tarzanislav.kometa",
   "build": {
-    "frontendDist": "../kometa/webui"
+    "frontendDist": "../jadro/webui"
   },
   "app": {
     "windows": [

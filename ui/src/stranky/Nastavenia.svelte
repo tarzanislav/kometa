@@ -39,7 +39,6 @@
     if (a.instaluje) return `Inštalujem Kometu ${a.najnovsia}…`
     if (a.nainstalovana) return `Kometa ${a.najnovsia} je nainštalovaná – platí od ďalšieho spustenia.`
     if (a.pripravena) return `Pripravená je Kometa ${a.najnovsia} (stiahnutá a overená).`
-    if (a.len_aplikacia) return `Kometa ${a.najnovsia} je už len aplikácia – prejdi na ňu tlačidlom Prejsť na aplikáciu hore v okne.`
     if (a.najnovsia) return `Je dostupná Kometa ${a.najnovsia} – tu sa nainštaluje z GitHubu ručne.`
     if (a.chyba) return a.chyba
     return a.kontrola ? `Máš najnovšiu verziu ${a.verzia}.` : `Verzia ${a.verzia}.`
@@ -305,9 +304,6 @@
       Kometa {app.init?.verzia} – otvorený zdrojový kód pod licenciou MIT.
       <a href="https://github.com/tarzanislav/kometa" target="_blank" rel="noreferrer">github.com/tarzanislav/kometa</a>
     </p>
-    {#if app.init?.chyba_ffmpeg && !app.init?.funkcie?.ffmpeg_volitelny}
-      <p class="male pozor"><Ikona meno="pozor" velkost={16} /> Chýba FFmpeg – spájanie stôp nebude fungovať. Spusti Instalacia.bat.</p>
-    {/if}
   </section>
 </div>
 
@@ -494,13 +490,6 @@
     height: 100%;
     background: var(--accent);
     transition: width 0.3s ease;
-  }
-  .pozor {
-    display: flex;
-    gap: var(--s2);
-    align-items: center;
-    color: var(--warn);
-    font-weight: 600;
   }
   @media (max-width: 860px) {
     .stranka {

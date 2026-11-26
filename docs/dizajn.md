@@ -1,9 +1,9 @@
 # Dizajn rozhrania Komety
 
 Rozhranie je napísané raz – v HTML, CSS a TypeScripte (Svelte 5) v priečinku [`ui/`](../ui) – a beží
-v okne aplikácie: dnes nad jadrom v Pythone (pywebview), neskôr v aplikácii Tauri nad jadrom v Ruste
-(Windows, macOS, Linux, Android). S jadrom sa rozpráva len cez malé API (`ui/src/lib/api.ts` ↔
-`kometa/webapp.py`), takže výmena jadra rozhranie nezmení.
+v okne aplikácie Tauri nad jadrom v Ruste (Windows, macOS, Linux, neskôr Android) aj v okne prehliadača
+(`kometa okno`). S jadrom sa rozpráva len cez malé API (`ui/src/lib/api.ts` ↔ `jadro/src/sluzba`),
+takže zmeny v jadre rozhranie nezasiahnu.
 
 ## Myšlienka
 

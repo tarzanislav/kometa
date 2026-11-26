@@ -1,5 +1,5 @@
-//! Služba pre okno Komety: to isté rozhranie (metódy a tvary dát), aké ponúka okno v Pythone
-//! (`kometa/webapp.py`), ale celé v Ruste. Používa ho aplikácia Tauri aj `kometa okno`.
+//! Služba pre okno Komety: metódy a tvary dát, ktoré volá rozhranie. Používa ju aplikácia Tauri
+//! aj `kometa okno`.
 //!
 //! Každé volanie vráti `{"ok": true, "data": …}` alebo `{"ok": false, "chyba": "…", "podrobnosti": "…"}`.
 
@@ -36,7 +36,7 @@ use std::time::Instant;
 
 pub const VERZIA: &str = env!("CARGO_PKG_VERSION");
 
-/// Metódy, ktoré smie volať okno (rovnaké mená ako v Pythone + doinštalovanie yt-dlp).
+/// Metódy, ktoré smie volať okno.
 pub const METODY: &[&str] = &[
     "init",
     "stav",

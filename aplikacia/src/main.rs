@@ -1,7 +1,7 @@
-//! Kometa – aplikácia: rozhranie z `kometa/webui` v natívnom okne (Tauri), jadro v Ruste.
+//! Kometa – aplikácia: rozhranie z `jadro/webui` v natívnom okne (Tauri), jadro v Ruste.
 //!
 //! Okno sa s jadrom rozpráva jediným príkazom `volaj(metoda, args)` – rovnaké metódy a tvary dát
-//! ako okno v Pythone, takže rozhranie je pre obe verzie to isté.
+//! ponúka `kometa okno` cez lokálny server, takže rozhranie je pre obe okná to isté.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 

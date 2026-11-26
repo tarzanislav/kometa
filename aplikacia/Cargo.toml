@@ -1,6 +1,6 @@
 [package]
 name = "kometa-aplikacia"
-version = "1.12.0"
+version.workspace = true
 edition = "2021"
 description = "Kometa – aplikácia s vlastným jadrom v Ruste (Tauri)"
 license = "MIT"

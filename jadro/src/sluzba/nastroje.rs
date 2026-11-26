@@ -1,6 +1,6 @@
 //! Pomocné programy: yt-dlp (YouTube a ďalšie služby), Deno (JavaScript, ktorý yt-dlp potrebuje na
 //! YouTube) a FFmpeg (len MP3 a prevod Opus → AAC). Kometa si yt-dlp a Deno doinštaluje sama a
-//! udržiava ich aktuálne – nezávisí od toho, čo je v systéme (napr. z Kometa pre Python). Všetko
+//! udržiava ich aktuálne – nezávisí od toho, čo je nainštalované v systéme. Všetko
 //! z oficiálnych vydaní (yt-dlp, denoland/deno, BtbN/FFmpeg-Builds) a vždy sa pred použitím overí
 //! kontrolný súčet SHA-256.
 

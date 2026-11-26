@@ -40,21 +40,6 @@ YouTube · Vimeo (aj vložené) · Facebook · Instagram · TikTok (bez vodoznak
 
 ## Inštalácia
 
-Kometa je v dvoch vydaniach s tým istým rozhraním:
-
-| | **Aplikácia** (nová, jadro v Ruste) | **Kometa pre Python** |
-|---|---|---|
-| inštalácia | jeden inštalátor, bez Pythonu | `Instalacia.bat` (Python, FFmpeg, knižnice) |
-| systémy | Windows, macOS, Linux | Windows (inde ručne) |
-| stránky, Vimeo, streamy, súbory | áno, vlastným jadrom | áno |
-| Webshare, Fastshare, Datoid | áno | áno |
-| rozbaľovanie archívov | ZIP, 7z, RAR – samo | ZIP samo, 7z a RAR cez 7-Zip |
-| strážca schránky, kurzy po prihlásení | áno | nie |
-| YouTube a ďalšie služby | áno, cez yt-dlp (doinštaluje sa jedným klikom) | áno |
-| jazykové stopy YouTube | áno, aj bez FFmpeg | áno |
-
-### Aplikácia
-
 Z [Vydaní (Releases)](https://github.com/tarzanislav/kometa/releases) stiahni súbor pre svoj systém:
 
 - **Windows 10/11:** `Kometa-X.Y.Z-windows-x64-setup.exe` – inštaluje sa len pre teba, bez práv správcu. Inštalátor nie je digitálne podpísaný, preto Windows ukáže „Windows ochránil váš počítač“ → **Ďalšie informácie → Spustiť aj tak**.
@@ -64,30 +49,9 @@ Z [Vydaní (Releases)](https://github.com/tarzanislav/kometa/releases) stiahni s
 
 Kontrolné súčty všetkých súborov sú v `SHA256SUMS.txt`.
 
-### Kometa pre Python (Windows 10/11)
+### Prechod z Kometa pre Python
 
-> **Kometa pre Python končí.** Aplikácia vyššie vie všetko, čo ona, a viac – bez Pythonu, s jedným inštalátorom. V Kometa pre Python klikni na **Prejsť na aplikáciu** (pás hore v okne): stiahne a overí inštalačku aplikácie a spustí ju. Aplikácia prevezme nastavenia, účty aj nedokončené sťahovania. Kometa 2.0 bude už len aplikácia.
-
-1. Stiahni Kometu z [Vydaní (Releases)](https://github.com/tarzanislav/kometa/releases): súbor `Kometa-X.Y.Z.zip`. Rozbaľ ho (napr. do `Dokumenty\Kometa`). Pri aktualizácii stačí rozbaliť cez staré súbory – nastavenia, účty a front ostanú.
-2. Dvakrát klikni na **`Instalacia.bat`**. Cez `winget` nainštaluje Python, FFmpeg, Deno a knižnice (yt-dlp, requests, keyring, pywebview) a na plochu dá ikonu **Kometa**.
-   - Ak na konci napíše, že ho treba spustiť ešte raz (pri prvej inštalácii Pythonu), zavri okno a spusti ho znova.
-   - Ak sa objaví „Windows ochránil váš počítač“, klikni na **Ďalšie informácie → Spustiť aj tak**.
-3. Kometu spúšťaj ikonou na ploche alebo cez **`Spustit.bat`**. Pri každom spustení sa aktualizuje yt-dlp, pretože stránky sa často menia.
-
-<details>
-<summary>Ručná inštalácia / iný systém</summary>
-
-Treba Python 3.10+, [FFmpeg](https://ffmpeg.org) a [Deno](https://deno.com) (YouTube ho dnes vyžaduje).
-
-```
-pip install -U -r requirements.txt
-python app.py                # nové rozhranie v okne aplikácie
-python app.py --prehliadac   # to isté v okne prehliadača Edge/Chrome (bez pywebview)
-python app.py --klasicke     # pôvodné jednoduché okno
-```
-
-Okno aplikácie používa vo Windows WebView2 (súčasť Windows 10/11), v macOS WebKit a v Linuxe GTK alebo Qt. Ak okno nejde otvoriť, Kometa sa sama otvorí v okne prehliadača.
-</details>
+Kometa 2.0 je už len aplikácia – Kometa pre Python sa ďalej nevydáva. Ak ju ešte máš, nainštaluj aplikáciu (vo verzii 1.12 to urobí tlačidlo **Prejsť na aplikáciu**). Aplikácia prevezme nastavenia a účty a pri prvom spustení aj nedokončené sťahovania z frontu. Python, FFmpeg ani Deno, ktoré inštaloval `Instalacia.bat`, aplikácia nepotrebuje: pomocníkov si stiahne sama. Priečinok so starou Kometou potom môžeš zmazať.
 
 ## Používanie
 
@@ -115,7 +79,7 @@ Pre videá, ktoré majú na YouTube viac zvukových stôp (preklad či dabing). 
 
 Voľba **Zvuk pre všetky jazyky** nastaví všetky jazyky naraz a **pri každom jazyku** ju môžeš zmeniť zvlášť (napr. čeština AAC + Opus, slovenčina len AAC). Stopy idú vo výsledku po jazykoch: **CZ (AAC) → CZ (Opus) → SK (AAC) → SK (Opus) → EN (AAC) → EN (Opus)…** a prvá je predvolená. Predvolené poradie jazykov je **CZ, SK, EN, PL, HU, RU**; ďalšie jazyky, ktoré pridáš, idú za nimi. Ak video nemá stopu „EN“, ale má viac variantov angličtiny, vyberie sa americká (EN-US), inak britská.
 
-Prevod do AAC potrebuje FFmpeg (Kometa pre Python ho má vždy; aplikácia bez neho nechá Opus a povie to). Rovnaká voľba zvuku je v Nastaveniach a platí aj pre bežné sťahovanie videí z YouTube.
+Prevod do AAC potrebuje FFmpeg (doinštaluješ ho jedným klikom v *Nastaveniach → Pomocníci*; bez neho Kometa nechá Opus a povie to). Rovnaká voľba zvuku je v Nastaveniach a platí aj pre bežné sťahovanie videí z YouTube.
 
 **Viac videí naraz, celý kanál alebo playlist.** Do karty *Jazykové stopy* vlož namiesto jedného videa viac odkazov (každý na nový riadok) alebo odkaz na kanál či playlist:
 - **Viac odkazov:** Kometa zistí, aké jazyky má každé video, a ukáže ich pri videu aj v súčte („CZ 3/3, SK 2/3…“). Nastavíš jazyky raz pre všetky a stiahneš vybrané videá, voliteľne do vlastného priečinka.
@@ -144,7 +108,7 @@ Kometa sa po spustení a potom raz za 12 hodín pozrie na [vydania na GitHube](h
 - **Windows:** inštalátor beží viditeľne s ukazovateľom priebehu, bez otázok, a potom sa Kometa spustí znova.
 - **Linux:** AppImage sa vymení na mieste; balík DEB si vypýta heslo správcu.
 - **macOS:** aplikácia sa vymení z obrazu DMG.
-- **Program bez okna (noGUI)** sa vymení, nová verzia platí od ďalšieho spustenia; **Kometa pre Python** prepíše svoje súbory (nastavenia a front ostanú).
+- **Program bez okna (noGUI)** sa vymení, nová verzia platí od ďalšieho spustenia.
 
 Automatickú aktualizáciu vypneš v *Nastaveniach → Aktualizácie*; tam je aj **Skontrolovať teraz**.
 
@@ -176,106 +140,17 @@ Prihlásenie (cookies) sa vezme z okna prehliadača, drží sa len v pamäti a p
 - **Do stiahnutého videa vložiť:** údaje o videu, kapitoly, obrázok videa (každé sa dá vypnúť).
 - **Aktualizácie:** automaticky (predvolene zapnuté) a **Skontrolovať teraz**.
 - **Priečinok na sťahovanie.**
-- **Pomocníci** (aplikácia): **yt-dlp** a **Deno** (JavaScript, ktorý yt-dlp potrebuje na YouTube) si Kometa doinštaluje sama chvíľu po prvom spustení a raz denne skontroluje, či nie je nový yt-dlp (Deno pri novej hlavnej verzii) – z oficiálnych vydaní, overené kontrolným súčtom. Nepoužíva tie zo systému, takže nezávisí od Pythonu ani od Kometa pre Python. FFmpeg (len MP3) sa dá doinštalovať jedným klikom. FFmpeg sa stiahne zo zostavení [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) (Windows, Linux) a pred použitím sa overí kontrolný súčet; v macOS ho nainštaluješ cez Homebrew (`brew install ffmpeg`).
+- **Pomocníci:** **yt-dlp** a **Deno** (JavaScript, ktorý yt-dlp potrebuje na YouTube) si Kometa doinštaluje sama chvíľu po prvom spustení a raz denne skontroluje, či nie je nový yt-dlp (Deno pri novej hlavnej verzii) – z oficiálnych vydaní, overené kontrolným súčtom. Nepoužíva tie zo systému, takže nič netreba inštalovať zvlášť. FFmpeg (len MP3) sa dá doinštalovať jedným klikom. FFmpeg sa stiahne zo zostavení [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) (Windows, Linux) a pred použitím sa overí kontrolný súčet; v macOS ho nainštaluješ cez Homebrew (`brew install ffmpeg`).
 
 ## Ako funguje pokračovanie sťahovania
 
-Rozpracovaný súbor sa ukladá ako `názov.part`. Pri ďalšom pokuse sa server požiada len o zvyšok (HTTP Range), takže sa nesťahuje od začiatku. Pri sťahovaní cez viac spojení sa stav jednotlivých úsekov ukladá do `názov.kometa`. Pri výpadku siete Kometa skúša znova (až 12-krát, s narastajúcim čakaním). Keď dočasný odkaz z Webshare alebo Fastshare vyprší, vypýta si nový a pokračuje. Front sa ukladá do `%USERPROFILE%\.kometa\fronta.json`, takže po zatvorení programu sa nedokončené súbory po ďalšom spustení samy dokončia.
+Rozpracovaný súbor sa ukladá ako `názov.part`. Pri ďalšom pokuse sa server požiada len o zvyšok (HTTP Range), takže sa nesťahuje od začiatku. Pri sťahovaní cez viac spojení sa stav jednotlivých úsekov ukladá do `názov.kometa`. Pri výpadku siete Kometa skúša znova (až 12-krát, s narastajúcim čakaním). Keď dočasný odkaz z Webshare alebo Fastshare vyprší, vypýta si nový a pokračuje. Front sa ukladá do `~/.kometa/fronta-jadro.json` (vo Windows `%USERPROFILE%\.kometa`), takže po zatvorení programu sa nedokončené súbory po ďalšom spustení samy dokončia.
 
 ## Príkazový riadok
 
-```
-py app.py ODKAZ [ODKAZ …] [-f video|mp4|1080|720|mp3|audio] [-o PRIEČINOK]
-py app.py jazyky ODKAZ                         # video + CZ, SK, EN, PL, HU, RU → .mkv
-py app.py jazyky ODKAZ --zoznam                # vypíše dostupné jazyky
-py app.py jazyky ODKAZ -j cs sk en -o "D:\Videa"
-py app.py jazyky ODKAZ --zvuk opus             # bez AAC stôp (oboje | aac | opus)
-py app.py jazyky ODKAZ --mp4                   # výsledok ako MP4 (H.264 + AAC)
-py app.py jazyky ODKAZ --k-videu "moje.mp4"    # pridá stopy k stiahnutému videu
-```
-
-## Keď niečo nejde
-
-- **YouTube / TikTok zrazu nefunguje:** spusti Kometu znova cez `Spustit.bat` (aktualizuje yt-dlp).
-- **„Obsah vyžaduje prihlásenie“:** na stránke *Účty* vyber prehliadač, v ktorom si prihlásený.
-- **Webshare / Fastshare hlási chybu účtu:** na stránke *Účty* sa prihlás znova a skontroluj VIP alebo kredit.
-- **Okno sa neotvorí:** spusti `py app.py --prehliadac` (rozhranie v okne Edge/Chrome) alebo `py app.py --klasicke`.
-- **„Chýba FFmpeg / Deno“:** spusti `Instalacia.bat`.
-- **Antivírus hlási Kometu ako trójskeho koňa** (napr. Kaspersky `PDM:Trojan.Win32.Generic`): ide o odhad podľa správania – Kometa sťahuje súbory a spúšťa pomocníkov (yt-dlp, FFmpeg), ktorých si sama stiahla, a jej súbory zatiaľ nie sú digitálne podpísané. Over inštalačku: jej súčet SHA-256 porovnaj so `SHA256SUMS.txt` vo vydaní a skontroluj ju na [virustotal.com](https://www.virustotal.com). Falošný poplach nahlás výrobcovi antivírusu a Kometu pridaj medzi dôveryhodné aplikácie. Kometa sa správa čo najopatrnejšie: cookies prehliadača číta, len keď stránka žiada prihlásenie, archívy rozbaľuje vlastným kódom a schránku číta len po zmene.
-
-## Štruktúra projektu
+Program `kometa` (súbor `kometa-X.Y.Z-…-noGUI` z vydaní, alebo `cargo build --release`) je celé jadro v jednom súbore bez inštalácie:
 
 ```
-app.py               spúšťač (okno aj príkazový riadok)
-ui/                  zdrojový kód rozhrania (Svelte 5 + TypeScript, Vite)
-kometa/
-  webui/             preložené rozhranie (vzniká z ui/ príkazom npm run build)
-  webapp.py          okno aplikácie a API pre rozhranie
-  gui.py             pôvodné jednoduché okno (--klasicke)
-  fronta.py          front sťahovania, pauza/pokračovanie, uloženie
-  httpdl.py          HTTP sťahovanie s pokračovaním (.part + Range) a cez viac spojení (úseky)
-  skener.py          skener stránok: vložené prehrávače, streamy, JS/JSON, OpenGraph, JSON-LD, iframe
-  hosts.py           Webshare (API) a Fastshare (prihlásenie, stránka súboru)
-  media.py           YouTube/Facebook/Instagram/TikTok cez yt-dlp
-  jazyky.py          jazykové stopy YouTube a spájanie cez FFmpeg
-  common.py          nastavenia, heslá, pomôcky
-jadro/               jadro v Ruste: sťahovanie, skener, spájanie MKV/MP4, služba pre okno (src/sluzba)
-aplikacia/           aplikácia Tauri – natívne okno s tým istým rozhraním nad jadrom v Ruste
-```
-
-### Vývoj rozhrania
-
-```
-cd ui
-npm ci
-npm run dev      # vývoj (rozhranie sa pripojí k bežiacej Komete: py app.py --bez-okna)
-npm run check    # kontrola typov
-npm run build    # preloží rozhranie do kometa/webui
-```
-
-Preložené rozhranie je súčasťou repozitára, aby Kometa fungovala bez Node.js. CI overuje, že zodpovedá zdrojovému kódu v `ui/`.
-
-### Vydanie
-
-Nová verzia = číslo v `kometa/__init__.py` a `ui/package.json` a poznámky `docs/releases/vX.Y.Z.md`. Po odoslaní do vetvy `main` GitHub vydanie sám otestuje a zabalí a **čaká na schválenie vlastníkom** (prostredie `release` so schvaľovaním → *Review deployments → Approve*). Bez nastaveného schvaľovania sa automaticky nezverejní nič – vtedy sa vydanie spustí ručne cez *Actions → Vydanie → Run workflow* (verziu netreba písať).
-
-## Aplikácia s jadrom v Ruste (vo vývoji)
-
-![Aplikácia Kometa s jadrom v Ruste](docs/aplikacia.png)
-
-Rovnaké rozhranie, ale bez Pythonu: natívne okno (Tauri – WebView2 vo Windows, WebKit v macOS a Linuxe) nad vlastným jadrom v Ruste. Okno sa s jadrom rozpráva jediným príkazom `volaj(metóda, argumenty)` – sú to tie isté metódy a tvary dát ako v okne pre Python, takže rozhranie je pre obe verzie spoločné.
-
-- **front sťahovania** – súbežné sťahovanie, pauza a pokračovanie (aj po zatvorení a novom spustení), upratanie rozpracovaných častí pri odstránení; stránka s viacerými videami sa rozbalí do frontu;
-- **všetko z jadra** – stránky, Vimeo, JW Player, Wistia, Cloudflare, Bunny, HLS, DASH a súbory, spájanie MKV/MP4 bez FFmpeg;
-- **Webshare a Fastshare** cez vlastný účet (heslá v Správcovi poverení, Kľúčenke alebo Secret Service);
-- **YouTube a stovky ďalších služieb cez yt-dlp** – ak chýba, doinštaluje sa jedným klikom v Nastaveniach z oficiálnych vydaní a overí sa SHA-256. yt-dlp len zistí formáty – najlepší obraz (AV1, VP9, HEVC, H.264) a zvuk AAC aj Opus vyberie, stiahne po úsekoch a spojí jadro (MP4 pri H.264 s AAC, inak MKV; samotný zvuk do `.m4a` alebo `.opus`). **FFmpeg treba už len na prevod do MP3** (a pri jazykových stopách na prevod Opus → AAC, keď zdroj AAC neponúka) – vtedy sťahuje samotný yt-dlp s FFmpeg;
-- **nastavenia sú spoločné** s Kometou pre Python (`~/.kometa/nastavenia.json`), front má vlastný súbor.
-
-**Jazykové stopy z YouTube** robí aplikácia celé sama: yt-dlp len zistí, aké jazyky video má; obraz a zvuky stiahne jadro po úsekoch a spojí ich vlastným spájaním – aj zvuk Opus z WebM a aj do videa, ktoré už máš stiahnuté. FFmpeg treba len vtedy, keď YouTube jazyk ponúka iba v Opus a chceš ho mať aj v AAC.
-
-```
-cargo build --release -p kometa-aplikacia     # natívna aplikácia (Linux potrebuje WebKitGTK 4.1)
-cargo run --release -- okno                    # to isté rozhranie v okne Edge/Chrome, bez inštalácie
-```
-
-`kometa okno` je jeden súbor: rozhranie je vložené v programe a beží nad malým serverom na 127.0.0.1, ktorý odpovedá len s tajným 128-bitovým kľúčom z adresy okna a len pre hlavičku Host 127.0.0.1/localhost.
-
-## Vlastné jadro v Ruste (vo vývoji)
-
-V priečinku [`jadro/`](jadro) vzniká nové jadro Komety v Ruste: jeden spustiteľný súbor bez inštalácie pre Windows, macOS, Linux a neskôr Android. Už vie:
-
-- **súbory** po úsekoch cez viac spojení s pokračovaním, adaptívnym počtom spojení a obnovou odkazov;
-- **HLS** (`.m3u8`) aj **DASH** (`.mpd` – šablóny s číslom aj časovou osou, zoznamy, BaseURL) – vlastné parsery, kúsky sa sťahujú súbežne a po prerušení sa pokračuje;
-- **výber kvality** (`--max-vyska`) a **jazykov zvuku v poradí** (`-j cs,sk,en`);
-- **zvuk Opus do `.opus` (Ogg) bez FFmpeg** – s názvom, autorom, kapitolami a obrázkom;
-- **vlastné spájanie do MKV aj MP4 – bez FFmpeg.** Číta MPEG-TS (H.264, AAC), MP4/fragmentované MP4 a Matroska/WebM (H.264, HEVC, AV1, VP9, AAC, Opus, MP3, AC-3, E-AC-3 – pri MKV dopočíta časy dekódovania snímok B), zapisuje Matroska aj MP4 s jazykmi, názvami, rolami (dabing, originál), predvolenou stopou a bodmi na pretáčanie. **Titulky** číta aj zapisuje – v MKV ako S_TEXT/UTF8, v MP4 ako 3GPP Timed Text (`tx3g`, čas bez titulku vyplnia prázdne vzorky); **kapitoly** (MKV Chapters, v MP4 zoznam `chpl` aj kapitolová stopa), **údaje o videu** (MKV Tags, MP4 `ilst`) a **obrázok** (príloha MKV, obal MP4). Nič sa neprekóduje, výsledok sa po zápise skontroluje. Zvláda B-snímky, edit listy aj nespojitosti časov v HLS. Pamäť ~10 MB aj pri veľkých súboroch. FFmpeg sa použije len pre formát, ktorý vlastné spájanie zatiaľ nepozná (napr. HEVC v MPEG-TS) – a nikdy potichu;
-- **skener stránok** – vlastný čítač HTML prejde stránku aj vnorené rámčeky (2 úrovne), nájde prehrávače, streamy a súbory v značkách, atribútoch `data-*`, metaúdajoch (Open Graph, JSON-LD) aj v skriptoch, vynechá reklamy a vyberie hlavné video. Či ide o stránku, stream alebo súbor, rozhodne obsah – nie len typ, ktorý pošle server;
-- **Vimeo** – verejné, neverejné (s kľúčom `h=…`) aj obmedzené na doménu: skener sám pošle adresu stránky, kde je video vložené (Referer). Pri videu s heslom povie, čo robiť;
-- **JW Player, Wistia, Cloudflare Stream a Bunny Stream** cez ich verejné rozhrania prehrávača;
-- **šifrovaný obsah (DRM) zámerne nesťahuje** – skončí kódom 2; živé vysielanie kódom 4; služby, ktoré jadro ešte nepozná (napr. YouTube), kódom 5 – tie zatiaľ sťahuje okno Komety.
-
-```
-cargo build --release
 kometa okno                                        # okno Komety (rozhranie v okne prehliadača)
 kometa skenuj STRÁNKA                              # čo je na stránke (★ = odporúčané), --json pre program
 kometa info ODKAZ -j cs,sk                         # čo sa stiahne: kvality, jazyky a stopy – nič nesťahuje
@@ -288,11 +163,86 @@ kometa spoj -o film.mp4 video.mp4 "sk.m4a#zvuk#sk#Slovenčina#dabing" "en.webm#z
    -t "Názov" --autor "Kanál" --datum 2024-05-17 --zdroj https://…   # titulky, kapitoly, údaje a obrázok
 ```
 
-Ďalej: titulky z Vimea a Android.
+YouTube a služby cez yt-dlp, jazykové stopy a účty sú v okne (`kometa okno`).
+
+## Keď niečo nejde
+
+- **YouTube / TikTok zrazu nefunguje:** zatvor Kometu a spusti ju znova – do pol minúty si sama skontroluje a stiahne nový yt-dlp (inak to robí raz denne).
+- **„Obsah vyžaduje prihlásenie“:** na stránke *Účty* vyber prehliadač, v ktorom si prihlásený.
+- **Webshare / Fastshare hlási chybu účtu:** na stránke *Účty* sa prihlás znova a skontroluj VIP alebo kredit.
+- **Okno sa neotvorí:** spusti program noGUI príkazom `kometa okno` – rozhranie sa otvorí v okne Edge/Chrome.
+- **„Chýba yt-dlp / Deno / FFmpeg“:** *Nastavenia → Pomocníci → Doinštalovať*.
+- **Antivírus hlási Kometu ako trójskeho koňa** (napr. Kaspersky `PDM:Trojan.Win32.Generic`): ide o odhad podľa správania – Kometa sťahuje súbory a spúšťa pomocníkov (yt-dlp, FFmpeg), ktorých si sama stiahla, a jej súbory zatiaľ nie sú digitálne podpísané. Over inštalačku: jej súčet SHA-256 porovnaj so `SHA256SUMS.txt` vo vydaní a skontroluj ju na [virustotal.com](https://www.virustotal.com). Falošný poplach nahlás výrobcovi antivírusu a Kometu pridaj medzi dôveryhodné aplikácie. Kometa sa správa čo najopatrnejšie: cookies prehliadača číta, len keď stránka žiada prihlásenie, archívy rozbaľuje vlastným kódom a schránku číta len po zmene.
+
+## Štruktúra projektu
+
+```
+jadro/               jadro v Ruste: sťahovanie, skener, spájanie MKV/MP4/Ogg, služba pre okno (src/sluzba)
+  webui/             preložené rozhranie (vzniká z ui/ príkazom npm run build, vkladá sa do programu)
+aplikacia/           aplikácia Tauri – natívne okno nad jadrom
+ui/                  zdrojový kód rozhrania (Svelte 5 + TypeScript, Vite)
+tests/               skúšky celého jadra (Python ako nástroj skúšok, nie súčasť Komety)
+docs/                plány, poznámky k vydaniam, zdroje
+```
+
+### Vývoj rozhrania
+
+```
+cd ui
+npm ci
+npm run dev      # vývoj; jadro spusti zvlášť: cargo run -- okno --port 8765 --bez-okna
+                 # a otvor adresu z Vite s kľúčom z výpisu jadra (#t=…)
+npm run check    # kontrola typov
+npm run build    # preloží rozhranie do jadro/webui
+```
+
+Preložené rozhranie je súčasťou repozitára, aby sa jadro dalo zostaviť bez Node.js. CI overuje, že zodpovedá zdrojovému kódu v `ui/`.
+
+### Vydanie
+
+Nová verzia = číslo v `Cargo.toml` (`[workspace.package]`) a `ui/package.json` a poznámky `docs/releases/vX.Y.Z.md`. Po odoslaní do vetvy `main` GitHub vydanie sám otestuje a zabalí a **čaká na schválenie vlastníkom** (prostredie `release` so schvaľovaním → *Review deployments → Approve*). Bez nastaveného schvaľovania sa automaticky nezverejní nič – vtedy sa vydanie spustí ručne cez *Actions → Vydanie → Run workflow* (verziu netreba písať).
+
+## Aplikácia
+
+![Aplikácia Kometa s jadrom v Ruste](docs/aplikacia.png)
+
+Natívne okno (Tauri – WebView2 vo Windows, WebKit v macOS a Linuxe) nad vlastným jadrom v Ruste. Okno sa s jadrom rozpráva jediným príkazom `volaj(metóda, argumenty)`; `kometa okno` ponúka tie isté metódy cez lokálny server, takže rozhranie je pre obe okná spoločné.
+
+- **front sťahovania** – súbežné sťahovanie, pauza a pokračovanie (aj po zatvorení a novom spustení), upratanie rozpracovaných častí pri odstránení; stránka s viacerými videami sa rozbalí do frontu;
+- **všetko z jadra** – stránky, Vimeo, JW Player, Wistia, Cloudflare, Bunny, HLS, DASH a súbory, spájanie MKV/MP4 bez FFmpeg;
+- **Webshare a Fastshare** cez vlastný účet (heslá v Správcovi poverení, Kľúčenke alebo Secret Service);
+- **YouTube a stovky ďalších služieb cez yt-dlp** – ak chýba, doinštaluje sa jedným klikom v Nastaveniach z oficiálnych vydaní a overí sa SHA-256. yt-dlp len zistí formáty – najlepší obraz (AV1, VP9, HEVC, H.264) a zvuk AAC aj Opus vyberie, stiahne po úsekoch a spojí jadro (MP4 pri H.264 s AAC, inak MKV; samotný zvuk do `.m4a` alebo `.opus`). **FFmpeg treba už len na prevod do MP3** (a pri jazykových stopách na prevod Opus → AAC, keď zdroj AAC neponúka) – vtedy sťahuje samotný yt-dlp s FFmpeg;
+- **nastavenia** v `~/.kometa/nastavenia.json`, front v `fronta-jadro.json`.
+
+**Jazykové stopy z YouTube** robí aplikácia celé sama: yt-dlp len zistí, aké jazyky video má; obraz a zvuky stiahne jadro po úsekoch a spojí ich vlastným spájaním – aj zvuk Opus z WebM a aj do videa, ktoré už máš stiahnuté. FFmpeg treba len vtedy, keď YouTube jazyk ponúka iba v Opus a chceš ho mať aj v AAC.
+
+```
+cargo build --release -p kometa-aplikacia     # natívna aplikácia (Linux potrebuje WebKitGTK 4.1)
+cargo run --release -- okno                    # to isté rozhranie v okne Edge/Chrome, bez inštalácie
+```
+
+`kometa okno` je jeden súbor: rozhranie je vložené v programe a beží nad malým serverom na 127.0.0.1, ktorý odpovedá len s tajným 128-bitovým kľúčom z adresy okna a len pre hlavičku Host 127.0.0.1/localhost.
+
+## Vlastné jadro v Ruste
+
+V priečinku [`jadro/`](jadro) je jadro Komety v Ruste: jeden spustiteľný súbor bez inštalácie pre Windows, macOS, Linux a neskôr Android. Vie:
+
+- **súbory** po úsekoch cez viac spojení s pokračovaním, adaptívnym počtom spojení a obnovou odkazov;
+- **HLS** (`.m3u8`) aj **DASH** (`.mpd` – šablóny s číslom aj časovou osou, zoznamy, BaseURL) – vlastné parsery, kúsky sa sťahujú súbežne a po prerušení sa pokračuje;
+- **výber kvality** (`--max-vyska`) a **jazykov zvuku v poradí** (`-j cs,sk,en`);
+- **zvuk Opus do `.opus` (Ogg) bez FFmpeg** – s názvom, autorom, kapitolami a obrázkom;
+- **vlastné spájanie do MKV aj MP4 – bez FFmpeg.** Číta MPEG-TS (H.264, AAC), MP4/fragmentované MP4 a Matroska/WebM (H.264, HEVC, AV1, VP9, AAC, Opus, MP3, AC-3, E-AC-3 – pri MKV dopočíta časy dekódovania snímok B), zapisuje Matroska aj MP4 s jazykmi, názvami, rolami (dabing, originál), predvolenou stopou a bodmi na pretáčanie. **Titulky** číta aj zapisuje – v MKV ako S_TEXT/UTF8, v MP4 ako 3GPP Timed Text (`tx3g`, čas bez titulku vyplnia prázdne vzorky); **kapitoly** (MKV Chapters, v MP4 zoznam `chpl` aj kapitolová stopa), **údaje o videu** (MKV Tags, MP4 `ilst`) a **obrázok** (príloha MKV, obal MP4). Nič sa neprekóduje, výsledok sa po zápise skontroluje. Zvláda B-snímky, edit listy aj nespojitosti časov v HLS. Pamäť ~10 MB aj pri veľkých súboroch. FFmpeg sa použije len pre formát, ktorý vlastné spájanie zatiaľ nepozná (napr. HEVC v MPEG-TS) – a nikdy potichu;
+- **skener stránok** – vlastný čítač HTML prejde stránku aj vnorené rámčeky (2 úrovne), nájde prehrávače, streamy a súbory v značkách, atribútoch `data-*`, metaúdajoch (Open Graph, JSON-LD) aj v skriptoch, vynechá reklamy a vyberie hlavné video. Či ide o stránku, stream alebo súbor, rozhodne obsah – nie len typ, ktorý pošle server;
+- **Vimeo** – verejné, neverejné (s kľúčom `h=…`) aj obmedzené na doménu: skener sám pošle adresu stránky, kde je video vložené (Referer). Pri videu s heslom povie, čo robiť;
+- **JW Player, Wistia, Cloudflare Stream a Bunny Stream** cez ich verejné rozhrania prehrávača;
+- **šifrovaný obsah (DRM) zámerne nesťahuje** – skončí kódom 2; živé vysielanie kódom 4; služby, ktoré jadro ešte nepozná (napr. YouTube), kódom 5 – tie sťahuje okno Komety cez yt-dlp. Príkazy sú v časti [Príkazový riadok](#príkazový-riadok).
+
+
+Ďalej: vlastné sťahovanie z YouTube, titulky z Vimea a Android.
 
 ## Plán ďalšieho vývoja
 
-1. **Jadro v Ruste a aplikácia** – hotové: súbory, HLS, DASH, vlastné spájanie do MKV/MP4 bez FFmpeg, skener stránok, Vimeo a ďalšie prehrávače, front, účty Webshare/Fastshare, yt-dlp ako pomocník a natívne okno (Tauri). Jazykové stopy YouTube a inštalačné balíky sú hotové. Ďalej titulky a Android.
+1. **Jadro v Ruste a aplikácia** – hotové: súbory, HLS, DASH, vlastné spájanie do MKV/MP4 bez FFmpeg, skener stránok, Vimeo a ďalšie prehrávače, front, účty Webshare/Fastshare, yt-dlp ako pomocník a natívne okno (Tauri). Jazykové stopy YouTube, inštalačné balíky a automatická aktualizácia sú hotové; od verzie 2.0 je Kometa len aplikácia, bez Pythonu. Ďalej vlastné sťahovanie z YouTube (yt-dlp ostane ako záloha), titulky a Android.
 2. **Titulky a preklad lokálnou AI** – prepis reči, preložené titulky vložené do MKV/MP4. Bez účtu, bez internetu, bez kreditov.
 3. **AI dabing** – preklad zvuku do iného jazyka ako nová zvuková stopa: šablóny hlasov (ženské a mužské, rôzny vek), prirodzený prednes, zachovaná hudba a zvuky pozadia. Podrobný plán a pravidlá (licencie hlasov, ochrana skutočných ľudí, označovanie) sú v [docs/plan-ai.md](docs/plan-ai.md).
 

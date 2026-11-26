@@ -7,14 +7,12 @@
   import Logo from './components/Logo.svelte'
   import Toasty from './components/Toasty.svelte'
   import Aktualizacia from './components/Aktualizacia.svelte'
-  import Prechod from './components/Prechod.svelte'
   import Playlist from './dialogy/Playlist.svelte'
   import Skener from './dialogy/Skener.svelte'
   import Zmazat from './dialogy/Zmazat.svelte'
   import Jazyky from './stranky/Jazyky.svelte'
   import Kurzy from './stranky/Kurzy.svelte'
   import Schranka from './stranky/Schranka.svelte'
-  import Pribudne from './stranky/Pribudne.svelte'
   import Nastavenia from './stranky/Nastavenia.svelte'
   import Stahovanie from './stranky/Stahovanie.svelte'
   import Ucty from './stranky/Ucty.svelte'
@@ -98,7 +96,6 @@
           <Ikona meno="pozor" velkost={18} /> Kometa neodpovedá. Ak si zatvoril jej okno, spusti ju znova.
         </div>
       {/if}
-      <Prechod />
       <Aktualizacia />
       {#if app.stranka === 'stahovanie'}
         <Stahovanie />
@@ -107,14 +104,7 @@
       {:else if app.stranka === 'kurzy'}
         <Kurzy />
       {:else if app.stranka === 'jazyky'}
-        {#if app.init?.funkcie && !app.init.funkcie.jazyky}
-          <Pribudne
-            nadpis="Jazykové stopy"
-            text="Spájanie zvukových stôp z YouTube (CZ → SK → ďalšie) zatiaľ robí Kometa pre Python. Všetko ostatné – stránky, Vimeo, streamy, súbory, Webshare a Fastshare – už vie aj táto aplikácia."
-          />
-        {:else}
-          <Jazyky />
-        {/if}
+        <Jazyky />
       {:else if app.stranka === 'ucty'}
         <Ucty />
       {:else}

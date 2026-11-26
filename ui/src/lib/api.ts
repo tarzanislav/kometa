@@ -1,13 +1,11 @@
-// Spojenie s jadrom – rovnaké rozhranie pre tri okná:
-//  • aplikácia Tauri (jadro v Ruste) cez invoke('volaj'),
-//  • okno pywebview (Kometa pre Python) cez window.pywebview.api,
-//  • okno prehliadača cez lokálny server s tajným kľúčom v adrese (#t=…) – Python aj `kometa okno`.
+// Spojenie s jadrom – rovnaké rozhranie pre dve okná:
+//  • aplikácia Tauri cez invoke('volaj'),
+//  • okno prehliadača cez lokálny server s tajným kľúčom v adrese (#t=…) – `kometa okno`.
 
 type Odpoved<T> = { ok: true; data: T } | { ok: false; chyba: string; podrobnosti?: string }
 
 declare global {
   interface Window {
-    pywebview?: { api: Record<string, (...args: unknown[]) => Promise<unknown>> }
     __TAURI_INTERNALS__?: { invoke: (prikaz: string, args?: Record<string, unknown>) => Promise<unknown> }
   }
 }
@@ -17,38 +15,18 @@ export class ChybaJadra extends Error {
 }
 
 const kluc = new URLSearchParams(location.hash.slice(1)).get('t') ?? ''
-let cesta: 'tauri' | 'okno' | 'server' = 'server'
+let cesta: 'tauri' | 'server' = 'server'
 
-/** Počká, kým je jadro pripravené (pywebview vkladá svoje API až po načítaní stránky). */
+/** Zistí, ktorým oknom ide spojenie s jadrom. */
 export function pripojit(): Promise<void> {
-  return new Promise((ok) => {
-    if (window.__TAURI_INTERNALS__) {
-      cesta = 'tauri'
-      return ok()
-    }
-    if (window.pywebview?.api?.init) {
-      cesta = 'okno'
-      return ok()
-    }
-    if (kluc) {
-      cesta = 'server'
-      return ok()
-    }
-    const hotovo = () => {
-      cesta = window.pywebview?.api ? 'okno' : 'server'
-      ok()
-    }
-    window.addEventListener('pywebviewready', hotovo, { once: true })
-    setTimeout(hotovo, 4000)
-  })
+  cesta = window.__TAURI_INTERNALS__ ? 'tauri' : 'server'
+  return Promise.resolve()
 }
 
 export async function volaj<T>(metoda: string, ...args: unknown[]): Promise<T> {
   let odp: Odpoved<T>
   if (cesta === 'tauri') {
     odp = (await window.__TAURI_INTERNALS__!.invoke('volaj', { metoda, args })) as Odpoved<T>
-  } else if (cesta === 'okno') {
-    odp = (await window.pywebview!.api[metoda](...args)) as Odpoved<T>
   } else {
     let r: Response
     try {

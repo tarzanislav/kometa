@@ -1,4 +1,4 @@
-// Tvary dát, ktoré posiela jadro: kometa/webapp.py (Python) aj jadro/src/sluzba (Rust).
+// Tvary dát, ktoré posiela jadro (jadro/src/sluzba).
 
 export type StavPolozky = 'caka' | 'stahuje' | 'pauza' | 'hotovo' | 'chyba' | 'rozbalene'
 
@@ -96,8 +96,6 @@ export interface StavAktualizacie {
   nainstalovana: boolean
   kontrola?: string | null
   chyba?: string | null
-  /** Kometa pre Python: najnovšie vydanie je už len aplikácia (bez ZIP) */
-  len_aplikacia?: boolean
 }
 
 export interface Stav {
@@ -144,8 +142,6 @@ export interface Nastavenia {
 }
 
 export interface Init {
-  /** Kometa pre Python: ukázať prechod na aplikáciu */
-  koniec_pythonu?: boolean
   verzia: string
   platforma: string
   nastavenia: Nastavenia
@@ -155,13 +151,13 @@ export interface Init {
   zvuk: Record<string, string>
   chyba_ffmpeg: boolean
   chyba_ytdlp: boolean
-  /** jadro v Ruste (aplikácia alebo `kometa okno`); v Pythone chýba */
+  /** jadro v Ruste (aplikácia alebo `kometa okno`) */
   jadro?: 'rust'
   okno?: 'aplikacia' | 'prehliadac'
   funkcie?: Funkcie
 }
 
-/** Čo vie toto jadro (v Pythone všetko). */
+/** Čo vie toto jadro. */
 export interface Funkcie {
   jazyky: boolean
   ucty: boolean

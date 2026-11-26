@@ -5,7 +5,8 @@
 //! (čakanie, captcha, rýchlosť) – na rýchle sťahovanie treba VIP (Webshare) alebo kredit
 //! (Fastshare, Datoid).
 //! Heslá sú v trezore systému (Windows: Správca poverení, macOS: Kľúčenka, Linux: Secret Service
-//! cez `secret-tool`), inak v súbore `ucty.dat` ako v Pythone.
+//! cez `secret-tool`), inak v súbore `ucty.dat`. Miesta sú tie isté, aké používala Kometa pre
+//! Python, takže účty z nej ostanú.
 
 use super::fronta::Polozka;
 use super::stahovanie::Koniec;
@@ -872,7 +873,7 @@ mod trezor {
 mod trezor {
     use std::io::Write;
     use std::process::{Command, Stdio};
-    // Secret Service (GNOME Keyring, KWallet) cez secret-tool – rovnaké miesto ako keyring v Pythone
+    // Secret Service (GNOME Keyring, KWallet) cez secret-tool – rovnaké miesto, aké mala Kometa pre Python
     pub fn uloz(s: &str, u: &str, h: &str) -> bool {
         let Ok(mut c) = Command::new("secret-tool")
             .args([
@@ -1339,7 +1340,7 @@ mod testy {
             "$1$saltsalt$qjXMvbEw8oaL.CzflDtaK/"
         );
         assert_eq!(md5_crypt("", "abc"), "$1$abc$Or2rbeUYTvt12aiVzMuS/.");
-        // rovnaký výsledok ako md5_crypt v kometa/hosts.py
+        // rovnaký výsledok ako `openssl passwd -1`
         assert_eq!(
             md5_crypt("dlhé heslo s diakritikou 123", "Ws0Lt12345"),
             "$1$Ws0Lt123$sb4oeW6sW1EzBBwvGWXMr/"

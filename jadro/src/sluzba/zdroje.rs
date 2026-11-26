@@ -17,7 +17,7 @@ fn je_domena(h: &str, d: &str) -> bool {
     h == d || h.ends_with(&format!(".{d}"))
 }
 
-/// Názov služby pre štítok položky (rovnaké názvy ako okno v Pythone).
+/// Názov služby pre štítok položky.
 pub fn nazov_zdroja(adresa: &str) -> &'static str {
     let Some((h, _)) = hostitel(adresa) else {
         return "Web";
@@ -166,7 +166,7 @@ pub fn odkazy(text: &str) -> Vec<String> {
     out
 }
 
-/// Bezpečný názov súboru pre Windows, macOS aj Linux (ako `safe_name` v Pythone).
+/// Bezpečný názov súboru pre Windows, macOS aj Linux .
 pub fn bezpecny_nazov(text: &str, limit: usize) -> String {
     let mut s = String::with_capacity(text.len());
     for c in text.chars() {

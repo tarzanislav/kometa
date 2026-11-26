@@ -220,7 +220,7 @@ async fn okno(port: u16, bez_okna: bool, zrusenie: CancellationToken) -> Vysledo
     use kometa_jadro::sluzba::{nastavenia, prostredie::Systemove, server, Sluzba};
     if !server::ma_rozhranie() {
         return Err(Chyba::Ine(
-            "Program bol zostavený bez rozhrania (chýba kometa/webui).".into(),
+            "Program bol zostavený bez rozhrania (chýba jadro/webui).".into(),
         ));
     }
     let sluzba = Sluzba::new(

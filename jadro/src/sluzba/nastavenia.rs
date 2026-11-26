@@ -1,5 +1,5 @@
-//! Nastavenia – ten istý súbor `~/.kometa/nastavenia.json` ako okno v Pythone, takže
-//! prechod medzi verziami nič nestratí. Neznáme kľúče sa zachovajú.
+//! Nastavenia v `~/.kometa/nastavenia.json` (ten istý súbor používala aj Kometa pre Python,
+//! takže prechod nič nestratil). Neznáme kľúče sa zachovajú.
 
 use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
@@ -22,7 +22,7 @@ pub const TEMY: [&str; 7] = [
 ];
 pub const KVALITY: [&str; 6] = ["Najlepšia", "2160p", "1440p", "1080p", "720p", "480p"];
 
-/// Formáty sťahovania: (kľúč, popis). Rovnaké kľúče ako v Pythone.
+/// Formáty sťahovania: (kľúč, popis). Kľúče sú tie isté ako v Kometa pre Python (nastavenia ostanú platné).
 pub const FORMATY: [(&str, &str); 7] = [
     ("video", "Video – najlepšia kvalita"),
     ("jazyky", "Video s jazykmi (YouTube, podľa karty Jazyky)"),
@@ -358,7 +358,7 @@ impl Nastavenia {
         Value::Object(m)
     }
 
-    /// Zmeny z okna: neznáme kľúče a neplatné hodnoty sa ticho vynechajú (ako v Pythone).
+    /// Zmeny z okna: neznáme kľúče a neplatné hodnoty sa ticho vynechajú.
     pub fn zmen(&mut self, zmeny: &Map<String, Value>) {
         for (k, v) in zmeny {
             if let Some(cista) = over(k, v) {

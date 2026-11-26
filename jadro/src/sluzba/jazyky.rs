@@ -2,7 +2,6 @@
 //! a originál v jednom súbore. yt-dlp len zistí formáty; sťahuje jadro po úsekoch
 //! a spája vlastné spájanie – aj zvuk Opus z WebM, bez FFmpeg.
 //!
-//! Rovnaké voľby a tvary dát ako `kometa/jazyky.py` v Pythone.
 
 use super::nastavenia::PREDVOLENE_JAZYKY;
 use super::ytdlp::{self, FormatNa, Spolocne};
@@ -19,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
-/// Slovenské názvy jazykov podľa kódu (ako v Pythone).
+/// Slovenské názvy jazykov podľa kódu.
 const NAZVY: &[(&str, &str)] = &[
     ("en", "Angličtina"),
     ("en-us", "Angličtina (USA)"),
@@ -561,7 +560,7 @@ pub async fn nacitaj(v: &Arc<Vnutro>, url: &str) -> Vysledok<Value> {
     Ok(out)
 }
 
-/// Voľby z okna (rovnaké kľúče ako v Pythone).
+/// Voľby z okna.
 struct Uloha {
     info: Value,
     stopy: Vec<Stopa>,

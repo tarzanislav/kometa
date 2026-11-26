@@ -6,7 +6,7 @@
 //!   hlavnej verzii (2.x → 3.x) – menšie verzie yt-dlp nevyžaduje.
 //! - yt-dlp dostane cestu k Deno priamo (`--js-runtimes deno:…`), nič sa nehľadá v systéme.
 //!
-//! Kometa tak nezávisí od toho, čo je nainštalované v systéme (napr. z Kometa pre Python).
+//! Kometa tak nezávisí od toho, čo je nainštalované v systéme.
 //! Všetko sa sťahuje z oficiálnych vydaní a overuje súčtom SHA-256.
 
 use super::{Instalacia, Vnutro};

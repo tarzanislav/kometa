@@ -1,7 +1,7 @@
 //! Front sťahovania: položky, stavy, uloženie na disk a výber, čo sa má spustiť.
 //!
-//! Front aplikácie v Ruste má vlastný súbor (`fronta-jadro.json`) – rozpracované súbory jadra
-//! a yt-dlp v Pythone sa nemiešajú. Nastavenia sú spoločné.
+//! Front má súbor `fronta-jadro.json`. Starý `fronta.json` z Kometa pre Python sa pri prvom
+//! spustení raz prevezme (pozri `prevezmi_z_pythonu`).
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

@@ -1,6 +1,6 @@
 """Skúška služby jadra v Ruste cez `kometa okno --bez-okna` – rovnaké volania, aké posiela rozhranie.
 
-Overí: ochranu servera (kľúč, Host), nastavenia (spoločný súbor s Pythonom), front (súbor, HLS,
+Overí: ochranu servera (kľúč, Host), nastavenia (súbor z Kometa pre Python ostane platný), front (súbor, HLS,
 pauza a pokračovanie s rovnakým výsledkom, odstránenie s upratovaním, ukončenie a pokračovanie po
 reštarte), skener a stránku s viacerými videami, yt-dlp (vlastnou cestou bez FFmpeg aj samotným
 yt-dlp), doinštalovanie yt-dlp s kontrolou SHA-256, Webshare a Fastshare na simulovaných serveroch
@@ -27,10 +27,56 @@ from pathlib import Path
 
 KOREN = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(KOREN))
-from kometa.hosts import md5_crypt  # noqa: E402 – referenčný výpočet hesla Webshare
 
 EXE = KOREN / "target" / "release" / ("kometa.exe" if os.name == "nt" else "kometa")
 FF, FP, YT = shutil.which("ffmpeg"), shutil.which("ffprobe"), shutil.which("yt-dlp")
+
+# referenčný výpočet hesla Webshare (MD5-crypt, ako `openssl passwd -1`)
+_ITOA64 = "./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+
+def md5_crypt(password: str, salt: str) -> str:
+    """Klasický algoritmus MD5-crypt (rovnaký ako `openssl passwd -1`)."""
+    pw = password.encode("utf-8")
+    salt = salt[:8]
+    sb = salt.encode("ascii")
+    magic = b"$1$"
+
+    alt = hashlib.md5(pw + sb + pw).digest()
+    ctx = hashlib.md5(pw + magic + sb)
+    n = len(pw)
+    while n > 0:
+        ctx.update(alt[:min(16, n)])
+        n -= 16
+    n = len(pw)
+    while n:
+        ctx.update(b"\x00" if n & 1 else pw[:1])
+        n >>= 1
+    final = ctx.digest()
+
+    for i in range(1000):
+        c = hashlib.md5()
+        c.update(pw if i & 1 else final)
+        if i % 3:
+            c.update(sb)
+        if i % 7:
+            c.update(pw)
+        c.update(final if i & 1 else pw)
+        final = c.digest()
+
+    def to64(v: int, count: int) -> str:
+        out = ""
+        for _ in range(count):
+            out += _ITOA64[v & 0x3F]
+            v >>= 6
+        return out
+
+    f = final
+    encoded = (to64((f[0] << 16) | (f[6] << 8) | f[12], 4) + to64((f[1] << 16) | (f[7] << 8) | f[13], 4)
+               + to64((f[2] << 16) | (f[8] << 8) | f[14], 4) + to64((f[3] << 16) | (f[9] << 8) | f[15], 4)
+               + to64((f[4] << 16) | (f[10] << 8) | f[5], 4) + to64(f[11], 2))
+    return f"$1${salt}${encoded}"
+
 D = Path(tempfile.mkdtemp(prefix="kometa_okno_"))
 CHYBY: list[str] = []
 BASE = ""

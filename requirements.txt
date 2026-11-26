@@ -1,5 +1,0 @@
-yt-dlp[default]
-requests
-keyring
-pywebview>=5
-send2trash
