@@ -53,7 +53,7 @@ jobs:
               { echo "### ❌ $u"; echo '```'; cat chyba.txt; echo '```'; } >> kanarik.md
             fi
           done < jadro/src/youtube/kanarik.txt
-          cat kanarik.md >> "$GITHUB_STEP_SUMMARY"
+          cat kanarik.md | tee -a "$GITHUB_STEP_SUMMARY"
           echo "zle=$zle" >> "$GITHUB_OUTPUT"
           echo "blok=$blok" >> "$GITHUB_OUTPUT"
           echo "spolu=$spolu" >> "$GITHUB_OUTPUT"
@@ -73,7 +73,7 @@ jobs:
             echo "## yt-dlp $tag ($kedy)"
             if [ -s zmeny.txt ]; then echo; echo "Zmeny YouTube:"; echo; sed 's/^/- /; s/^- [*-] /- /' zmeny.txt; else echo; echo "Bez zmien YouTube."; fi
           } > ytdlp.md
-          cat ytdlp.md >> "$GITHUB_STEP_SUMMARY"
+          cat ytdlp.md | tee -a "$GITHUB_STEP_SUMMARY"
           echo "nove=$nove" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
       - name: Issue „Strážca YouTube“
