@@ -37,6 +37,14 @@ pub struct Spolocne {
 }
 
 impl Spolocne {
+    /// Rovnaké voľby bez prihlásenia z prehliadača.
+    fn bez_cookies(&self) -> Spolocne {
+        Spolocne {
+            prehliadac: String::new(),
+            ..self.clone()
+        }
+    }
+
     fn argumenty(&self) -> Vec<String> {
         let mut a = vec![
             "--no-colors".to_string(),
@@ -141,6 +149,51 @@ fn chyba_z(stderr: &str) -> Chyba {
     })
 }
 
+/// Chyba, pri ktorej stránka žiada prihlásenie – až vtedy sa použijú cookies z prehliadača.
+///
+/// Cookies prehliadača sa nečítajú pri každom sťahovaní: otvorenie a dešifrovanie databázy cookies
+/// je presne to, čo robia programy kradnúce prihlásenia, a antivírusy na to reagujú citlivo.
+/// Väčšina videí (aj YouTube) prihlásenie nepotrebuje.
+pub fn treba_prihlasenie(e: &Chyba) -> bool {
+    let t = e.to_string().to_lowercase();
+    [
+        "sign in",
+        "log in",
+        "login",
+        "logged-in",
+        "authentication",
+        "cookies",
+        "private video",
+        "video is private",
+        "members-only",
+        "members only",
+        "join this channel",
+        "confirm your age",
+        "age-restricted",
+        "inappropriate for some users",
+        "registered users",
+        "prihlás",
+        "prihlas",
+    ]
+    .iter()
+    .any(|k| t.contains(k))
+}
+
+/// Spustí `pokus` najprv bez cookies prehliadača; s nimi len ak stránka žiada prihlásenie.
+async fn s_cookies_ak_treba<T, F, Fut>(s: &Spolocne, pokus: F) -> Vysledok<T>
+where
+    F: Fn(Spolocne) -> Fut,
+    Fut: std::future::Future<Output = Vysledok<T>>,
+{
+    if s.prehliadac.is_empty() {
+        return pokus(s.clone()).await;
+    }
+    match pokus(s.bez_cookies()).await {
+        Err(e) if treba_prihlasenie(&e) => pokus(s.clone()).await,
+        r => r,
+    }
+}
+
 /// Spustí yt-dlp a vráti jeho JSON (napr. `-J`).
 pub async fn json(exe: &Path, args: &[String], zrusenie: &CancellationToken) -> Vysledok<Value> {
     let mut c = prikaz(exe);
@@ -165,27 +218,33 @@ pub async fn info(
     s: &Spolocne,
     zrusenie: &CancellationToken,
 ) -> Vysledok<Value> {
-    let mut a = s.argumenty();
-    a.extend([
-        "-J".into(),
-        "--no-playlist".into(),
-        "--".into(),
-        url.to_string(),
-    ]);
-    json(exe, &a, zrusenie).await
+    s_cookies_ak_treba(s, |s| async move {
+        let mut a = s.argumenty();
+        a.extend([
+            "-J".into(),
+            "--no-playlist".into(),
+            "--".into(),
+            url.to_string(),
+        ]);
+        json(exe, &a, zrusenie).await
+    })
+    .await
 }
 
 /// Zoznam videí playlistu alebo kanála: {title, uploader, url, entries:[{url,title,duration,…}]}.
 pub async fn zoznam(exe: &Path, url: &str, s: &Spolocne) -> Vysledok<Value> {
-    let mut a = s.argumenty();
-    a.extend([
-        "-J".into(),
-        "--flat-playlist".into(),
-        "--ignore-errors".into(),
-        "--".into(),
-        url.to_string(),
-    ]);
-    let v = json(exe, &a, &CancellationToken::new()).await?;
+    let v = s_cookies_ak_treba(s, |s| async move {
+        let mut a = s.argumenty();
+        a.extend([
+            "-J".into(),
+            "--flat-playlist".into(),
+            "--ignore-errors".into(),
+            "--".into(),
+            url.to_string(),
+        ]);
+        json(exe, &a, &CancellationToken::new()).await
+    })
+    .await?;
     let mut polozky = vec![];
     for e in v
         .get("entries")
@@ -325,6 +384,7 @@ pub fn meta_z(v: &Value) -> Meta {
     }
 }
 
+#[derive(Clone)]
 pub struct Uloha<'a> {
     pub exe: &'a Path,
     pub ffmpeg: Option<&'a Path>,
@@ -340,6 +400,21 @@ pub struct Uloha<'a> {
 
 /// Stiahne video samotným yt-dlp (s FFmpeg). Vráti cestu k výsledku.
 pub async fn stiahni(
+    u: &Uloha<'_>,
+    zrusenie: &CancellationToken,
+    hlasic: &Hlasic,
+    pri_meta: &(dyn Fn(Meta) + Send + Sync),
+    pri_docasnom: &(dyn Fn(String) + Send + Sync),
+) -> Vysledok<PathBuf> {
+    s_cookies_ak_treba(&u.spolocne, |s| async move {
+        let mut u2 = u.clone();
+        u2.spolocne = s;
+        stiahni_raz(&u2, zrusenie, hlasic, pri_meta, pri_docasnom).await
+    })
+    .await
+}
+
+async fn stiahni_raz(
     u: &Uloha<'_>,
     zrusenie: &CancellationToken,
     hlasic: &Hlasic,
@@ -567,6 +642,25 @@ pub fn vyber_formaty(info: &Value, format: &str) -> Option<Vec<FormatNa>> {
 
 #[cfg(test)]
 mod testy {
+
+    #[test]
+    fn prihlasenie_len_ked_treba() {
+        let e = |t: &str| crate::chyba::Chyba::Ine(t.into());
+        assert!(treba_prihlasenie(&e(
+            "ERROR: [youtube] x: Sign in to confirm you're not a bot"
+        )));
+        assert!(treba_prihlasenie(&e("Obsah vyžaduje prihlásenie")));
+        assert!(treba_prihlasenie(&e(
+            "ERROR: Private video. Sign in if you've been granted access"
+        )));
+        assert!(!treba_prihlasenie(&e(
+            "Stránka nie je dostupná – skontroluj pripojenie"
+        )));
+        assert!(!treba_prihlasenie(&e(
+            "ERROR: Requested format is not available"
+        )));
+    }
+
     use super::*;
     use serde_json::json;
 

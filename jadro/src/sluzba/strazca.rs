@@ -34,6 +34,8 @@ pub struct Zachyteny {
 pub struct Strazca {
     pub zoznam: Vec<Zachyteny>,
     posledny: Option<String>,
+    /// poradové číslo zmeny schránky (Windows) – schránka sa číta, len keď sa zmenila
+    zmena: Option<u64>,
     videne: HashSet<String>,
 }
 
@@ -140,8 +142,18 @@ pub fn skontroluj(v: &Arc<Vnutro>) {
         )
     };
     if !zapnuty {
-        v.strazca.lock().unwrap().posledny = None;
+        let mut s = v.strazca.lock().unwrap();
+        s.posledny = None;
+        s.zmena = None;
         return;
+    }
+    // čítať obsah schránky, len keď sa zmenil (kde to systém vie povedať) – nie stále dookola
+    if let Some(n) = v.prostredie.zmena_schranky() {
+        let mut s = v.strazca.lock().unwrap();
+        if s.posledny.is_some() && s.zmena == Some(n) {
+            return;
+        }
+        s.zmena = Some(n);
     }
     let text = v.prostredie.schranka();
     {

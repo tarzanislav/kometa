@@ -249,27 +249,29 @@ impl Nastroje {
             udalosti::info(hlasic, "Rozbaľujem FFmpeg…");
             let _ = tokio::fs::remove_dir_all(&rozbal).await;
             tokio::fs::create_dir_all(&rozbal).await?;
-            // systémový tar (vo Windows priamo zo System32, nie hocijaký z PATH)
-            let tar = if cfg!(windows) {
-                std::env::var_os("SystemRoot")
-                    .map(|r| PathBuf::from(r).join("System32").join("tar.exe"))
-                    .unwrap_or_else(|| PathBuf::from("tar"))
+            if docasny
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("zip"))
+            {
+                // ZIP (Windows) rozbalí Kometa sama – bez spúšťania systémových nástrojov
+                let (a, c) = (docasny.clone(), rozbal.clone());
+                tokio::task::spawn_blocking(move || super::archivy::rozbal_zip_do(&a, &c))
+                    .await
+                    .map_err(|e| Chyba::Ine(e.to_string()))?
+                    .map_err(|e| Chyba::Ine(format!("archív FFmpeg sa nedá rozbaliť: {e}")))?;
             } else {
-                PathBuf::from("tar")
-            };
-            let mut prikaz = tokio::process::Command::new(&tar);
-            prikaz.arg("-xf").arg(&docasny).arg("-C").arg(&rozbal);
-            #[cfg(windows)]
-            prikaz.creation_flags(0x0800_0000); // bez čierneho okna
-            let o = prikaz
-                .output()
-                .await
-                .map_err(|e| Chyba::Ine(format!("archív FFmpeg sa nedá rozbaliť (tar): {e}")))?;
-            if !o.status.success() {
-                return Err(Chyba::Ine(format!(
-                    "archív FFmpeg sa nedá rozbaliť: {}",
-                    String::from_utf8_lossy(&o.stderr).trim()
-                )));
+                // .tar.xz (Linux) rozbalí systémový tar
+                let mut prikaz = tokio::process::Command::new("tar");
+                prikaz.arg("-xf").arg(&docasny).arg("-C").arg(&rozbal);
+                let o = prikaz.output().await.map_err(|e| {
+                    Chyba::Ine(format!("archív FFmpeg sa nedá rozbaliť (tar): {e}"))
+                })?;
+                if !o.status.success() {
+                    return Err(Chyba::Ine(format!(
+                        "archív FFmpeg sa nedá rozbaliť: {}",
+                        String::from_utf8_lossy(&o.stderr).trim()
+                    )));
+                }
             }
             let mut ciel = None;
             for meno in ["ffmpeg", "ffprobe"] {

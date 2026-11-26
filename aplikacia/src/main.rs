@@ -79,6 +79,20 @@ impl Prostredie for Okno {
         true
     }
 
+    fn zmena_schranky(&self) -> Option<u64> {
+        #[cfg(windows)]
+        {
+            #[link(name = "user32")]
+            extern "system" {
+                fn GetClipboardSequenceNumber() -> u32;
+            }
+            // SAFETY: funkcia nemá parametre ani vedľajšie účinky, len vráti číslo zmeny schránky
+            Some(unsafe { GetClipboardSequenceNumber() } as u64)
+        }
+        #[cfg(not(windows))]
+        None
+    }
+
     fn oznam(&self, nadpis: &str, text: &str) {
         // keď je Kometa vpredu, stačí jej vlastný zoznam – oznámenie len v pozadí
         let vpredu = self

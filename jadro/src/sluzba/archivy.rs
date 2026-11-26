@@ -466,6 +466,12 @@ pub fn volne(dir: &Path, meno: &str) -> PathBuf {
 
 /// Rozbalí archív vedľa neho. Jeden súbor alebo jeden priečinok v archíve sa dá rovno vedľa
 /// archívu, viac vecí do priečinka s menom archívu. Vráti (výsledná cesta, počet súborov).
+/// Rozbalí obyčajný (nezaheslovaný, nedelený) ZIP do priečinka `ciel` – vlastným kódom, bez
+/// systémových nástrojov. Cesty mimo `ciel` sa nezapíšu.
+pub fn rozbal_zip_do(archiv: &Path, ciel: &Path) -> Result<usize, ChybaRozbalenia> {
+    zip(&[archiv.to_path_buf()], ciel, "", &|_| {})
+}
+
 pub fn rozbal(
     archiv: &Path,
     heslo: &str,

@@ -18,6 +18,11 @@ pub trait Prostredie: Send + Sync {
     fn sleduje_schranku(&self) -> bool {
         false
     }
+    /// Poradové číslo poslednej zmeny schránky, ak ho systém dáva (Windows). Strážca potom
+    /// číta obsah schránky len po zmene.
+    fn zmena_schranky(&self) -> Option<u64> {
+        None
+    }
     /// Krátke systémové oznámenie (aj keď je okno v pozadí).
     fn oznam(&self, _nadpis: &str, _text: &str) {}
 

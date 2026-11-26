@@ -165,7 +165,7 @@ Prihlásenie (cookies) sa vezme z okna prehliadača, drží sa len v pamäti a p
 
 ### Účty
 - **Webshare / Fastshare / Datoid:** zadaj meno (pri Datoide e-mail) a heslo a klikni na **Prihlásiť**. Heslo sa uloží do systémovej kľúčenky (vo Windows *Správca poverení*), nikam inam sa neposiela. Na rýchle sťahovanie treba **VIP (Webshare)** alebo **kredit (Fastshare, Datoid)**. Kometa neobchádza obmedzenia bezplatných účtov.
-- **Stránky po prihlásení** (Instagram, Facebook, platené kurzy, súkromné Vimeo): prihlás sa v prehliadači a tu ho vyber – Kometa použije jeho prihlásenie (cookies) pri sťahovaní aj pri prehľadávaní stránok. Najspoľahlivejší je **Firefox**; Chrome a Edge treba pri sťahovaní zavrieť.
+- **Stránky po prihlásení** (Instagram, Facebook, platené kurzy, súkromné Vimeo): prihlás sa v prehliadači a tu ho vyber – Kometa použije jeho prihlásenie (cookies) pri sťahovaní aj pri prehľadávaní stránok. Cookies sa použijú len vtedy, keď stránka prihlásenie naozaj žiada (najprv sa skúsi bez nich). Najspoľahlivejší je **Firefox**; Chrome a Edge treba pri sťahovaní zavrieť.
 
 ### Nastavenia
 - **Vzhľad:** 7 tém (Kometa, Polárna žiara, Súmrak, Les, More, Levanduľa, Grafit) a režim podľa systému, deň alebo noc. Režim prepneš aj ikonami dole v bočnom paneli.
@@ -199,7 +199,7 @@ py app.py jazyky ODKAZ --k-videu "moje.mp4"    # pridá stopy k stiahnutému vid
 - **Webshare / Fastshare hlási chybu účtu:** na stránke *Účty* sa prihlás znova a skontroluj VIP alebo kredit.
 - **Okno sa neotvorí:** spusti `py app.py --prehliadac` (rozhranie v okne Edge/Chrome) alebo `py app.py --klasicke`.
 - **„Chýba FFmpeg / Deno“:** spusti `Instalacia.bat`.
-- **Antivírus hlási Kometu ako trójskeho koňa** (napr. Kaspersky `PDM:Trojan.Win32.Generic`): ide o odhad podľa správania – Kometa sťahuje súbory a spúšťa pomocníkov (yt-dlp, FFmpeg), ktorých si sama stiahla, a jej súbory zatiaľ nie sú digitálne podpísané. Over inštalačku: jej súčet SHA-256 porovnaj so `SHA256SUMS.txt` vo vydaní a skontroluj ju na [virustotal.com](https://www.virustotal.com). Falošný poplach nahlás výrobcovi antivírusu a Kometu pridaj medzi dôveryhodné aplikácie.
+- **Antivírus hlási Kometu ako trójskeho koňa** (napr. Kaspersky `PDM:Trojan.Win32.Generic`): ide o odhad podľa správania – Kometa sťahuje súbory a spúšťa pomocníkov (yt-dlp, FFmpeg), ktorých si sama stiahla, a jej súbory zatiaľ nie sú digitálne podpísané. Over inštalačku: jej súčet SHA-256 porovnaj so `SHA256SUMS.txt` vo vydaní a skontroluj ju na [virustotal.com](https://www.virustotal.com). Falošný poplach nahlás výrobcovi antivírusu a Kometu pridaj medzi dôveryhodné aplikácie. Kometa sa správa čo najopatrnejšie: cookies prehliadača číta, len keď stránka žiada prihlásenie, archívy rozbaľuje vlastným kódom a schránku číta len po zmene.
 
 ## Štruktúra projektu
 
