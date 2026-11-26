@@ -1,0 +1,36 @@
+# Skúšobné zostavenie – program bez okna (noGUI) z vývojovej vetvy na vyskúšanie novej funkcie
+# na vlastnom počítači. Nie je to vydanie: súbor je len v „Artifacts“ behu (treba byť prihlásený
+# na GitHube) a po 14 dňoch zmizne.
+name: Skúšobné zostavenie
+
+on:
+  push:
+    branches: [youtube]
+
+permissions:
+  contents: read
+
+jobs:
+  zostavenie:
+    name: Program noGUI (${{ matrix.nazov }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-2025, nazov: windows, subor: kometa.exe }
+          - { os: ubuntu-24.04, nazov: linux, subor: kometa }
+          - { os: macos-15, nazov: macos, subor: kometa }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Zostavenie
+        shell: bash
+        run: cd jadro && cargo build --release --locked
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kometa-skuska-${{ matrix.nazov }}
+          path: target/release/${{ matrix.subor }}
+          retention-days: 14
+          if-no-files-found: error
