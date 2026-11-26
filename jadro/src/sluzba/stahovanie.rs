@@ -517,7 +517,8 @@ fn pri_meta(v: &Arc<Vnutro>, id: &str) -> impl Fn(ytdlp::Meta) + Send + Sync {
     }
 }
 
-/// yt-dlp: s FFmpeg stiahne a spojí sám, bez FFmpeg len vyberie formáty a zvyšok urobí jadro.
+/// yt-dlp len zistí formáty; vyberie, stiahne a spojí ich jadro vlastným kódom (bez FFmpeg).
+/// Samotný yt-dlp s FFmpeg sťahuje len MP3 (treba prekódovať) a to, čo jadro nevie spojiť.
 async fn cez_ytdlp(
     v: &Arc<Vnutro>,
     p: &Polozka,
@@ -545,7 +546,16 @@ async fn cez_ytdlp(
     if p.format == "mp3" && ffmpeg.is_none() {
         return Err(Chyba::Ine("Prevod do MP3 potrebuje FFmpeg – vyber „Zvuk – pôvodná kvalita“ alebo nainštaluj FFmpeg.".into()));
     }
-    if ffmpeg.is_some() || std::env::var("KOMETA_YTDLP_PLNY").is_ok_and(|x| x == "1") {
+    let plny = std::env::var("KOMETA_YTDLP_PLNY").is_ok_and(|x| x == "1");
+    // vlastná cesta: formáty zistí yt-dlp, zvyšok jadro
+    let (info, vyber) = if p.format == "mp3" || plny {
+        (None, None)
+    } else {
+        let info = ytdlp::info(exe, &p.url, &spolocne, z).await?;
+        let vyber = ytdlp::vyber_formaty(&info, &p.format, &zvuk);
+        (Some(info), vyber)
+    };
+    if vyber.is_none() && (ffmpeg.is_some() || plny) {
         let (v2, id2) = (Arc::downgrade(v), p.id.clone());
         let docasny = move |t: String| {
             if let Some(v) = v2.upgrade() {
@@ -571,12 +581,14 @@ async fn cez_ytdlp(
             .await
             .map(Koniec::Subor);
     }
-    // bez FFmpeg: formáty vyberie a stiahne jadro, spojí vlastné spájanie
-    let info = ytdlp::info(exe, &p.url, &spolocne, z).await?;
+    let (Some(info), Some(vyber)) = (info, vyber) else {
+        return Err(Chyba::Ine(
+            "Pre toto video sa nenašiel formát, ktorý Kometa spojí sama. Vyber iný formát alebo nainštaluj FFmpeg."
+                .into(),
+        ));
+    };
     meta(ytdlp::meta_z(&info));
-    let formaty = ytdlp::vyber_formaty(&info, &p.format).ok_or_else(|| {
-        Chyba::Ine("Toto video je len vo formáte, ktorý bez FFmpeg nespojím (WebM). Vyber iný formát alebo nainštaluj FFmpeg.".into())
-    })?;
+    let formaty = vyber.formaty;
     let titul = info
         .get("title")
         .and_then(|t| t.as_str())
@@ -587,8 +599,7 @@ async fn cez_ytdlp(
         .and_then(|t| t.as_str())
         .unwrap_or("")
         .to_string();
-    let len_zvuk = formaty.iter().all(|f| f.druh == "zvuk");
-    let pripona = if len_zvuk { "m4a" } else { "mp4" };
+    let pripona = vyber.pripona.as_str();
     let meno = if id_videa.is_empty() {
         titul.clone()
     } else {
@@ -621,7 +632,9 @@ async fn cez_ytdlp(
                 f.druh.into()
             },
             jazyk: f.jazyk.clone(),
-            nazov: None,
+            // AAC aj Opus v jednom súbore: v prehrávači ich rozlíši názov
+            nazov: (formaty.iter().filter(|x| x.druh == "zvuk").count() > 1 && f.druh == "zvuk")
+                .then(|| if f.pripona == "webm" { "Opus" } else { "AAC" }.to_string()),
             povodny: None,
         });
     }
@@ -629,7 +642,7 @@ async fn cez_ytdlp(
     if doplnky.titul.is_empty() {
         doplnky.titul = titul.clone();
     }
-    if vstupy.len() == 1 && !formaty[0].hls {
+    if vstupy.len() == 1 && !formaty[0].hls && formaty[0].pripona == pripona {
         // jeden súbor: údaje, kapitoly a obrázok sa doňho vložia prebalením (ak to formát dovolí)
         let co_vlozit =
             doplnky.ma_udaje() || !doplnky.kapitoly.is_empty() || doplnky.obal.is_some();

@@ -133,7 +133,7 @@ Do stiahnutého videa (MKV aj MP4) Kometa vloží:
 - **obrázok videa** – náhľad ako obrázok súboru (v MKV príloha `cover.jpg`, v MP4 obal);
 - **roly stôp** – preložený zvuk je označený ako dabing, pôvodný jazyk ako originál.
 
-Každú z týchto vecí vypneš v *Nastaveniach* (časť *Do stiahnutého videa vložiť*). Aplikácia to zapisuje vlastným kódom pri spájaní stôp; keď sťahuje a spája yt-dlp s FFmpeg, použije jeho voľby na vloženie údajov, kapitol a obrázka. Priamy súbor z bežnej stránky ostane presne taký, aký je na webe.
+Každú z týchto vecí vypneš v *Nastaveniach* (časť *Do stiahnutého videa vložiť*). Aplikácia to zapisuje vlastným kódom pri spájaní stôp (aj do `.opus`); pri MP3, ktoré sťahuje a prevádza yt-dlp s FFmpeg, použije jeho voľby na vloženie údajov, kapitol a obrázka. Priamy súbor z bežnej stránky ostane presne taký, aký je na webe.
 
 ### Automatická aktualizácia
 
@@ -246,7 +246,7 @@ Rovnaké rozhranie, ale bez Pythonu: natívne okno (Tauri – WebView2 vo Window
 - **front sťahovania** – súbežné sťahovanie, pauza a pokračovanie (aj po zatvorení a novom spustení), upratanie rozpracovaných častí pri odstránení; stránka s viacerými videami sa rozbalí do frontu;
 - **všetko z jadra** – stránky, Vimeo, JW Player, Wistia, Cloudflare, Bunny, HLS, DASH a súbory, spájanie MKV/MP4 bez FFmpeg;
 - **Webshare a Fastshare** cez vlastný účet (heslá v Správcovi poverení, Kľúčenke alebo Secret Service);
-- **YouTube a stovky ďalších služieb cez yt-dlp** – ak chýba, doinštaluje sa jedným klikom v Nastaveniach z oficiálnych vydaní a overí sa SHA-256. S FFmpeg sťahuje a spája samotný yt-dlp (AAC aj Opus); bez FFmpeg yt-dlp len zistí formáty a obraz MP4 so zvukom M4A stiahne a spojí jadro;
+- **YouTube a stovky ďalších služieb cez yt-dlp** – ak chýba, doinštaluje sa jedným klikom v Nastaveniach z oficiálnych vydaní a overí sa SHA-256. yt-dlp len zistí formáty – najlepší obraz (AV1, VP9, HEVC, H.264) a zvuk AAC aj Opus vyberie, stiahne po úsekoch a spojí jadro (MP4 pri H.264 s AAC, inak MKV; samotný zvuk do `.m4a` alebo `.opus`). **FFmpeg treba už len na prevod do MP3** (a pri jazykových stopách na prevod Opus → AAC, keď zdroj AAC neponúka) – vtedy sťahuje samotný yt-dlp s FFmpeg;
 - **nastavenia sú spoločné** s Kometou pre Python (`~/.kometa/nastavenia.json`), front má vlastný súbor.
 
 **Jazykové stopy z YouTube** robí aplikácia celé sama: yt-dlp len zistí, aké jazyky video má; obraz a zvuky stiahne jadro po úsekoch a spojí ich vlastným spájaním – aj zvuk Opus z WebM a aj do videa, ktoré už máš stiahnuté. FFmpeg treba len vtedy, keď YouTube jazyk ponúka iba v Opus a chceš ho mať aj v AAC.
@@ -265,6 +265,7 @@ V priečinku [`jadro/`](jadro) vzniká nové jadro Komety v Ruste: jeden spustit
 - **súbory** po úsekoch cez viac spojení s pokračovaním, adaptívnym počtom spojení a obnovou odkazov;
 - **HLS** (`.m3u8`) aj **DASH** (`.mpd` – šablóny s číslom aj časovou osou, zoznamy, BaseURL) – vlastné parsery, kúsky sa sťahujú súbežne a po prerušení sa pokračuje;
 - **výber kvality** (`--max-vyska`) a **jazykov zvuku v poradí** (`-j cs,sk,en`);
+- **zvuk Opus do `.opus` (Ogg) bez FFmpeg** – s názvom, autorom, kapitolami a obrázkom;
 - **vlastné spájanie do MKV aj MP4 – bez FFmpeg.** Číta MPEG-TS (H.264, AAC), MP4/fragmentované MP4 a Matroska/WebM (H.264, HEVC, AV1, VP9, AAC, Opus, MP3, AC-3, E-AC-3 – pri MKV dopočíta časy dekódovania snímok B), zapisuje Matroska aj MP4 s jazykmi, názvami, rolami (dabing, originál), predvolenou stopou a bodmi na pretáčanie. **Titulky** číta aj zapisuje – v MKV ako S_TEXT/UTF8, v MP4 ako 3GPP Timed Text (`tx3g`, čas bez titulku vyplnia prázdne vzorky); **kapitoly** (MKV Chapters, v MP4 zoznam `chpl` aj kapitolová stopa), **údaje o videu** (MKV Tags, MP4 `ilst`) a **obrázok** (príloha MKV, obal MP4). Nič sa neprekóduje, výsledok sa po zápise skontroluje. Zvláda B-snímky, edit listy aj nespojitosti časov v HLS. Pamäť ~10 MB aj pri veľkých súboroch. FFmpeg sa použije len pre formát, ktorý vlastné spájanie zatiaľ nepozná (napr. HEVC v MPEG-TS) – a nikdy potichu;
 - **skener stránok** – vlastný čítač HTML prejde stránku aj vnorené rámčeky (2 úrovne), nájde prehrávače, streamy a súbory v značkách, atribútoch `data-*`, metaúdajoch (Open Graph, JSON-LD) aj v skriptoch, vynechá reklamy a vyberie hlavné video. Či ide o stránku, stream alebo súbor, rozhodne obsah – nie len typ, ktorý pošle server;
 - **Vimeo** – verejné, neverejné (s kľúčom `h=…`) aj obmedzené na doménu: skener sám pošle adresu stránky, kde je video vložené (Referer). Pri videu s heslom povie, čo robiť;
@@ -285,7 +286,7 @@ kometa spoj -o film.mp4 video.mp4 "sk.m4a#zvuk#sk#Slovenčina#dabing" "en.webm#z
    -t "Názov" --autor "Kanál" --datum 2024-05-17 --zdroj https://…   # titulky, kapitoly, údaje a obrázok
 ```
 
-Ďalej: titulky z Vimea, zápis zvuku Opus do .opus bez FFmpeg a Android.
+Ďalej: titulky z Vimea a Android.
 
 ## Plán ďalšieho vývoja
 

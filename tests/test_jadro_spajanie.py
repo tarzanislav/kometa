@@ -206,6 +206,25 @@ def titulky_kapitoly_obal(vys: Path, prip: str):
     kontrola(f"celé dekódovanie bez chýb (.{prip})", d.returncode == 0 and not d.stderr.strip(), d.stderr)
 
 
+def opus_bez_ffmpeg(vys: Path):
+    """Zvuk Opus z WebM → .opus (Ogg) vlastným kódom: hlavička, poznámky, kapitoly, obrázok, celé dekódovanie."""
+    cil = vys / "zvuk.opus"
+    r = subprocess.run([str(EXE), "spoj", "-o", str(cil), "-t", "Zvuk", "--autor", "Kanál", "--kapitola", "0=Úvod",
+                        "--kapitola", "1.5=Druhá", "--obal", str(D / "obal.jpg"), f"{D / 'yt_cs.webm'}#zvuk"],
+                       capture_output=True, text=True, encoding="utf-8")
+    j = json.loads(subprocess.run([FP, "-v", "error", "-show_streams", "-show_chapters", "-show_format", "-of", "json",
+                                   str(cil)], capture_output=True, text=True).stdout or "{}") if r.returncode == 0 else {}
+    st = j.get("streams", [])
+    tagy = {k.lower(): v for x in st for k, v in x.get("tags", {}).items()} | \
+        {k.lower(): v for k, v in j.get("format", {}).get("tags", {}).items()}
+    d = subprocess.run([FF, "-v", "error", "-i", str(cil), "-map", "0:a", "-f", "null", "-"], capture_output=True, text=True)
+    kontrola("Opus do .opus bez FFmpeg: stopa, kapitoly, údaje, obrázok, dekódovanie",
+             r.returncode == 0 and [x["codec_name"] for x in st] == ["opus", "mjpeg"]
+             and [c["tags"]["title"] for c in j.get("chapters", [])] == ["Úvod", "Druhá"]
+             and tagy.get("artist") == "Kanál" and tagy.get("title") == "Zvuk"
+             and d.returncode == 0 and not d.stderr.strip(), (r.stderr, st, tagy, d.stderr))
+
+
 def main() -> int:
     try:
         sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
@@ -326,6 +345,8 @@ def main() -> int:
                          [(D / "hv.ts", "video"), (D / "hcs.ts", "audio"), (D / "hsk.ts", "audio")])
 
             titulky_kapitoly_obal(vys, prip)
+            if prip == "mkv":
+                opus_bez_ffmpeg(vys)
 
             r = spoj(vys / f"hevc_ts.{prip}", str(D / "hevc.ts"))
             if r.returncode != 0 and "Nepodporovaný" in r.stderr and not (vys / f"hevc_ts.{prip}").exists():

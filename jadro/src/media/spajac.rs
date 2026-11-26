@@ -219,7 +219,12 @@ pub fn spoj_s(vstupy: &[Vstup], ciel: &Path, doplnky: &Doplnky) -> Vysledok<Vec<
         Some("mp4") | Some("m4a") | Some("m4v")
     );
     let docasny = s_priponou(ciel, ".spajanie");
-    let vysledok = if mp4 {
+    let opus = ciel
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("opus"));
+    let vysledok = if opus {
+        spoj_opus(vstupy, &docasny, doplnky)
+    } else if mp4 {
         spoj_mp4(vstupy, &docasny, doplnky)
     } else {
         spoj_mkv(vstupy, &docasny, doplnky)
@@ -234,6 +239,33 @@ pub fn spoj_s(vstupy: &[Vstup], ciel: &Path, doplnky: &Doplnky) -> Vysledok<Vec<
             Err(e)
         }
     }
+}
+
+/// Jedna stopa Opus → súbor `.opus` (Ogg) bez prekódovania.
+fn spoj_opus(vstupy: &[Vstup], docasny: &Path, doplnky: &Doplnky) -> Vysledok<Vec<u64>> {
+    let mut v = vyber(vstupy)?;
+    if v.stopy.len() != 1 || v.stopy[0].info.kodek != Kodek::Opus {
+        return Err(Chyba::Nepodporovane(
+            "do súboru .opus ide len jedna zvuková stopa Opus".into(),
+        ));
+    }
+    let info = v.stopy[0].info.clone();
+    let (head, pre) = super::ogg::opus_head(&info.konfig, info.kanaly as u16);
+    let tags = super::ogg::opus_tags(doplnky, doplnky.trvanie.unwrap_or(0));
+    let mut z = super::ogg::ZapisovacOgg::new(docasny, &head, &tags)?;
+    let mut g = pre as u64;
+    prejdi(&mut v, None, |_, s| {
+        g += super::ogg::vzorky_paketu(&s.data);
+        z.paket(&s.data, g)
+    })?;
+    let n = z.dokonci()?;
+    let (ok, prec, _) = super::ogg::over(docasny)?;
+    if !ok || prec != n {
+        return Err(Chyba::Format(format!(
+            "kontrola Opus: zapísané {n} paketov, prečítané {prec}"
+        )));
+    }
+    Ok(vec![n])
 }
 
 fn spoj_mkv(vstupy: &[Vstup], docasny: &Path, doplnky: &Doplnky) -> Vysledok<Vec<u64>> {

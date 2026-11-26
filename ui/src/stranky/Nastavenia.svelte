@@ -237,7 +237,7 @@
       <div class="pomocnik">
         <div>
           <p class="pomocnik-nazov">FFmpeg</p>
-          <p class="male tlmene">Kometa spája obraz a zvuk sama. FFmpeg treba len na prevod do MP3, zvuk Opus z YouTube a zriedkavé formáty.</p>
+          <p class="male tlmene">Kometa sťahuje a spája obraz, zvuk aj titulky sama – aj zvuk Opus. FFmpeg treba už len na prevod do MP3 a na prevod Opus do AAC pri jazykových stopách.</p>
           {#if nastroje?.instaluje && instalujeFfmpeg}
             <div class="lista" role="progressbar" aria-label="Sťahovanie FFmpeg" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round((nastroje.podiel ?? 0) * 100)}>
               <span style:width="{Math.round((nastroje.podiel ?? 0) * 100)}%"></span>

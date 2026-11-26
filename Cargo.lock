@@ -2473,7 +2473,7 @@ dependencies = [
 
 [[package]]
 name = "kometa-aplikacia"
-version = "1.10.0"
+version = "1.11.0"
 dependencies = [
  "kometa-jadro",
  "serde_json",

@@ -574,7 +574,19 @@ pub fn format_na(f: &Value, druh: &'static str) -> Option<FormatNa> {
 /// Vyberie formáty, ktoré jadro stiahne a spojí bez FFmpeg: najlepší obraz MP4 (pri „mp4“ H.264)
 /// do zvolenej výšky + najlepší zvuk M4A v pôvodnom jazyku; inak najlepší spojený MP4.
 /// Pri „audio“ len zvuk. `None` = bez FFmpeg sa to nedá.
-pub fn vyber_formaty(info: &Value, format: &str) -> Option<Vec<FormatNa>> {
+/// Čo stiahne jadro: formáty (prúdy) a prípona výsledku.
+#[derive(Clone, Debug)]
+pub struct VyberFormatov {
+    pub formaty: Vec<FormatNa>,
+    /// mp4, mkv, m4a, opus – alebo prípona jediného súboru, ktorý sa nespája
+    pub pripona: String,
+}
+
+/// Výber formátov pre vlastné sťahovanie a spájanie (bez FFmpeg) – rovnaké pravidlá ako pri yt-dlp:
+/// najlepší obraz (rozlíšenie, snímky, kodek AV1 > VP9 > HEVC > H.264, dátový tok) a zvuk podľa
+/// nastavenia (AAC, Opus alebo oboje). MP4 len pri H.264 s AAC, inak MKV. Zvuk: AAC → .m4a,
+/// len Opus → .opus. MP3 tu nie je (potrebuje prekódovanie).
+pub fn vyber_formaty(info: &Value, format: &str, zvuk_rezim: &str) -> Option<VyberFormatov> {
     let formaty: &[Value] = info
         .get("formats")
         .and_then(Value::as_array)
@@ -591,53 +603,115 @@ pub fn vyber_formaty(info: &Value, format: &str) -> Option<Vec<FormatNa>> {
         "720" => 720.0,
         _ => f64::INFINITY,
     };
-    let zvuk = formaty
-        .iter()
-        .filter(|f| je_zvuk(f) && !je_obraz(f) && matches!(s(f, "ext").as_str(), "m4a" | "mp4"))
-        .filter(|f| s(f, "acodec").starts_with("mp4a"))
-        .max_by(|a, b| {
-            let k = |f: &Value| (n(f, "language_preference"), n(f, "abr").max(n(f, "tbr")));
-            k(a).partial_cmp(&k(b)).unwrap_or(std::cmp::Ordering::Equal)
+    let najlepsi_zvuk = |kodek: &str, pripony: &[&str]| {
+        formaty
+            .iter()
+            .filter(|f| je_zvuk(f) && !je_obraz(f) && pripony.contains(&s(f, "ext").as_str()))
+            .filter(|f| s(f, "acodec").starts_with(kodek))
+            .max_by(|a, b| {
+                let k = |f: &Value| (n(f, "language_preference"), n(f, "abr").max(n(f, "tbr")));
+                k(a).partial_cmp(&k(b)).unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .and_then(|f| format_na(f, "zvuk"))
+    };
+    let aac = najlepsi_zvuk("mp4a", &["m4a", "mp4"]);
+    let opus = najlepsi_zvuk("opus", &["webm"]);
+    let vysledok = |formaty: Vec<FormatNa>, pripona: &str| {
+        Some(VyberFormatov {
+            formaty,
+            pripona: pripona.into(),
         })
-        .and_then(|f| format_na(f, "zvuk"));
-    if matches!(format, "audio" | "mp3") {
-        return zvuk.map(|z| vec![z]);
+    };
+    match format {
+        "mp3" => return None,
+        "audio" => {
+            return match (aac, opus) {
+                (Some(a), _) => vysledok(vec![a], "m4a"),
+                (None, Some(o)) => vysledok(vec![o], "opus"),
+                _ => None,
+            }
+        }
+        _ => {}
     }
     let h264 = format == "mp4";
+    let poradie_kodeku = |v: &str| match v.split('.').next().unwrap_or("") {
+        "av01" => 4.0,
+        "vp9" | "vp09" => 3.0,
+        "hev1" | "hvc1" => 2.0,
+        _ => 1.0,
+    };
     let obraz = formaty
         .iter()
         .filter(|f| {
             je_obraz(f)
                 && !je_zvuk(f)
                 && !s(f, "vcodec").is_empty()
-                && s(f, "ext") == "mp4"
+                && matches!(s(f, "ext").as_str(), "mp4" | "webm")
                 && !vodoznak(f)
         })
         .filter(|f| n(f, "height") <= max_vyska)
         .filter(|f| !h264 || s(f, "vcodec").starts_with("avc1"))
         .max_by(|a, b| {
-            let k = |f: &Value| (n(f, "height"), n(f, "tbr"));
+            let k = |f: &Value| {
+                (
+                    n(f, "height"),
+                    n(f, "fps"),
+                    poradie_kodeku(&s(f, "vcodec")),
+                    n(f, "tbr"),
+                )
+            };
             k(a).partial_cmp(&k(b)).unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .and_then(|f| format_na(f, "video"));
-    if let (Some(o), Some(z)) = (&obraz, &zvuk) {
-        return Some(vec![o.clone(), z.clone()]);
+        });
+    let zvuky: Vec<FormatNa> = if h264 {
+        aac.clone().into_iter().collect()
+    } else {
+        match zvuk_rezim {
+            "aac" => aac.clone().or(opus.clone()).into_iter().collect(),
+            "opus" => opus.clone().or(aac.clone()).into_iter().collect(),
+            // AAC (prehrá každý prehrávač, prvá = predvolená) + Opus (vyššia kvalita)
+            _ => aac.clone().into_iter().chain(opus.clone()).collect(),
+        }
+    };
+    if let (Some(o), false) = (obraz, zvuky.is_empty()) {
+        if let Some(of) = format_na(o, "video") {
+            let mp4 = s(o, "vcodec").starts_with("avc1")
+                && zvuky
+                    .iter()
+                    .all(|z| z.pripona == "m4a" || z.pripona == "mp4");
+            let mut v = vec![of];
+            v.extend(zvuky);
+            return vysledok(v, if mp4 { "mp4" } else { "mkv" });
+        }
     }
-    formaty
+    // jeden súbor s obrazom aj zvukom (aj priamy súbor zo stránky bez údajov o kodekoch)
+    let f = formaty
         .iter()
-        .filter(|f| {
-            je_obraz(f)
-                && je_zvuk(f)
-                && s(f, "ext") == "mp4"
-                && !vodoznak(f)
-                && n(f, "height") <= max_vyska
-        })
+        .filter(|f| je_obraz(f) && je_zvuk(f) && !vodoznak(f) && n(f, "height") <= max_vyska)
+        .filter(|f| !h264 || matches!(s(f, "ext").as_str(), "mp4" | "m4v"))
         .max_by(|a, b| {
             let k = |f: &Value| (n(f, "height"), n(f, "tbr"));
             k(a).partial_cmp(&k(b)).unwrap_or(std::cmp::Ordering::Equal)
         })
-        .and_then(|f| format_na(f, "video+zvuk"))
-        .map(|f| vec![f])
+        .and_then(|f| format_na(f, "video+zvuk"))?;
+    let pripona = if f.hls {
+        "mp4".to_string()
+    } else {
+        let p: String = f
+            .pripona
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .take(5)
+            .collect();
+        if p.is_empty() {
+            "mp4".into()
+        } else {
+            p
+        }
+    };
+    Some(VyberFormatov {
+        formaty: vec![f],
+        pripona,
+    })
 }
 
 #[cfg(test)]
@@ -686,29 +760,58 @@ mod testy {
             f("251", "webm", "none", "opus", 0.0, 160.0),
             cz, orig,
         ]});
-        let v = vyber_formaty(&info, "video").unwrap();
-        assert_eq!((v[0].id.as_str(), v[1].id.as_str()), ("401", "140-en"));
-        assert_eq!(v[1].jazyk.as_deref(), Some("en"));
+        let vf = |i: &Value, f: &str, z: &str| vyber_formaty(i, f, z).unwrap();
+        let ids = |v: &VyberFormatov| v.formaty.iter().map(|f| f.id.clone()).collect::<Vec<_>>();
+        // najlepší obraz (AV1 4K) + AAC aj Opus → MKV
+        let v = vf(&info, "video", "oboje");
         assert_eq!(
-            v[0].hlavicky,
+            (ids(&v), v.pripona.as_str()),
+            (
+                vec!["401".to_string(), "140-en".into(), "251".into()],
+                "mkv"
+            )
+        );
+        assert_eq!(v.formaty[1].jazyk.as_deref(), Some("en"));
+        assert_eq!(
+            v.formaty[0].hlavicky,
             vec![("User-Agent".to_string(), "UA".to_string())]
         );
-        assert_eq!(vyber_formaty(&info, "1080").unwrap()[0].id, "137");
-        assert_eq!(vyber_formaty(&info, "mp4").unwrap()[0].id, "137");
-        assert_eq!(vyber_formaty(&info, "audio").unwrap()[0].id, "140-en");
-        // len spojený formát
-        let info2 = json!({"formats": [f("18", "mp4", "avc1", "mp4a.40.2", 360.0, 500.0), f("251", "webm", "none", "opus", 0.0, 160.0)]});
-        let v2 = vyber_formaty(&info2, "video").unwrap();
-        assert_eq!((v2.len(), v2[0].druh), (1, "video+zvuk"));
-        // priamy súbor bez údajov o kodekoch (všeobecná stránka)
-        let info4 = json!({"formats": [{"format_id": "0", "ext": "mp4", "protocol": "http", "url": "http://a/v.mp4"}]});
+        // 1080: AV1 a VP9 pred H.264 pri rovnakom rozlíšení; len AAC
+        let v = vf(&info, "1080", "aac");
         assert_eq!(
-            vyber_formaty(&info4, "video").unwrap()[0].druh,
-            "video+zvuk"
+            (ids(&v), v.pripona.as_str()),
+            (vec!["399".to_string(), "140-en".into()], "mkv")
         );
-        // len WebM → bez FFmpeg sa nedá
+        // MP4 pre TV: H.264 + AAC
+        let v = vf(&info, "mp4", "oboje");
+        assert_eq!(
+            (ids(&v), v.pripona.as_str()),
+            (vec!["137".to_string(), "140-en".into()], "mp4")
+        );
+        assert_eq!(vf(&info, "audio", "oboje").formaty[0].id, "140-en");
+        assert!(vyber_formaty(&info, "mp3", "oboje").is_none());
+        // len Opus: zvuk → .opus, video VP9 + Opus → MKV (už nie je potrebný FFmpeg)
         let info3 = json!({"formats": [f("248", "webm", "vp9", "none", 1080.0, 3000.0), f("251", "webm", "none", "opus", 0.0, 160.0)]});
-        assert!(vyber_formaty(&info3, "video").is_none());
+        let v = vf(&info3, "video", "oboje");
+        assert_eq!(
+            (ids(&v), v.pripona.as_str()),
+            (vec!["248".to_string(), "251".into()], "mkv")
+        );
+        assert_eq!(vf(&info3, "audio", "oboje").pripona, "opus");
+        // len spojený formát
+        let info2 = json!({"formats": [f("18", "mp4", "avc1", "mp4a.40.2", 360.0, 500.0)]});
+        let v2 = vf(&info2, "video", "oboje");
+        assert_eq!(
+            (v2.formaty.len(), v2.formaty[0].druh, v2.pripona.as_str()),
+            (1, "video+zvuk", "mp4")
+        );
+        // priamy súbor bez údajov o kodekoch (všeobecná stránka) ostane vo svojom formáte
+        let info4 = json!({"formats": [{"format_id": "0", "ext": "mov", "protocol": "http", "url": "http://a/v.mov"}]});
+        let v4 = vf(&info4, "video", "oboje");
+        assert_eq!(
+            (v4.formaty[0].druh, v4.pripona.as_str()),
+            ("video+zvuk", "mov")
+        );
     }
 
     #[test]

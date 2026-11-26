@@ -13,6 +13,7 @@ pub mod mkv;
 pub mod mkvcit;
 pub mod mp4;
 pub mod mp4zapis;
+pub mod ogg;
 pub mod spajac;
 pub mod srt;
 pub mod ts;

@@ -1061,6 +1061,22 @@ def jazyky(out: Path):
         skontroluj("bez FFmpeg: jazyk bez AAC ostane v Opus a okno to povie", s["text"] == "Hotovo"
                    and p == [("audio", "opus", "slo", "Slovenčina", 1)]
                    and any("bez FFmpeg ostane Opus" in r for r in s["log"]), (s, p))
+        # bežné sťahovanie bez FFmpeg: najlepší obraz (VP9) + AAC aj Opus → MKV; „MP4“ → H.264 + AAC
+        hotova = lambda s, u: (polozka(s, u) or {}).get("stav") in ("hotovo", "chyba")  # noqa: E731
+        o.data("ulozit_nastavenia", {"audio_mode": "oboje"})
+        uv, um = "https://www.youtube.com/watch?v=bezffmpeg01", "https://www.youtube.com/watch?v=bezffmpeg02"
+        o.data("pridat", uv, "video")
+        o.data("pridat", um, "mp4")
+        s = o.cakaj(lambda s: hotova(s, uv) and hotova(s, um), 120)
+        a, b = polozka(s, uv), polozka(s, um)
+        pa = prud(out / "jz2" / a["subor"]) if a.get("subor") else []
+        pb = prud(out / "jz2" / b["subor"]) if b.get("subor") else []
+        skontroluj("bez FFmpeg: najlepšia kvalita = VP9 + AAC + Opus v MKV",
+                   a["stav"] == "hotovo" and a["subor"].endswith(".mkv")
+                   and [(x[0], x[1], x[3]) for x in pa] == [("video", "vp9", ""), ("audio", "aac", "AAC"),
+                                                             ("audio", "opus", "Opus")], (a, pa))
+        skontroluj("bez FFmpeg: MP4 pre TV = H.264 + AAC", b["stav"] == "hotovo" and b["subor"].endswith(".mp4")
+                   and [(x[0], x[1]) for x in pb] == [("video", "h264"), ("audio", "aac")], (b, pb))
     finally:
         o.zatvor()
 
