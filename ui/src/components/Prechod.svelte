@@ -23,8 +23,14 @@
           <a href={vysledok.stranka} target="_blank" rel="noreferrer">Stránka vydaní</a>
         {/if}
       {:else}
-        <strong>Kometa pre Python končí.</strong> Aplikácia Kometa vie všetko, čo táto, a viac – bez Pythonu,
-        s jedným inštalátorom. Nastavenia, účty aj nedokončené sťahovania prevezme sama.
+        {#if app.stav?.aktualizacia?.len_aplikacia}
+          <strong>Vyšla Kometa {app.stav.aktualizacia.najnovsia} – už len ako aplikácia.</strong> Kometa pre Python
+          sa ďalej neaktualizuje.
+        {:else}
+          <strong>Kometa pre Python končí.</strong>
+        {/if}
+        Aplikácia Kometa vie všetko, čo táto, a viac – bez Pythonu, s jedným inštalátorom. Nastavenia, účty aj
+        nedokončené sťahovania prevezme sama.
       {/if}
     </p>
     {#if !vysledok?.ok}

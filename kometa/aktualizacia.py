@@ -25,7 +25,8 @@ DIR = CONFIG_DIR / "aktualizacia"
 
 STATE: dict = {"verzia": __version__, "balik": "rucne" if (ROOT / ".git").exists() else "zip",
                "najnovsia": None, "stranka": None, "stahuje": False, "pripravena": False, "pri_starte": False,
-               "instaluje": False, "nainstalovana": False, "kontrola": None, "chyba": None}
+               "instaluje": False, "nainstalovana": False, "kontrola": None, "chyba": None,
+               "len_aplikacia": False}
 _lock = threading.Lock()
 
 
@@ -194,6 +195,11 @@ def check(auto: bool = True, log=print) -> dict:
                 STATE.update(pripravena=True, pri_starte=bool(c.get("pri_starte")))
             return status()
         assets = {a.get("name"): a for a in info.get("assets") or []}
+        if name not in assets and f"Kometa-{ver}-windows-x64-setup.exe" in assets:
+            # od verzie 2.0 je Kometa len aplikácia – ZIP už nie je, cesta vedie cez prechod
+            with _lock:
+                STATE.update(len_aplikacia=True, pripravena=False)
+            return status()
         if name not in assets or "SHA256SUMS.txt" not in assets:
             raise RuntimeError(f"vo vydaní chýba {name} alebo SHA256SUMS.txt")
         sums = requests.get(assets["SHA256SUMS.txt"]["browser_download_url"], headers=h, timeout=30).text

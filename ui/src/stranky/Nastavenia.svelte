@@ -39,6 +39,7 @@
     if (a.instaluje) return `Inštalujem Kometu ${a.najnovsia}…`
     if (a.nainstalovana) return `Kometa ${a.najnovsia} je nainštalovaná – platí od ďalšieho spustenia.`
     if (a.pripravena) return `Pripravená je Kometa ${a.najnovsia} (stiahnutá a overená).`
+    if (a.len_aplikacia) return `Kometa ${a.najnovsia} je už len aplikácia – prejdi na ňu tlačidlom Prejsť na aplikáciu hore v okne.`
     if (a.najnovsia) return `Je dostupná Kometa ${a.najnovsia} – tu sa nainštaluje z GitHubu ručne.`
     if (a.chyba) return a.chyba
     return a.kontrola ? `Máš najnovšiu verziu ${a.verzia}.` : `Verzia ${a.verzia}.`

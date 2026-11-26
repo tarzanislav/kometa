@@ -192,6 +192,12 @@ def main() -> int:
             rq.get = falosny("0" * 64)
             r = akt.switch_to_app(log=lambda *_: None)
             assert not r["ok"] and "nesedí" in r["text"] and not (akt.DIR / "prechod.txt").exists(), r
+            # vydanie len s aplikáciou (bez ZIP): žiadna chyba, okno ukáže cestu cez prechod
+            rq.get = falosny(hs)
+            akt.check(auto=True, log=lambda *_: None)
+            s = akt.status()
+            assert s["len_aplikacia"] and not s["chyba"] and s["najnovsia"] == "2.0.0" and not s["pripravena"] \
+                and not s["stahuje"], s
         finally:
             rq.get = povodny
             for k in ("KOMETA_AKTUALIZACIE_ZAKLAD", "KOMETA_AKTUALIZACIE_SKUSKA"):

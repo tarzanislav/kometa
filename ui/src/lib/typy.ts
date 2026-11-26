@@ -96,6 +96,8 @@ export interface StavAktualizacie {
   nainstalovana: boolean
   kontrola?: string | null
   chyba?: string | null
+  /** Kometa pre Python: najnovšie vydanie je už len aplikácia (bez ZIP) */
+  len_aplikacia?: boolean
 }
 
 export interface Stav {
