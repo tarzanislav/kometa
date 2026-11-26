@@ -40,7 +40,7 @@ pub const ZVUK: [(&str, &str); 3] = [
 ];
 
 /// Kľúče, ktoré smie meniť okno.
-pub const KLUCE_OKNA: [&str; 25] = [
+pub const KLUCE_OKNA: [&str; 26] = [
     "outdir",
     "dl_preset",
     "parallel",
@@ -60,6 +60,7 @@ pub const KLUCE_OKNA: [&str; 25] = [
     "strazca",
     "strazca_rezim",
     "strazca_format",
+    "strazca_ukazat",
     "titulky",
     "titulky_auto",
     "vlozit_udaje",
@@ -395,6 +396,7 @@ fn predvolene() -> Map<String, Value> {
         "strazca": false,
         "strazca_rezim": "zachytit",
         "strazca_format": "video",
+        "strazca_ukazat": true,
         "titulky": "vypnute",
         "titulky_auto": false,
         "vlozit_udaje": true,
@@ -435,7 +437,8 @@ pub fn over(k: &str, v: &Value) -> Option<Value> {
         "parallel" => json!(cele(v)?.clamp(1, 6)),
         "connections" => json!(cele(v)?.clamp(1, 16)),
         "autoresume" | "include_original" | "keep_separate" | "rozbalovat" | "strazca"
-        | "titulky_auto" | "vlozit_udaje" | "vlozit_kapitoly" | "vlozit_obal" | "aktualizacie" => {
+        | "strazca_ukazat" | "titulky_auto" | "vlozit_udaje" | "vlozit_kapitoly"
+        | "vlozit_obal" | "aktualizacie" => {
             json!(v.as_bool()?)
         }
         "titulky" => jedno_z(v, &["vypnute", "jazyky"], "vypnute"),

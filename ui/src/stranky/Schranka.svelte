@@ -85,6 +85,20 @@
     app.dialog = { druh: 'playlist', url: z.url }
   }
 
+  // práve zachytené: zvýrazniť a ukázať prvý z nich; zvýraznenie po chvíli zmizne
+  $effect(() => {
+    const nove = app.noveZoSchranky
+    if (!nove.length) return
+    const h = setTimeout(() => {
+      document.querySelector(`[data-zachyteny="${nove[0]}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }, 60)
+    const k = setTimeout(() => (app.noveZoSchranky = []), 6000)
+    return () => {
+      clearTimeout(h)
+      clearTimeout(k)
+    }
+  })
+
   function cas(t: number) {
     return new Date(t * 1000).toLocaleTimeString('sk-SK', { hour: '2-digit', minute: '2-digit' })
   }
@@ -120,6 +134,14 @@
           { id: 'zachytit', text: 'Len zachytiť' },
           { id: 'stiahnut', text: 'Hneď stiahnuť' },
         ]}
+      />
+    </div>
+    <div class="rezim" class:zakazane={!n.strazca}>
+      <Prepinac
+        nazov="Ukázať zachytené odkazy"
+        zapnute={n.strazca_ukazat ?? true}
+        popis="Keď Kometa zachytí odkaz, prepne sa sem priamo k nemu (nie, keď práve píšeš v Komete)."
+        zmena={(v) => nastav({ strazca_ukazat: v })}
       />
     </div>
     {#if n.strazca_rezim === 'stiahnut'}
@@ -214,7 +236,12 @@
       {/if}
       <ul class="zoznam">
         {#each sk.polozky as z (z.id)}
-          <li class="plocha polozka" class:oznacena={oznacene.includes(z.id)}>
+          <li
+            class="plocha polozka"
+            class:oznacena={oznacene.includes(z.id)}
+            class:nova={app.noveZoSchranky.includes(z.id)}
+            data-zachyteny={z.id}
+          >
             <input
               type="checkbox"
               class="volba"
@@ -431,6 +458,23 @@
   }
   .zoznam + .zoznam {
     margin-top: var(--s2);
+  }
+  .polozka.nova {
+    animation: nova 1.2s ease-out 3;
+  }
+  @keyframes nova {
+    from {
+      box-shadow: 0 0 0 3px var(--accent);
+    }
+    to {
+      box-shadow: 0 0 0 3px transparent;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .polozka.nova {
+      animation: none;
+      box-shadow: 0 0 0 3px var(--accent);
+    }
   }
   .polozka.oznacena {
     outline: 2px solid var(--accent);

@@ -123,6 +123,8 @@ Automatickú aktualizáciu vypneš v *Nastaveniach → Aktualizácie*; tam je aj
 ### Zo schránky (aplikácia)
 Zapni **Sledovať schránku**. Keď potom skopíruješ odkaz na YouTube, Webshare, Fastshare, Datoid, Vimeo, TikTok a pod. alebo priamy odkaz na video či archív, objaví sa v karte *Zo schránky* (pri YouTube s názvom a náhľadom). Odtiaľ ho stiahneš alebo zahodíš. Pri voľbe **Hneď stiahnuť** ide odkaz rovno do sťahovania zvoleným formátom; playlisty a kanály vždy počkajú na výber videí. Text, ktorý bol v schránke pred zapnutím, sa nezachytí, a ten istý odkaz sa nezachytí dvakrát.
 
+Kometa sa po zachytení sama prepne na kartu *Zo schránky* priamo k novým odkazom a na chvíľu ich zvýrazní – nie však, keď práve píšeš v Komete (prepínač **Ukázať zachytené odkazy**).
+
 Odkazy skopírované naraz (napr. všetky diely z fóra) sú pod spoločným nadpisom *Skopírované naraz* – celú skupinu označíš jedným kliknutím a priradíš jej heslo. Keď je heslo priamo v skopírovanom texte (riadok „Heslo: …“, „Password: …“), Kometa ho priradí odkazom z tej istej kópie sama (štítok *Heslo zo schránky*).
 
 ### Kurzy (aplikácia)

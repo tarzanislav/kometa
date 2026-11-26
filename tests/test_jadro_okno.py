@@ -757,6 +757,50 @@ def strazca(out: Path):
         o2.zatvor()
 
 
+def strazca_okno():
+    """Okno sa po zachytení prepne na kartu Zo schránky – no nie, keď človek práve píše v Komete."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print("Strážca v okne: Playwright nie je nainštalovaný – preskakujem")
+        return
+    print("Strážca schránky v okne")
+    schr = D / "schranka-okno.txt"
+    schr.write_text("nič", encoding="utf-8")
+    o = Okno(D / "cfg-strazca-okno", KOMETA_SKUSKA_SCHRANKA=str(schr))
+    try:
+        o.data("ulozit_nastavenia", {"strazca": True})
+        with sync_playwright() as p:
+            b = p.chromium.launch()
+            s = b.new_page(viewport={"width": 1280, "height": 860})
+            s.goto(o.url)
+            s.get_by_role("heading", name="Sťahovanie").wait_for(timeout=15000)
+            time.sleep(1.5)
+            # píše do poľa na odkazy → okno ostane, odkaz sa len zachytí
+            s.locator("textarea").first.click()
+            schr.write_text("https://webshare.cz/#/file/okno1/Diel.1.rar", encoding="utf-8")
+            o.cakaj(lambda st: len(st["zachytene"]) == 1, 10)
+            time.sleep(1.5)
+            skontroluj("pri písaní v Komete sa okno neprepne", s.get_by_role("heading", name="Sťahovanie").count() == 1)
+            s.locator("body").click(position={"x": 5, "y": 5})
+            s.evaluate("document.activeElement && document.activeElement.blur()")
+            schr.write_text("https://webshare.cz/#/file/okno2/Diel.2.rar\nHeslo: x", encoding="utf-8")
+            s.get_by_role("heading", name="Zo schránky").wait_for(timeout=10000)
+            nova = s.locator("li.nova")
+            skontroluj("po zachytení sa okno prepne na Zo schránky a nový odkaz zvýrazní",
+                       nova.count() == 1 and "Diel.2.rar" in nova.first.inner_text(), nova.count())
+            s.get_by_role("switch", name="Ukázať zachytené odkazy").click()
+            o.cakaj(lambda st: o.data("init")["nastavenia"].get("strazca_ukazat") is False, 10)
+            s.get_by_role("button", name="Sťahovanie").first.click()
+            schr.write_text("https://webshare.cz/#/file/okno3/Diel.3.rar", encoding="utf-8")
+            o.cakaj(lambda st: len(st["zachytene"]) == 3, 10)
+            time.sleep(1.5)
+            skontroluj("vypnuté „Ukázať zachytené odkazy“: okno ostane", s.get_by_role("heading", name="Sťahovanie").count() == 1)
+            b.close()
+    finally:
+        o.zatvor()
+
+
 def kurzy(out: Path):
     print("Kurzy po prihlásení")
     pr = D / "prehliadac"
@@ -1398,6 +1442,7 @@ def main() -> int:
         ytdlp_bez_ffmpeg(out)
         ytdlp_plny(out)
         strazca(out)
+        strazca_okno()
         kurzy(out)
         if sys.platform.startswith("linux"):
             doinstalovanie()

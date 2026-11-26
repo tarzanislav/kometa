@@ -146,6 +146,8 @@ export interface Nastavenia {
   po_rozbaleni?: 'nechat' | 'kos'
   strazca?: boolean
   strazca_rezim?: 'zachytit' | 'stiahnut'
+  /** po zachytení prepnúť na kartu Zo schránky */
+  strazca_ukazat?: boolean
   strazca_format?: string
 }
 

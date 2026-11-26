@@ -31,6 +31,8 @@ export const app = $state({
   toasty: [] as Toast[],
   systemNoc: nocSystem.matches,
   spojenie: true,
+  /** práve zachytené odkazy zo schránky (karta ich zvýrazní) */
+  noveZoSchranky: [] as string[],
 })
 
 nocSystem.addEventListener('change', (e) => (app.systemNoc = e.matches))
@@ -69,11 +71,32 @@ export async function nastav(zmeny: Partial<Nastavenia>): Promise<void> {
   if (ulozene) app.nastavenia = ulozene
 }
 
+// Odkazy zo schránky: keď pribudnú nové, okno sa prepne na kartu Zo schránky priamo k nim
+// (dá sa vypnúť). Nie počas otvoreného dialógu ani keď človek práve píše do poľa v Komete.
+let znameZachytene: Set<string> | null = null
+function sledujSchranku(s: Stav): void {
+  const ids = (s.zachytene ?? []).map((z) => z.id)
+  if (znameZachytene === null) {
+    znameZachytene = new Set(ids) // prvé načítanie: to, čo už bolo zachytené, nie je nové
+    return
+  }
+  const nove = ids.filter((id) => !znameZachytene!.has(id))
+  znameZachytene = new Set(ids)
+  if (!nove.length) return
+  app.noveZoSchranky = nove
+  const a = document.activeElement
+  const pise = a instanceof HTMLElement && (a.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))
+  if ((app.nastavenia?.strazca_ukazat ?? true) && !app.dialog && !(pise && document.hasFocus())) {
+    app.stranka = 'schranka'
+  }
+}
+
 let casovac = 0
 export async function obnovovat(): Promise<void> {
   clearTimeout(casovac)
   try {
     app.stav = await volaj<Stav>('stav')
+    sledujSchranku(app.stav)
     app.spojenie = true
   } catch {
     app.spojenie = false
