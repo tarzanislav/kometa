@@ -28,9 +28,34 @@ jobs:
       - name: Zostavenie
         shell: bash
         run: cd jadro && cargo build --release --locked
+      - name: Spúšťač na dvojklik (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p skuska
+          cp target/release/kometa.exe skuska/
+          printf '%s\r\n' \
+            '@echo off' \
+            'chcp 65001 >nul' \
+            'cd /d "%~dp0"' \
+            'title Kometa - skuska YouTube' \
+            'echo Skuska vlastneho citania YouTube (Kometa).' \
+            'echo Vloz odkaz na video (prave tlacidlo mysi = vlozit) a stlac Enter.' \
+            ':znova' \
+            'echo.' \
+            'set "odkaz="' \
+            'set /p "odkaz=Odkaz na video YouTube (prazdny Enter = koniec): "' \
+            'if not defined odkaz goto koniec' \
+            'kometa.exe youtube "%odkaz%"' \
+            'goto znova' \
+            ':koniec' \
+            'pause' > skuska/Skuska-YouTube.bat
+      - name: Súbor na skúšku (macOS, Linux)
+        if: runner.os != 'Windows'
+        run: mkdir -p skuska && cp target/release/kometa skuska/
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: kometa-skuska-${{ matrix.nazov }}
-          path: target/release/${{ matrix.subor }}
+          path: skuska/
           retention-days: 14
           if-no-files-found: error
