@@ -63,6 +63,10 @@ pub const METODY: &[&str] = &[
     "kurz_otvorit",
     "kurz_nacitat",
     "kurz_stiahnut",
+    "kurz_zalozky",
+    "kurz_zalozka_ulozit",
+    "kurz_zalozka_zmazat",
+    "kurz_prihlasit",
     "subory_na_zmazanie",
     "zmazat_subory",
     "pozastavit_vsetko",
@@ -401,6 +405,42 @@ impl Sluzba {
                 }
                 v.prostredie.prehliadac_otvor(&url).map_err(chyba)?;
                 Value::Null
+            }
+            "kurz_zalozky" => kurzy::zalozky_pre_okno(),
+            "kurz_zalozka_ulozit" => {
+                let z: kurzy::Zalozka = arg(a, 0)?;
+                let heslo = arg::<Option<String>>(a, 1)?;
+                kurzy::uloz_zalozku(z, heslo.as_deref()).map_err(chyba)?;
+                kurzy::zalozky_pre_okno()
+            }
+            "kurz_zalozka_zmazat" => {
+                kurzy::zmaz_zalozku(&arg::<String>(a, 0)?).map_err(chyba)?;
+                kurzy::zalozky_pre_okno()
+            }
+            "kurz_prihlasit" => {
+                let (adresa, _) = v
+                    .prostredie
+                    .prehliadac_stranka()
+                    .ok_or_else(|| chyba("Prehliadač kurzov nie je otvorený – otvor stránku zo záložky."))?;
+                let z = kurzy::zalozka_pre_stranku(&adresa)
+                    .ok_or_else(|| chyba("Pre túto stránku nemáš uložené prihlásenie."))?;
+                let host = kurzy::hostitel(&z.adresa).unwrap_or_default();
+                let heslo = ucty::heslo(&kurzy::sluzba_hesla(&host), &z.meno)
+                    .ok_or_else(|| chyba("Pre túto stránku nemáš uložené heslo."))?;
+                let js = kurzy::skript_prihlasenia(&host, &z.meno, &heslo);
+                let v2 = v.clone();
+                let t = tokio::task::spawn_blocking(move || v2.prostredie.prehliadac_skript(&js))
+                    .await
+                    .map_err(|_| chyba("Stránka neodpovedá."))?
+                    .map_err(chyba)?;
+                let r: Value = serde_json::from_str(&t)
+                    .ok()
+                    .map(|x: Value| match x {
+                        Value::String(s) => serde_json::from_str(&s).unwrap_or(Value::Null),
+                        x => x,
+                    })
+                    .unwrap_or(Value::Null);
+                json!({"meno": r["meno"] == true, "heslo": r["heslo"] == true, "ina_stranka": r["chyba"] == "ina-stranka"})
             }
             "kurz_nacitat" => {
                 let v2 = v.clone();

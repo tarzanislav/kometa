@@ -129,9 +129,11 @@ Odkazy skopírované naraz (napr. všetky diely z fóra) sú pod spoločným nad
 
 ### Kurzy (aplikácia)
 Pre kurzy, na ktoré si prihlásený:
-1. V karte *Kurzy* zadaj adresu portálu a klikni na **Otvoriť prehliadač**. Otvorí sa okno Komety s bežným prehliadačom – prihlás sa a prejdi na stránku kurzu so zoznamom lekcií.
-2. Klikni na **Načítať lekcie z tejto stránky**. Kometa ukáže lekcie zoskupené podľa kapitol tak, ako sú na stránke; lekcie kurzu sú predvybrané, odkazy z menu a päty nie.
-3. Uprav názov priečinka alebo lekcií, vyber formát a klikni na **Stiahnuť**. Lekcie sa uložia ako `Kurz/01 Kapitola/01 Lekcia.mp4`.
+1. V karte *Kurzy* klikni na stránku v **Moje stránky s kurzami** (alebo zadaj adresu a klikni na **Otvoriť prehliadač**). Otvorí sa okno Komety s bežným prehliadačom – prihlás sa a prejdi na stránku kurzu so zoznamom lekcií.
+2. Klikni na **Načítať lekcie z tejto stránky**. Kometa ukáže lekcie zoskupené podľa kapitol tak, ako sú na stránke, aj s dĺžkou. Lekcie poznáva podľa osnovy kurzu (zoznam lekcií s dĺžkami, napr. v bočnom paneli); odkazy z menu a päty stránky (iné kurzy, archívy, bonusy) sú zvlášť, zbalené a nikdy sa neoznačia samy. **Materiály** (PDF, prezentácie, archívy) sú pri kapitolách.
+3. **Označiť všetky kapitoly a materiály** vyberie celý kurz jedným klikom (alebo *Len odporúčané*, *Zrušiť výber*). Uprav názov priečinka alebo lekcií, vyber formát a klikni na **Stiahnuť**. Lekcie sa uložia ako `Kurz/01 Kapitola/01 Lekcia.mp4`, materiály so svojou príponou (`01 Skratky.pdf`).
+
+**Moje stránky s kurzami:** ulož si portály, kde máš kúpené kurzy (*Pridať stránku*, pri otvorenom prehliadači *Pridať otvorenú stránku*). K stránke môžeš uložiť prihlasovacie meno a heslo – heslo ide do trezoru systému (vo Windows Správca poverení, v macOS Kľúčenka, v Linuxe Secret Service), nie do súborov Komety. Na prihlasovacej stránke ho vyplní tlačidlo **Vyplniť prihlásenie** (pri otvorení záložky aj samo) – len na doméne tej stránky, a prihlásiť sa klikneš ty.
 
 Prihlásenie (cookies) sa vezme z okna prehliadača, drží sa len v pamäti a pošle sa iba stránke kurzu – nie vloženým prehrávačom iných služieb. Okno prehliadača nemá žiadny prístup k jadru Komety. Video chránené DRM Kometa nestiahne a pri lekcii to napíše.
 

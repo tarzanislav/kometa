@@ -85,6 +85,28 @@ FALOSNY_YTDLP = b"#!/bin/sh\necho 2099.01.01\n" + b"#" * 4096
 FALOSNE_DENO = b"#!/bin/sh\necho deno 2.5.6\n"
 # vydania pomocníkov na „GitHube“: verzie a Deno v ZIP (súčet vo formáte PowerShellu)
 GH = {"ytdlp": "2099.01.01", "deno": "v2.5.6"}
+LMS_STRANKA = """<html><head><title>Online kurz AI Grafika | Akadémia</title></head><body>
+<header><nav class="main-menu"><a href="/">Home</a><a href="/moje-bonusy">Moje bonusy</a>
+<a href="/kategoria/tituly/">Online Profesijné Tituly archívy</a><a href="/kategoria/administracia/">Administrácia IT archívy</a></nav></header>
+<main><h1>Online kurz AI Grafika, Dizajn a Multimédia</h1>
+<iframe src="https://player.vimeo.com/video/1"></iframe>
+<a class="tl" href="/portal/lms/ai-v-adobe">Pokračovať na ďalšiu časť</a>
+<div class="taby"><a href="/portal/lms/prehlad">Prehľad</a><a href="/portal/lms/materialy">Materiály</a><a href="/portal/lms/ulohy">Domáce úlohy</a></div>
+<h2>Materiály</h2><p><a href="/kurz/material/skratky.pdf">Klávesové skratky (PDF)</a></p></main>
+<aside class="osnova">
+<section><h3>I. Základy AI grafiky</h3><ul>
+<li><a href="/portal/lms/ako-funguje">Ako funguje AI grafika?</a> <span>23:10</span></li>
+<li><a href="/portal/lms/ai-v-adobe">AI grafika v Adobe</a> <span>20 minút</span></li>
+<li><a href="/portal/lms/firefly">Ako používať Adobe Firefly</a> <span>02:14:15</span></li></ul></section>
+<section><h3>II. AI nástroje ChatGPT a DALL·E</h3><ul>
+<li><a href="/portal/lms/zorientovat">Ako sa zorientovať</a> <span>01:03:14</span></li>
+<li><a href="/portal/lms/dalle">Obrázky v DALL·E</a> <span>35:57</span></li></ul></section></aside>
+<footer><a href="/o-nas">O nás</a><a href="/kontakt">Kontakt</a><a href="/subory/vop.pdf">Obchodné podmienky</a></footer>
+</body></html>"""
+PRIHLASENIE_STRANKA = """<html><body><form action="/portal/hotovo" method="post">
+<input id="hladat" type="search" name="q"><label>E-mail <input id="email" type="text" name="email" autocomplete="username"></label>
+<label>Heslo <input id="pass" type="password" name="password"></label><button>Prihlásiť</button></form></body></html>"""
+MATERIAL_PDF = b"%PDF-1.4\n% material kurzu\n" + bytes(range(256)) * 40
 
 
 def deno_zip() -> bytes:
@@ -241,10 +263,16 @@ class Server(http.server.SimpleHTTPRequestHandler):
             return self.posli(200, ARCHIVY[u.path.rsplit("/", 1)[1]], "application/octet-stream")
         if u.path == "/oembed":
             return self.posli(200, json.dumps({"title": "Pieseň o kométe", "author_name": "Kanál"}), "application/json")
+        if u.path.startswith("/portal/lms/"):
+            return self.posli(200, LMS_STRANKA)
+        if u.path == "/portal/prihlasenie":
+            return self.posli(200, PRIHLASENIE_STRANKA)
         if u.path.startswith("/kurz/"):
             prihlaseny = "sid=tajne" in (self.headers.get("Cookie") or "")
             if not prihlaseny:
                 return self.posli(403, "<p>Prihlás sa</p>")
+            if u.path == "/kurz/material/skratky.pdf":
+                return self.posli(200, MATERIAL_PDF, "application/pdf")
             if u.path == "/kurz/lekcia-1":
                 return self.posli(200, f'<html><h1>Úvod</h1><video src="{BASE}/media/a.mp4"></video></html>')
             if u.path == "/kurz/lekcia-2":
@@ -852,6 +880,7 @@ def kurzy(out: Path):
                    and (d / "02 Ďalej" / "01 Pokračovanie (premenované).mp4").exists(),
                    [(x["nazov"], x["stav"], x["chyba"]) for x in s["polozky"]])
         skontroluj("prihlásenie neodišlo na cudziu doménu (vložené video)", not UNIKY, UNIKY)
+        kurzy_zalozky_a_osnova(o, pr, out)
     finally:
         o.zatvor()
     o2 = Okno(D / "cfg-kurz2")
@@ -860,6 +889,78 @@ def kurzy(out: Path):
                    and not o2.volaj("kurz_otvorit", "https://example.com")["ok"])
     finally:
         o2.zatvor()
+
+
+def kurzy_zalozky_a_osnova(o: Okno, pr: Path, out: Path):
+    """Záložky stránok s kurzami, prihlásenie v trezore a jeho vyplnenie; osnova v ozajstnom prehliadači."""
+    heslo = 'tajné "heslo"'
+    z = o.data("kurz_zalozka_ulozit", {"id": "", "nazov": "", "adresa": BASE.replace("http://", "") + "/kurz/obsah",
+                                       "meno": "ja@example.sk"}, heslo)
+    skontroluj("záložka stránky s kurzami s uloženým prihlásením", len(z) == 1 and z[0]["nazov"] == "127.0.0.1"
+               and z[0]["s_heslom"] and z[0]["meno"] == "ja@example.sk" and z[0]["host"] == "127.0.0.1", z)
+    subor = (D / "cfg-kurz" / "kurzy.json").read_text(encoding="utf-8")
+    skontroluj("heslo nie je v súbore so záložkami", "tajné" not in subor and "heslo" not in json.loads(subor)["zalozky"][0],
+               subor)
+    z = o.data("kurz_zalozka_ulozit", dict(z[0], nazov="Môj portál"), None)
+    skontroluj("úprava záložky bez hesla heslo nechá", z[0]["nazov"] == "Môj portál" and z[0]["s_heslom"], z)
+    (pr / "prihlasenie.json").write_text(json.dumps({"meno": True, "heslo": True}))
+    o.data("kurz_otvorit", BASE + "/portal/prihlasenie")
+    r = o.data("kurz_prihlasit")
+    js = (pr / "skript.js").read_text(encoding="utf-8")
+    skontroluj("vyplnenie prihlásenia pre otvorenú stránku", r["meno"] and r["heslo"] and "kometaPrihlasenie" in js
+               and json.dumps("ja@example.sk") in js, r)
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print("Kurzy v prehliadači: Playwright nie je nainštalovaný – preskakujem")
+        sync_playwright = None
+    if sync_playwright:
+        with sync_playwright() as p:
+            b = p.chromium.launch()
+            s = b.new_page()
+            s.goto(BASE + "/portal/prihlasenie")
+            r = s.evaluate(js)
+            hodnoty = s.evaluate("['#email', '#pass', '#hladat'].map((x) => document.querySelector(x).value)")
+            skontroluj("prihlasovací formulár: meno aj heslo vyplnené, nič iné a nič neodoslané",
+                       r == {"meno": True, "heslo": True} and hodnoty == ["ja@example.sk", heslo, ""]
+                       and s.url.endswith("/portal/prihlasenie"), (r, hodnoty))
+            s.goto(BASE.replace("127.0.0.1", "localhost") + "/portal/prihlasenie")
+            r2 = s.evaluate(js)
+            skontroluj("na inej stránke sa prihlásenie nevyplní",
+                       r2.get("chyba") == "ina-stranka" and s.evaluate("document.querySelector('#pass').value") == "", r2)
+            # zberový skript na stránke lekcie v štýle LMS: osnova s dĺžkami, menu s inými kurzami
+            o.data("kurz_nacitat")
+            zber_js = (pr / "skript.js").read_text(encoding="utf-8")
+            s.goto(BASE + "/portal/lms/ako-funguje")
+            (pr / "zber.json").write_text(json.dumps(s.evaluate(zber_js)))
+            b.close()
+        k = o.data("kurz_nacitat")
+        prehlad = [(x["nazov"], x.get("menu", False), [(l["nazov"], l["odporucana"], l.get("material", False))
+                                                      for l in x["lekcie"]]) for x in k["kapitoly"]]
+        skontroluj("osnova kurzu: lekcie s dĺžkami, materiál, menu a päta zvlášť a neoznačené", prehlad == [
+            ("I. Základy AI grafiky", False, [("Ako funguje AI grafika?", True, False), ("AI grafika v Adobe", True, False),
+                                              ("Ako používať Adobe Firefly", True, False)]),
+            ("II. AI nástroje ChatGPT a DALL·E", False, [("Ako sa zorientovať", True, False), ("Obrázky v DALL·E", True, False)]),
+            ("Materiály", False, [("Klávesové skratky (PDF)", True, True)]),
+            ("Online kurz AI Grafika, Dizajn a Multimédia", False,
+             [("Prehľad", False, False), ("Materiály", False, False), ("Domáce úlohy", False, False)]),
+            ("Odkazy z menu a päty stránky", True,
+             [("Moje bonusy", False, False), ("Online Profesijné Tituly archívy", False, False),
+              ("Administrácia IT archívy", False, False), ("O nás", False, False), ("Obchodné podmienky", False, True)]),
+        ] and [l["dlzka"] for x in k["kapitoly"][:2] for l in x["lekcie"]]
+            == ["23:10", "20 min", "02:14:15", "01:03:14", "35:57"], prehlad)
+        material = dict(k, kapitoly=[x for x in k["kapitoly"] if x["nazov"] == "Materiály"])
+        o.data("kurz_stiahnut", material, "video")
+        s = o.cakaj(lambda s: any("skratky.pdf" in x["url"] and x["stav"] in ("hotovo", "chyba") for x in s["polozky"]), 30)
+        q = next(x for x in s["polozky"] if "skratky.pdf" in x["url"])
+        f = next(iter(out.glob(f"*/{q.get('subor') or '-'}")), out / "-")
+        skontroluj("materiál kurzu stiahnutý s prihlásením a so svojou príponou",
+                   q["stav"] == "hotovo" and f.name == "01 Klávesové skratky (PDF).pdf" and f.is_file()
+                   and f.read_bytes() == MATERIAL_PDF, q)
+    z = o.data("kurz_zalozka_zmazat", z[0]["id"])
+    z2 = o.data("kurz_zalozka_ulozit", {"id": "", "nazov": "", "adresa": BASE + "/kurz/obsah", "meno": "ja@example.sk"}, None)
+    skontroluj("odstránená záložka zmaže aj heslo z trezoru", z == [] and not z2[0]["s_heslom"], (z, z2))
+    o.data("kurz_zalozka_zmazat", z2[0]["id"])
 
 
 def doinstalovanie():

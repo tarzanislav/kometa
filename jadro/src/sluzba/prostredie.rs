@@ -121,8 +121,17 @@ impl Prostredie for Systemove {
         Some((a, "Skúška".into()))
     }
 
-    fn prehliadac_skript(&self, _js: &str) -> Result<String, String> {
-        let f = skuska_prehliadaca("zber.json").ok_or("Prehliadač kurzov nie je otvorený.")?;
+    fn prehliadac_skript(&self, js: &str) -> Result<String, String> {
+        // skúška: skript sa uloží (skúška ho spustí v ozajstnom prehliadači), odpoveď je zo súboru
+        if let Some(f) = skuska_prehliadaca("skript.js") {
+            let _ = std::fs::write(f, js);
+        }
+        let subor = if js.contains("kometaPrihlasenie") {
+            "prihlasenie.json"
+        } else {
+            "zber.json"
+        };
+        let f = skuska_prehliadaca(subor).ok_or("Prehliadač kurzov nie je otvorený.")?;
         std::fs::read_to_string(f).map_err(|e| e.to_string())
     }
 

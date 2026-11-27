@@ -79,11 +79,27 @@ export interface Lekcia {
   url: string
   nazov: string
   odporucana?: boolean
+  /** materiál na stiahnutie (PDF, prezentácia, archív…) */
+  material?: boolean
+  /** dĺžka, ako ju ukazuje stránka */
+  dlzka?: string
 }
 
 export interface Kapitola {
   nazov: string
   lekcie: Lekcia[]
+  /** odkazy z menu a päty stránky – nie sú súčasťou kurzu */
+  menu?: boolean
+}
+
+/** Stránka s kurzami (heslo je v trezore systému, okno vidí len či je uložené). */
+export interface Zalozka {
+  id: string
+  nazov: string
+  adresa: string
+  meno: string
+  host?: string | null
+  s_heslom?: boolean
 }
 
 export interface Kurz {
