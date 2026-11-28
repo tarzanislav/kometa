@@ -11,6 +11,7 @@ pub mod jazyky;
 pub mod kurzy;
 pub mod nastavenia;
 pub mod nastroje;
+pub mod osnova;
 pub mod pomocnici;
 pub mod prostredie;
 pub mod server;
@@ -67,6 +68,9 @@ pub const METODY: &[&str] = &[
     "kurz_zalozka_ulozit",
     "kurz_zalozka_zmazat",
     "kurz_prihlasit",
+    "kurz_prejst",
+    "kurz_prechod",
+    "kurz_prechod_zastavit",
     "subory_na_zmazanie",
     "zmazat_subory",
     "pozastavit_vsetko",
@@ -406,6 +410,37 @@ impl Sluzba {
                 v.prostredie.prehliadac_otvor(&url).map_err(chyba)?;
                 Value::Null
             }
+            "kurz_prejst" => {
+                if !v.prostredie.ma_prehliadac() {
+                    return Err(chyba("Prechod osnovy je len v aplikácii (okno prehliadača kurzov)."));
+                }
+                if v.prostredie.prehliadac_stranka().is_none() {
+                    return Err(chyba("Prehliadač kurzov nie je otvorený – otvor stránku kurzu."));
+                }
+                if !osnova::zacni() {
+                    return Err(chyba("Prechod osnovy už beží."));
+                }
+                let nazov = arg::<String>(a, 0).unwrap_or_default();
+                let v2 = v.clone();
+                tokio::task::spawn_blocking(move || {
+                    let r = osnova::prejdi(
+                        &|js| v2.prostredie.prehliadac_skript(js),
+                        &std::thread::sleep,
+                        if nazov.trim().is_empty() { "Kurz" } else { nazov.trim() },
+                    );
+                    if let Ok(k) = &r {
+                        let lekcii: usize = k.kapitoly.iter().map(|x| x.lekcie.len()).sum();
+                        v2.zapis(format!("🎓 Prechod osnovy: {lekcii} lekcií a materiálov"));
+                    }
+                    osnova::skonci(r);
+                });
+                Value::Null
+            }
+            "kurz_prechod" => json!({"stav": osnova::stav(), "kurz": osnova::vysledok()}),
+            "kurz_prechod_zastavit" => {
+                osnova::zastav();
+                Value::Null
+            }
             "kurz_zalozky" => kurzy::zalozky_pre_okno(),
             "kurz_zalozka_ulozit" => {
                 let z: kurzy::Zalozka = arg(a, 0)?;
@@ -483,11 +518,15 @@ impl Sluzba {
                     *v.prihlasenia.lock().unwrap() = cookies;
                 }
                 let nove = kurzy::polozky(&k, &v.priecinok_vystupu(), &preset);
+                let texty = kurzy::uloz_texty(&k, &v.priecinok_vystupu());
                 let pocet = nove.len();
                 let n = v.fronta.lock().unwrap().pridaj(nove).len();
                 v.naplanuj();
                 v.zapis(format!("🎓 Kurz „{}“: {n} lekcií do sťahovania", k.nazov));
-                json!({"pridane": n, "uz_vo_fronte": pocet - n})
+                if texty > 0 {
+                    v.zapis(format!("🎓 Kurz „{}“: uložené texty a testy lekcií: {texty}", k.nazov));
+                }
+                json!({"pridane": n, "uz_vo_fronte": pocet - n, "texty": texty})
             }
             "rozpoznat" => Value::Array(
                 zdroje::odkazy(&arg::<String>(a, 0)?)

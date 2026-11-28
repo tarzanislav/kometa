@@ -6,7 +6,7 @@
   import { volaj } from '../lib/api'
   import { app, skus, toast } from '../lib/app.svelte'
   import { pocet } from '../lib/format'
-  import type { Kurz, Zalozka } from '../lib/typy'
+  import type { Kurz, PrechodOsnovy, Zalozka } from '../lib/typy'
   import Ikona from '../components/Ikona.svelte'
 
   let adresa = $state('')
@@ -156,6 +156,64 @@
     vybrane = new Set(k.kapitoly.flatMap((x) => x.lekcie.filter((l) => l.odporucana).map((l) => l.url)))
   }
 
+  // ---- prechod osnovy: lekcie, ktoré sa otvárajú kliknutím na tej istej stránke ----
+  let prechod = $state<PrechodOsnovy | null>(null)
+  let casovacPrechodu = 0
+  // načítané lekcie (bez materiálov a menu) vs. riadky osnovy na stránke
+  const nacitanychLekcii = $derived(
+    kurz?.kapitoly.filter((k) => !k.menu).flatMap((k) => k.lekcie.filter((l) => l.odporucana && !l.material)).length ?? 0,
+  )
+  const chybajuLekcie = $derived(
+    !!kurz && !kurz.kapitoly.some((k) => k.lekcie.some((l) => l.druh)) && (kurz.riadkov_osnovy ?? 0) > nacitanychLekcii + 1,
+  )
+
+  async function sledujPrechod() {
+    clearTimeout(casovacPrechodu)
+    const r = await skus<{ stav: PrechodOsnovy; kurz: Kurz | null }>('kurz_prechod')
+    if (!r) return
+    prechod = r.stav
+    if (r.stav.bezi) {
+      casovacPrechodu = window.setTimeout(sledujPrechod, 700)
+      return
+    }
+    if (r.stav.chyba) {
+      toast(r.stav.chyba, 'chyba')
+      return
+    }
+    if (r.kurz) {
+      const stary = kurz
+      kurz = { ...r.kurz, nazov: stary?.nazov || r.kurz.nazov }
+      // materiály z bežného načítania (záložka Materiály) ostanú
+      const materialy = (stary?.kapitoly ?? []).filter((k) => !k.menu && k.lekcie.every((l) => l.material))
+      if (materialy.length) kurz.kapitoly = [...kurz.kapitoly, ...materialy]
+      vybrane = new Set(kurz.kapitoly.flatMap((x) => x.lekcie.filter((l) => l.odporucana).map((l) => l.url)))
+      const n = kurz.kapitoly.flatMap((k) => k.lekcie).filter((l) => l.druh && l.druh !== 'material').length
+      toast(`Osnova je prejdená: ${pocet(n, 'lekcia', 'lekcie', 'lekcií')}.`, 'ok')
+    }
+  }
+
+  async function prejst() {
+    const nazov = kurz?.nazov ?? prehliadac?.titulok ?? ''
+    if ((await skus('kurz_prejst', nazov)) === undefined) return
+    prechod = { bezi: true, hotovo: 0, celkom: 0, lekcia: '', chyba: '', hotovy: false }
+    sledujPrechod()
+  }
+
+  async function zastavitPrechod() {
+    await skus('kurz_prechod_zastavit')
+  }
+
+  // adresa pri lekcii: pri videu z prechodu prehrávač, inak stránka (bez vnútornej značky Komety)
+  const adresaLekcie = (l: { url: string; zdroj?: string }) => l.zdroj || l.url.replace(/#kometa-lekcia-\d+$/, '')
+
+  const DRUHY: Record<string, string> = {
+    video: 'Video',
+    text: 'Text',
+    test: 'Test',
+    material: 'Materiál',
+    nezistene: 'Nedá sa otvoriť',
+  }
+
   function prepni(url: string) {
     const s = new Set(vybrane)
     if (s.has(url)) s.delete(url)
@@ -181,9 +239,13 @@
         .map((k) => ({ nazov: k.nazov, lekcie: k.lekcie.filter((l) => vybrane.has(l.url)) }))
         .filter((k) => k.lekcie.length),
     }
-    const r = await skus<{ pridane: number; uz_vo_fronte: number }>('kurz_stiahnut', vyber, format)
+    const r = await skus<{ pridane: number; uz_vo_fronte: number; texty?: number }>('kurz_stiahnut', vyber, format)
     if (!r) return
-    toast(`Do sťahovania: ${pocet(r.pridane, 'lekcia', 'lekcie', 'lekcií')}.`, 'ok')
+    toast(
+      `Do sťahovania: ${pocet(r.pridane, 'lekcia', 'lekcie', 'lekcií')}.` +
+        (r.texty ? ` Uložené texty a testy: ${r.texty}.` : ''),
+      'ok',
+    )
     app.stranka = 'stahovanie'
   }
 </script>
@@ -309,10 +371,38 @@
         <Ikona meno="web" velkost={16} />
         <span><strong>{prehliadac.titulok || 'Stránka'}</strong> <span class="tlmene vyber-text">{prehliadac.adresa}</span></span>
       </p>
-      <button class="tl" onclick={nacitat} disabled={nacitava}>
-        <Ikona meno="hladat" velkost={16} />
-        {nacitava ? 'Načítavam…' : 'Načítať lekcie z tejto stránky'}
-      </button>
+      <div class="nacitanie">
+        <button class="tl" onclick={nacitat} disabled={nacitava || !!prechod?.bezi}>
+          <Ikona meno="hladat" velkost={16} />
+          {nacitava ? 'Načítavam…' : 'Načítať lekcie z tejto stránky'}
+        </button>
+        <button class="tl" class:hlavne={chybajuLekcie} onclick={prejst} disabled={nacitava || !!prechod?.bezi}>
+          <Ikona meno="playlist" velkost={16} /> Prejsť lekcie v osnove
+        </button>
+      </div>
+      <p class="male tlmene">
+        <strong>Prejsť lekcie v osnove</strong> – pre portály, kde sa lekcie otvárajú kliknutím na tej istej stránke. Kometa
+        v okne prehliadača postupne otvorí každú lekciu a zapíše si video, text, test aj materiály (pár sekúnd na lekciu;
+        stránka si ich môže označiť ako pozreté).
+      </p>
+      {#if chybajuLekcie && !prechod?.bezi}
+        <p class="upozornenie" role="status">
+          Osnova na stránke má {pocet(kurz?.riadkov_osnovy ?? 0, 'lekciu', 'lekcie', 'lekcií')}, ako samostatné odkazy je z nich
+          len {nacitanychLekcii}. Lekcie sa tu otvárajú kliknutím – klikni na <strong>Prejsť lekcie v osnove</strong>.
+        </p>
+      {/if}
+      {#if prechod?.bezi}
+        <div class="prechod" role="status">
+          <div class="prechod-text">
+            <span>
+              Prechádzam lekcie: <strong class="cisla">{prechod.hotovo + 1} z {prechod.celkom || '…'}</strong>
+              {#if prechod.lekcia}<span class="tlmene"> – {prechod.lekcia}</span>{/if}
+            </span>
+            <button class="tl tiche" onclick={zastavitPrechod}>Zastaviť</button>
+          </div>
+          <progress max={prechod.celkom || 1} value={prechod.hotovo}></progress>
+        </div>
+      {/if}
     {:else}
       <p class="tlmene">Prehliadač je zatvorený – otvor ho v kroku 1.</p>
     {/if}
@@ -380,9 +470,10 @@
                   <span class="lekcia">
                     <input class="pole male-pole" bind:value={l.nazov} aria-label="Názov lekcie" />
                     <span class="tlmene male adresa-lekcie">
+                      {#if l.druh && l.druh !== 'material'}<span class="stitok druh-{l.druh}">{DRUHY[l.druh] ?? l.druh}</span>{/if}
                       {#if l.material}<span class="stitok">Materiál</span>{/if}
                       {#if l.dlzka}<span class="cisla">{l.dlzka}</span> ·{/if}
-                      {l.url}
+                      {adresaLekcie(l)}
                     </span>
                   </span>
                 </li>
@@ -454,9 +545,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .krok > .tl {
-    justify-self: start;
   }
   .nazov-kurzu {
     max-width: 560px;
@@ -607,6 +695,36 @@
     padding: var(--s2) var(--s3);
     border-radius: var(--r-ctl);
     background: var(--accent-soft);
+  }
+  .nacitanie {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s2);
+  }
+  .upozornenie {
+    padding: var(--s2) var(--s3);
+    border-left: 3px solid var(--warn);
+    border-radius: var(--r-ctl);
+    background: var(--accent-soft);
+  }
+  .prechod {
+    display: grid;
+    gap: var(--s2);
+  }
+  .prechod-text {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s2);
+  }
+  .prechod progress {
+    width: 100%;
+    height: 8px;
+    accent-color: var(--accent);
+  }
+  .druh-nezistene {
+    color: var(--warn);
   }
   .vyber-lekcii {
     display: flex;

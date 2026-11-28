@@ -77,7 +77,11 @@ pub const ZBER_JS: &str = r#"(() => {
   const ramce = [...document.querySelectorAll('iframe[src]')].map((f) => abs(f.getAttribute('src'))).filter(Boolean);
   const videa = [...document.querySelectorAll('video[src],video source[src]')].map((v) => abs(v.getAttribute('src'))).filter(Boolean);
   const h1 = document.querySelector('h1');
-  return { url: location.href, titulok: document.title, h1: h1 ? txt(h1) : '', odkazy, ramce, videa };
+  const kc = /^(?:\d{1,2}:\d{2}(?::\d{2})?|\d{1,3} ?(?:min(?:út|úty|uta|uty|ut)?|mins?|minutes?)\.?)$/i;
+  const bunky = [...document.querySelectorAll('body *')].filter((el) => !el.closest('script,style,noscript,footer')
+    && kc.test((el.textContent || '').replace(/\s+/g, ' ').trim()));
+  const dlzok = bunky.filter((el) => !bunky.some((x) => x !== el && el.contains(x))).length;
+  return { url: location.href, titulok: document.title, h1: h1 ? txt(h1) : '', odkazy, ramce, videa, dlzok };
 })()"#;
 
 #[derive(Debug, Deserialize)]
@@ -93,6 +97,9 @@ pub struct Zber {
     pub ramce: Vec<String>,
     #[serde(default)]
     pub videa: Vec<String>,
+    /// počet dĺžok lekcií na stránke („26:40“, „20 minút“)
+    #[serde(default)]
+    pub dlzok: usize,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -116,7 +123,7 @@ pub struct OdkazZberu {
     pub aktivna: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Lekcia {
     pub url: String,
     pub nazov: String,
@@ -129,6 +136,15 @@ pub struct Lekcia {
     /// dĺžka lekcie, ako ju ukazuje stránka
     #[serde(default)]
     pub dlzka: String,
+    /// z prechodu osnovy: „video“, „text“, „test“, „material“, „nezistene“ (prázdne = stránka)
+    #[serde(default)]
+    pub druh: String,
+    /// adresa prehrávača videa (z prechodu osnovy); prázdna = sťahuje sa stránka lekcie
+    #[serde(default)]
+    pub zdroj: String,
+    /// text alebo test lekcie uložený pri prechode (zapíše sa ako stránka HTML)
+    #[serde(default)]
+    pub obsah_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -148,6 +164,10 @@ pub struct Kurz {
     pub nazov: String,
     pub adresa: String,
     pub kapitoly: Vec<Kapitola>,
+    /// koľko riadkov s dĺžkou (lekcií osnovy) je na stránke – keď ich je viac než načítaných
+    /// lekcií, lekcie sa prepínajú kliknutím a treba prechod osnovy
+    #[serde(default)]
+    pub riadkov_osnovy: usize,
 }
 
 fn bez_hash(u: &str) -> &str {
@@ -275,8 +295,7 @@ pub fn kurz_zo_zberu(z: &Zber) -> Kurz {
                     z.h1.clone()
                 },
                 odporucana: true,
-                material: false,
-                dlzka: String::new(),
+                ..Default::default()
             }],
             menu: false,
         });
@@ -346,6 +365,7 @@ pub fn kurz_zo_zberu(z: &Zber) -> Kurz {
             odporucana,
             material,
             dlzka: o.dlzka.chars().take(20).collect(),
+            ..Default::default()
         });
     }
     // kapitoly s odporúčanými lekciami dopredu, ostatné potom, menu a päta úplne na koniec
@@ -366,6 +386,7 @@ pub fn kurz_zo_zberu(z: &Zber) -> Kurz {
         nazov,
         adresa: z.url.clone(),
         kapitoly,
+        riadkov_osnovy: z.dlzok,
     }
 }
 
@@ -385,7 +406,8 @@ pub fn cookies_pre(v: &Vnutro, url: &str) -> Vec<(String, String)> {
 }
 
 /// Položky frontu pre vybrané lekcie: priečinok kurzu, podpriečinky kapitol, čísla v názvoch.
-pub fn polozky(kurz: &Kurz, vystup: &str, format: &str) -> Vec<Nova> {
+/// Priečinky kapitol (pri jednej kapitole priečinok kurzu) – pre lekcie aj uložené texty.
+fn priecinky<'a>(kurz: &'a Kurz, vystup: &str) -> Vec<(std::path::PathBuf, &'a Kapitola)> {
     let koren = std::path::Path::new(vystup).join(zdroje::bezpecny_nazov(&kurz.nazov, 100));
     let kapitoly: Vec<&Kapitola> = kurz
         .kapitoly
@@ -393,19 +415,60 @@ pub fn polozky(kurz: &Kurz, vystup: &str, format: &str) -> Vec<Nova> {
         .filter(|k| !k.lekcie.is_empty())
         .collect();
     let jedna = kapitoly.len() <= 1;
-    let mut out = vec![];
-    for (ki, k) in kapitoly.iter().enumerate() {
-        let priecinok = if jedna {
-            koren.clone()
-        } else {
-            let meno = if k.nazov.trim().is_empty() {
-                format!("{:02}", ki + 1)
+    kapitoly
+        .into_iter()
+        .enumerate()
+        .map(|(ki, k)| {
+            let p = if jedna {
+                koren.clone()
             } else {
-                format!("{:02} {}", ki + 1, k.nazov.trim())
+                let meno = if k.nazov.trim().is_empty() {
+                    format!("{:02}", ki + 1)
+                } else {
+                    format!("{:02} {}", ki + 1, k.nazov.trim())
+                };
+                koren.join(zdroje::bezpecny_nazov(&meno, 100))
             };
-            koren.join(zdroje::bezpecny_nazov(&meno, 100))
-        };
+            (p, k)
+        })
+        .collect()
+}
+
+/// Text alebo test lekcie z prechodu osnovy (zapíše sa ako stránka HTML, nejde do frontu).
+fn je_text(l: &Lekcia) -> bool {
+    !l.obsah_id.is_empty()
+}
+
+/// Uloží texty a testy lekcií ako stránky HTML do priečinkov kapitol. Vráti počet súborov.
+pub fn uloz_texty(kurz: &Kurz, vystup: &str) -> usize {
+    let mut n = 0;
+    for (priecinok, k) in priecinky(kurz, vystup) {
+        for (li, l) in k.lekcie.iter().enumerate().filter(|(_, l)| je_text(l)) {
+            let Some(html) = super::osnova::obsah(&l.obsah_id) else {
+                continue;
+            };
+            let meno = zdroje::bezpecny_nazov(&format!("{:02} {}", li + 1, l.nazov.trim()), 150);
+            let mut cesta = priecinok.join(format!("{meno}.html"));
+            let mut i = 2;
+            while cesta.exists() {
+                cesta = priecinok.join(format!("{meno} ({i}).html"));
+                i += 1;
+            }
+            if std::fs::create_dir_all(&priecinok).is_ok() && std::fs::write(&cesta, html).is_ok() {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
+pub fn polozky(kurz: &Kurz, vystup: &str, format: &str) -> Vec<Nova> {
+    let mut out = vec![];
+    for (priecinok, k) in priecinky(kurz, vystup) {
         for (li, l) in k.lekcie.iter().enumerate() {
+            if je_text(l) {
+                continue;
+            }
             let mut nazov = format!("{:02} {}", li + 1, l.nazov.trim());
             // materiál si nechá svoju príponu („03 Pracovný list.pdf“)
             if let Some(p) = url::Url::parse(&l.url)
@@ -417,13 +480,19 @@ pub fn polozky(kurz: &Kurz, vystup: &str, format: &str) -> Vec<Nova> {
                     nazov = format!("{nazov}.{p}");
                 }
             }
+            // video z prechodu osnovy: priamo prehrávač, stránka lekcie ako odkiaľ prišiel
+            let (url, referer) = if l.zdroj.is_empty() {
+                (l.url.clone(), kurz.adresa.clone())
+            } else {
+                (l.zdroj.clone(), bez_hash(&l.url).to_string())
+            };
             out.push(Nova {
-                url: l.url.clone(),
+                url,
                 format: format.to_string(),
                 priecinok: priecinok.to_string_lossy().into_owned(),
                 nazov,
                 zdroj: "Kurz".into(),
-                referer: kurz.adresa.clone(),
+                referer,
                 prihlasenie: true,
                 ..Default::default()
             });
@@ -675,6 +744,7 @@ mod testy {
             ],
             ramce: vec![],
             videa: vec![],
+            dlzok: 0,
         };
         let k = kurz_zo_zberu(&z);
         assert_eq!(k.nazov, "AI grafika, dizajn a multimédiá");
@@ -721,6 +791,7 @@ mod testy {
             odkazy: vec![],
             ramce: vec!["https://player.vimeo.com/video/1".into()],
             videa: vec![],
+            dlzok: 0,
         };
         let k = kurz_zo_zberu(&z);
         assert_eq!(k.kapitoly.len(), 1);
@@ -825,6 +896,7 @@ mod testy {
             ],
             ramce: vec![],
             videa: vec![],
+            dlzok: 0,
         };
         let k = kurz_zo_zberu(&z);
         type Riadok<'a> = (&'a str, bool, Vec<(&'a str, bool, bool)>);

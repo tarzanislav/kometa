@@ -122,6 +122,25 @@ impl Prostredie for Systemove {
     }
 
     fn prehliadac_skript(&self, js: &str) -> Result<String, String> {
+        // skúška s „mostom“: skript vykoná ozajstný prehliadač skúšky (súbor požiadavky → odpoveď)
+        if skuska_prehliadaca("most").is_some_and(|m| m.exists()) {
+            static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let dir = skuska_prehliadaca("").ok_or("bez priečinka skúšky")?;
+            let docasny = dir.join(format!("poziadavka-{n}.tmp"));
+            std::fs::write(&docasny, js).map_err(|e| e.to_string())?;
+            std::fs::rename(&docasny, dir.join(format!("poziadavka-{n}.js")))
+                .map_err(|e| e.to_string())?;
+            let odpoved = dir.join(format!("odpoved-{n}.json"));
+            for _ in 0..600 {
+                if let Ok(t) = std::fs::read_to_string(&odpoved) {
+                    let _ = std::fs::remove_file(&odpoved);
+                    return Ok(t);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(30));
+            }
+            return Err("Stránka neodpovedá.".into());
+        }
         // skúška: skript sa uloží (skúška ho spustí v ozajstnom prehliadači), odpoveď je zo súboru
         if let Some(f) = skuska_prehliadaca("skript.js") {
             let _ = std::fs::write(f, js);

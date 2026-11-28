@@ -83,6 +83,22 @@ export interface Lekcia {
   material?: boolean
   /** dĺžka, ako ju ukazuje stránka */
   dlzka?: string
+  /** z prechodu osnovy: video, text, test, material, nezistene */
+  druh?: string
+  /** adresa prehrávača videa (z prechodu osnovy) */
+  zdroj?: string
+  /** text alebo test uložený pri prechode */
+  obsah_id?: string
+}
+
+/** Priebeh prechodu osnovy (Kometa kliká na lekcie v okne prehliadača). */
+export interface PrechodOsnovy {
+  bezi: boolean
+  hotovo: number
+  celkom: number
+  lekcia: string
+  chyba: string
+  hotovy: boolean
 }
 
 export interface Kapitola {
@@ -103,6 +119,8 @@ export interface Zalozka {
 }
 
 export interface Kurz {
+  /** riadky s dĺžkou (lekcie osnovy) na stránke */
+  riadkov_osnovy?: number
   nazov: string
   adresa: string
   kapitoly: Kapitola[]

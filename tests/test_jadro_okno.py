@@ -106,6 +106,32 @@ LMS_STRANKA = """<html><head><title>Online kurz AI Grafika | Akadémia</title></
 PRIHLASENIE_STRANKA = """<html><body><form action="/portal/hotovo" method="post">
 <input id="hladat" type="search" name="q"><label>E-mail <input id="email" type="text" name="email" autocomplete="username"></label>
 <label>Heslo <input id="pass" type="password" name="password"></label><button>Prihlásiť</button></form></body></html>"""
+SPA_STRANKA = """<html><head><title>Kurz – priebeh | Akadémia</title></head><body>
+<header><nav class="menu"><a href="/">Home</a><a href="/moje-kurzy">Moje kurzy</a></nav></header>
+<main><h1>Online kurz AI Nástroje Umelej Inteligencie v Praxi</h1><div id="obsah" class="lesson-content"></div></main>
+<aside class="sidebar">
+<h3>I. Prehľad AI nástrojov a ich praktické využitie</h3>
+<table><tr class="riadok" data-l="0"><td><i class="icon-video"></i> Ako používať AI nástroje Whisper AI a Claude AI?</td><td>26:40</td><td>Videné</td></tr>
+<tr class="riadok" data-l="1"><td><i class="icon-text"></i> Ktoré chatovacie AI nástroje patria medzi najpoužívanejšie</td><td>20<br>minút</td></tr></table>
+<h3>II. Google Gemini AI, používateľské rozhranie a pokročilé funkcie</h3>
+<table><tr class="riadok" data-l="2"><td><i class="icon-video"></i> Ako začať používať Google Gemini AI?</td><td>44:11</td></tr>
+<tr class="riadok" data-l="3"><td><i class="icon-test"></i> Priebežný test</td><td>20 minút</td></tr></table>
+</aside>
+<footer><a href="/o-nas">O nás</a></footer>
+<script>
+const lekcie = [
+  '<iframe src="https://player.vimeo.com/video/111?h=aa" width="640" height="360"></iframe><p>Úvod do nástrojov.</p>',
+  '<h2>Chatovacie nástroje</h2><p>ChatGPT, Claude a Gemini – porovnanie.</p><p><a href="/kurz/material/skratky.pdf">Prehľad nástrojov (PDF)</a></p>',
+  '<iframe src="https://player.vimeo.com/video/222?h=bb" width="640" height="360"></iframe>',
+  '<h2>Priebežný test</h2><form><p>Otázka 1: Čo je prompt?</p><label><input type="radio" name="q1"> Pokyn pre AI</label></form>',
+];
+const ukaz = (i) => {
+  document.getElementById('obsah').innerHTML = lekcie[i];
+  document.querySelectorAll('[data-l]').forEach((r) => r.classList.toggle('active', +r.dataset.l === i));
+};
+document.querySelectorAll('[data-l]').forEach((r) => r.addEventListener('click', () => setTimeout(() => ukaz(+r.dataset.l), 300)));
+ukaz(0);
+</script></body></html>"""
 MATERIAL_PDF = b"%PDF-1.4\n% material kurzu\n" + bytes(range(256)) * 40
 
 
@@ -263,6 +289,8 @@ class Server(http.server.SimpleHTTPRequestHandler):
             return self.posli(200, ARCHIVY[u.path.rsplit("/", 1)[1]], "application/octet-stream")
         if u.path == "/oembed":
             return self.posli(200, json.dumps({"title": "Pieseň o kométe", "author_name": "Kanál"}), "application/json")
+        if u.path == "/portal/spa/course-progress":
+            return self.posli(200, SPA_STRANKA)
         if u.path.startswith("/portal/lms/"):
             return self.posli(200, LMS_STRANKA)
         if u.path == "/portal/prihlasenie":
@@ -957,10 +985,89 @@ def kurzy_zalozky_a_osnova(o: Okno, pr: Path, out: Path):
         skontroluj("materiál kurzu stiahnutý s prihlásením a so svojou príponou",
                    q["stav"] == "hotovo" and f.name == "01 Klávesové skratky (PDF).pdf" and f.is_file()
                    and f.read_bytes() == MATERIAL_PDF, q)
+        prechod_osnovy(o, pr, out)
     z = o.data("kurz_zalozka_zmazat", z[0]["id"])
     z2 = o.data("kurz_zalozka_ulozit", {"id": "", "nazov": "", "adresa": BASE + "/kurz/obsah", "meno": "ja@example.sk"}, None)
     skontroluj("odstránená záložka zmaže aj heslo z trezoru", z == [] and not z2[0]["s_heslom"], (z, z2))
     o.data("kurz_zalozka_zmazat", z2[0]["id"])
+
+
+def prechod_osnovy(o: Okno, pr: Path, out: Path):
+    """Lekcie, ktoré sa prepínajú kliknutím na tej istej stránke: Kometa prejde osnovu v prehliadači."""
+    import threading
+    from playwright.sync_api import sync_playwright
+
+    def na_pozadi(metoda, *args):
+        vysledok = {}
+        t = threading.Thread(target=lambda: vysledok.update(r=o.data(metoda, *args)), daemon=True)
+        t.start()
+        return t, vysledok
+
+    def most(s, kym, limit=90):
+        koniec = time.time() + limit
+        while not kym() and time.time() < koniec:
+            for f in sorted(pr.glob("poziadavka-*.js")):
+                n = f.stem.split("-")[1]
+                js = f.read_text(encoding="utf-8")
+                f.unlink()
+                try:
+                    r = s.evaluate(js)
+                except Exception as e:  # noqa: BLE001 – chyba stránky ide späť ako odpoveď
+                    r = {"chyba": str(e)}
+                (pr / f"odpoved-{n}.tmp").write_text(json.dumps(r), encoding="utf-8")
+                (pr / f"odpoved-{n}.tmp").rename(pr / f"odpoved-{n}.json")
+            time.sleep(0.03)
+
+    adresa = BASE + "/portal/spa/course-progress"
+    (pr / "adresa.txt").write_text(adresa)
+    (pr / "most").write_text("1")
+    try:
+        with sync_playwright() as p:
+            b = p.chromium.launch()
+            s = b.new_page(viewport={"width": 1280, "height": 900})
+            s.goto(adresa)
+            t, r = na_pozadi("kurz_nacitat")
+            most(s, lambda: not t.is_alive())
+            k = r.get("r") or {}
+            skontroluj("bežné načítanie spozná osnovu, ktorá nie je z odkazov (4 riadky s dĺžkou)",
+                       k.get("riadkov_osnovy") == 4, k.get("riadkov_osnovy"))
+            o.data("kurz_prejst", k.get("nazov", ""))
+            most(s, lambda: not o.data("kurz_prechod")["stav"]["bezi"])
+            st = o.data("kurz_prechod")
+            k = st["kurz"] or {}
+            prehlad = [(x["nazov"], [(l["nazov"], l["druh"], l["odporucana"]) for l in x["lekcie"]]) for x in k.get("kapitoly", [])]
+            skontroluj("prechod osnovy: video, text s materiálom a test v kapitolách", prehlad == [
+                ("I. Prehľad AI nástrojov a ich praktické využitie", [
+                    ("Ako používať AI nástroje Whisper AI a Claude AI?", "video", True),
+                    ("Ktoré chatovacie AI nástroje patria medzi najpoužívanejšie", "text", True),
+                    ("Prehľad nástrojov (PDF)", "material", True)]),
+                ("II. Google Gemini AI, používateľské rozhranie a pokročilé funkcie", [
+                    ("Ako začať používať Google Gemini AI?", "video", True),
+                    ("Priebežný test", "test", True)]),
+            ] and st["stav"]["hotovo"] == 4 and not st["stav"]["chyba"], (prehlad, st["stav"]))
+            l = [x for kap in k.get("kapitoly", []) for x in kap["lekcie"]]
+            skontroluj("video lekcie: adresa prehrávača z otvorenej lekcie, dĺžky z osnovy",
+                       [x["zdroj"] for x in l if x["druh"] == "video"]
+                       == ["https://player.vimeo.com/video/111?h=aa", "https://player.vimeo.com/video/222?h=bb"]
+                       and [x["dlzka"] for x in l if x["druh"] != "material"] == ["26:40", "20 minút", "44:11", "20 minút"], l)
+            b.close()
+        # texty, test a materiál (videá Vimea sa v skúške nesťahujú)
+        bez_videi = dict(k, kapitoly=[dict(x, lekcie=[y for y in x["lekcie"] if y["druh"] != "video"]) for x in k["kapitoly"]])
+        r = o.data("kurz_stiahnut", bez_videi, "video")
+        koren = out / "Online kurz AI Nástroje Umelej Inteligencie v Praxi"
+        text = koren / "01 I. Prehľad AI nástrojov a ich praktické využitie" / "01 Ktoré chatovacie AI nástroje patria medzi najpoužívanejšie.html"
+        test = koren / "02 II. Google Gemini AI, používateľské rozhranie a pokročilé funkcie" / "01 Priebežný test.html"
+        skontroluj("text a test lekcie uložené ako stránky HTML v priečinkoch kapitol", r["texty"] == 2 and r["pridane"] == 1
+                   and "ChatGPT, Claude a Gemini" in text.read_text(encoding="utf-8")
+                   and "Otázka 1" in test.read_text(encoding="utf-8") and "<script" not in text.read_text(encoding="utf-8"),
+                   (r, sorted(str(x.relative_to(out)) for x in koren.rglob("*"))) if koren.exists() else r)
+        meno = "02 Prehľad nástrojov (PDF).pdf"
+        s2 = o.cakaj(lambda s: any(x["nazov"] == meno and x["stav"] in ("hotovo", "chyba") for x in s["polozky"]), 30)
+        mat = next((x for x in s2["polozky"] if x["nazov"] == meno), {})
+        skontroluj("materiál z textovej lekcie stiahnutý s prihlásením", mat["stav"] == "hotovo"
+                   and (koren / "01 I. Prehľad AI nástrojov a ich praktické využitie" / "02 Prehľad nástrojov (PDF).pdf").read_bytes() == MATERIAL_PDF, mat)
+    finally:
+        (pr / "most").unlink(missing_ok=True)
 
 
 def doinstalovanie():
