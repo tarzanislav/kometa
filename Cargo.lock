@@ -2473,7 +2473,7 @@ dependencies = [
 
 [[package]]
 name = "kometa-aplikacia"
-version = "2.0.3"
+version = "2.0.4"
 dependencies = [
  "kometa-jadro",
  "serde_json",
@@ -2488,7 +2488,7 @@ dependencies = [
 
 [[package]]
 name = "kometa-jadro"
-version = "2.0.3"
+version = "2.0.4"
 dependencies = [
  "clap",
  "futures-util",

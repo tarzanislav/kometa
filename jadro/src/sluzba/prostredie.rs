@@ -13,6 +13,10 @@ pub trait Prostredie: Send + Sync {
     fn schranka(&self) -> String;
     /// Otvorí priečinok, prípadne v ňom označí súbor.
     fn otvor(&self, priecinok: &Path, oznac: Option<&Path>);
+    /// Otvorí súbor v predvolenej aplikácii (prehľad kurzu v prehliadači).
+    fn spusti_subor(&self, subor: &Path) {
+        otvor_v_systeme(subor);
+    }
 
     /// Dá sa schránka sledovať na pozadí? (Len aplikácia – lacné čítanie schránky.)
     fn sleduje_schranku(&self) -> bool {
@@ -324,6 +328,46 @@ impl Prostredie for Systemove {
                 .stderr(Stdio::null())
                 .spawn();
         }
+    }
+}
+
+/// Otvorí súbor v aplikácii, ktorú má systém preň nastavenú. Pre skúšky
+/// (`KOMETA_SKUSKA_OTVOR`) sa cesta len zapíše do súboru.
+pub fn otvor_v_systeme(subor: &Path) {
+    if let Some(z) = skuska("KOMETA_SKUSKA_OTVOR") {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(z)
+        {
+            let _ = writeln!(f, "{}", subor.display());
+        }
+        return;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = Command::new("explorer.exe")
+            .raw_arg(format!("\"{}\"", subor.display()))
+            .creation_flags(0x0800_0000)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        spusti("open", &[&subor.to_string_lossy()]);
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let _ = Command::new("xdg-open")
+            .arg(subor)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
     }
 }
 

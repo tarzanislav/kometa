@@ -24,7 +24,7 @@ YouTube · Vimeo (aj vložené) · Facebook · Instagram · TikTok (bez vodoznak
 - **Jazykové stopy z YouTube**: z videí s preloženým zvukom stiahne vybrané jazyky a spojí ich s videom do jedného `.mkv` alebo `.mp4`. Predvolené poradie je CZ, SK, EN, PL, HU, RU (zmeníš ho ťahaním) a pôvodná stopa ide na koniec. Pri každom jazyku zvolíš AAC, Opus alebo oboje; stopy idú po jazykoch – CZ (AAC), CZ (Opus), SK (AAC)… Jazyky zvolíš aj pre celý playlist či kanál naraz.
 - **Titulky, kapitoly, údaje o videu a obrázok priamo v súbore** – v MKV aj v MP4, vlastným kódom bez FFmpeg. Titulky ku každému jazyku zvuku, kapitoly z YouTube, názov, autor, dátum, odkaz a popis videa, náhľad ako obrázok súboru; dabing a pôvodný jazyk sú označené (prehrávače a Jellyfin to ukážu).
 - **Automatická aktualizácia:** nová verzia sa stiahne z GitHubu, overí kontrolným súčtom a nainštaluje, keď potvrdíš – inak sama pri ďalšom spustení.
-- Formáty: najlepšia kvalita, MP4 pre TV a mobil, najviac 1080p alebo 720p, MP3, zvuk v pôvodnej kvalite.
+- Formáty: najlepšia kvalita, **Full HD 1080p presne** (keď ho video nemá, najbližšia kvalita), MP4 pre TV a mobil, najviac 1080p alebo 720p, MP3, zvuk v pôvodnej kvalite.
 
 | Jazykové stopy | Nastavenia a témy |
 |---|---|
@@ -117,6 +117,7 @@ Automatickú aktualizáciu vypneš v *Nastaveniach → Aktualizácie*; tam je aj
 - **Archív po stiahnutí:** ZIP, 7z a RAR sa samy rozbalia vedľa archívu. Jediný súbor alebo priečinok z archívu sa dá rovno vedľa neho, viac súborov do priečinka s menom archívu. Zaheslovaný archív si vypýta heslo pri položke (nič sa nesťahuje znova); heslo zadané vopred sa použije aj pre archív. Nič z archívu sa nezapíše mimo cieľového priečinka.
 - **Rozdelené archívy** (`.part1.rar`, `.r00`, `.7z.001`, `.zip.001`): rozbaľuje sa, keď sú stiahnuté všetky časti; dovtedy položka čaká.
 - **Heslá vopred pre veľa súborov naraz:** vo fronte aj v karte *Zo schránky* označ položky (zaškrtávacie políčka, aj „všetko v časti“) a zadaj **jedno heslo pre všetky označené**. Pri jednej položke stačí ikona zámku. Položky s heslom majú štítok *S heslom* – stiahnu sa a rozbalia bez pýtania.
+- **Poradie vo fronte:** označ jednu alebo viac položiek a v lište označených ich presuň **úplne hore**, **vyššie**, **nižšie** alebo **úplne dole**. V časti *V poradí* je to aj poradie sťahovania – čo je vyššie, stiahne sa skôr.
 - **Zabudnuté heslo:** keď archív zadané heslo neprijme alebo heslo chýba, Kometa najprv skúsi heslá, ktoré si zadal pri iných súboroch vo fronte (často má celá skupina jedno heslo). Až keď nesedí žiadne, opýta sa pri položke.
 - V *Nastaveniach → Archívy* vypneš automatické rozbaľovanie (archív potom rozbalíš tlačidlom pri položke) a zvolíš, či archív po rozbalení ostane, alebo pôjde do Koša.
 
@@ -129,10 +130,18 @@ Odkazy skopírované naraz (napr. všetky diely z fóra) sú pod spoločným nad
 
 ### Kurzy (aplikácia)
 Pre kurzy, na ktoré si prihlásený:
-1. V karte *Kurzy* klikni na stránku v **Moje stránky s kurzami** (alebo zadaj adresu a klikni na **Otvoriť prehliadač**). Otvorí sa okno Komety s bežným prehliadačom – prihlás sa a prejdi na stránku kurzu so zoznamom lekcií.
+1. V karte *Kurzy* klikni na kurz vo **Vybraných kurzoch** alebo na stránku v **Moje stránky s kurzami** (alebo zadaj adresu a klikni na **Otvoriť prehliadač**). Otvorí sa okno Komety s bežným prehliadačom – prihlás sa a prejdi na stránku kurzu so zoznamom lekcií. Lišta v rohu okna funguje ako v prehliadači: **Späť**, **Dopredu**, **Obnoviť** a **adresa** stránky (dá sa skopírovať aj prepísať; lištu skryješ a znova ukážeš tlačidlom K). Adresy v textových súboroch (.txt) sú klikateľné.
 2. Klikni na **Načítať lekcie z tejto stránky**. Kometa ukáže lekcie zoskupené podľa kapitol tak, ako sú na stránke, aj s dĺžkou. Lekcie poznáva podľa osnovy kurzu (zoznam lekcií s dĺžkami, napr. v bočnom paneli); odkazy z menu a päty stránky (iné kurzy, archívy, bonusy) sú zvlášť, zbalené a nikdy sa neoznačia samy. **Materiály** (PDF, prezentácie, archívy) sú pri kapitolách.
    Na portáloch, kde sa lekcie otvárajú **kliknutím na tej istej stránke** (napr. stránka „priebeh kurzu“ s osnovou v bočnom paneli), klikni na **Prejsť lekcie v osnove**. Kometa v okne prehliadača postupne otvorí každú lekciu osnovy a zapíše si, čo sa ukázalo: **video** (prehrávač, napr. Vimeo), **text** lekcie, **test** s otázkami a **materiály** v lekcii. Trvá to pár sekúnd na lekciu a dá sa zastaviť; stránka si lekcie môže označiť ako pozreté. Keď bežné načítanie nájde menej lekcií, než je v osnove riadkov s dĺžkou, Kometa to sama navrhne.
-3. **Označiť všetky kapitoly a materiály** vyberie celý kurz jedným klikom (alebo *Len odporúčané*, *Zrušiť výber*). Uprav názov priečinka alebo lekcií, vyber formát a klikni na **Stiahnuť**. Lekcie sa uložia ako `Kurz/01 Kapitola/01 Lekcia.mp4`, materiály so svojou príponou (`01 Skratky.pdf`), texty a testy lekcií ako stránky HTML (`02 Chatovacie nástroje.html`) – otvoríš ich v prehliadači aj bez pripojenia (obrázky sa načítajú z pôvodnej stránky).
+3. **Označiť všetky kapitoly a materiály** vyberie celý kurz jedným klikom (alebo *Len odporúčané*, *Zrušiť výber*). Uprav názov priečinka alebo lekcií, vyber formát (napr. *Full HD 1080p presne*) a klikni na **Stiahnuť**. Kurz sa uloží do priečinka **KURZY** v priečinku na sťahovanie: `KURZY/Názov kurzu/01 Kapitola/01 Lekcia.mp4`. Čísla kapitol a lekcií sú podľa poradia na stránke – aj keď stiahneš len časť kurzu a zvyšok neskôr. Materiály majú svoju príponu (`01 Skratky.pdf`) a sťahujú sa ako súbory, texty a testy lekcií ako stránky HTML (`02 Chatovacie nástroje.html`) – otvoríš ich v prehliadači aj bez pripojenia (obrázky sa načítajú z pôvodnej stránky).
+
+**Prehľad kurzu:** v priečinku kurzu je stránka `Prehľad kurzu.html` – otvoríš ju v prehliadači aj bez internetu (dvojklikom alebo v Komete *Stiahnuté kurzy → Otvoriť prehľad*). Je v nej osnova s kapitolami, lekciami a dĺžkami, prehrávač videí, texty, testy a materiály, tlačidlá *Predchádzajúca* a *Ďalšia* (aj klávesy P a N), rýchlosť prehrávania a hľadanie lekcie. Prehliadač si pamätá, čo je pozreté a kde si vo videu skončil. Stránka sa obnovuje, ako lekcie pribúdajú; čo ešte nie je stiahnuté, je označené.
+
+**Šetrné sťahovanie** (pri kurzoch zapnuté, voľba *Sťahovať šetrne*): jedna lekcia naraz, jedno spojenie na server, strop rýchlosti (predvolene 2 MB/s) a prestávka medzi videami okolo 45 s (o niečo kratšia alebo dlhšia, po malom materiáli krátka). Domáca sieť ostane voľná a stránka kurzu nezaťažená. Ostatné sťahovanie ide popri tom normálne. Rýchlosť a prestávku zmeníš v *Nastaveniach → Šetrné sťahovanie kurzov*.
+
+**Materiály s odkazom** (textový súbor s odkazom na zdieľaný priečinok, napr. „Materiály kurzu (Odkaz vo vnútri súboru).txt“): Kometa stiahne len ten súbor, do priečinka kurzu **MATERIALY**. Do zdieľaného úložiska sama nechodí. V *Stiahnuté kurzy* je pri kurze tlačidlo **Otvoriť v prehliadači kurzov** – odkaz sa otvorí tam, kde si prihlásený. Čo v prehliadači kurzov stiahneš (napr. ZIP), uloží sa do **MATERIALY** otvoreného kurzu a pribudne do zoznamu aj do prehľadu kurzu. Rovnaký názov dostane na koniec číslo (`Materiály (2).zip`) – nič sa neprepíše.
+
+**Vybrané kurzy:** keď je v prehliadači otvorená stránka konkrétneho kurzu, klikni na **Pridať do Vybraných kurzov** – nabudúce ho otvoríš jedným klikom (s uloženým prihlásením sa vyplní aj prihlásenie). Kurzy odstrániš po jednom (×), označené alebo všetky.
 
 **Moje stránky s kurzami:** ulož si portály, kde máš kúpené kurzy (*Pridať stránku*, pri otvorenom prehliadači *Pridať otvorenú stránku*). K stránke môžeš uložiť prihlasovacie meno a heslo – heslo ide do trezoru systému (vo Windows Správca poverení, v macOS Kľúčenka, v Linuxe Secret Service), nie do súborov Komety. Na prihlasovacej stránke ho vyplní tlačidlo **Vyplniť prihlásenie** (pri otvorení záložky aj samo) – len na doméne tej stránky, a prihlásiť sa klikneš ty.
 
@@ -166,6 +175,7 @@ kometa info ODKAZ -j cs,sk                         # čo sa stiahne: kvality, ja
 kometa stiahni ODKAZ -o PRIEČINOK -j cs,sk,en      # stránka, prehrávač, HLS/DASH → MKV (alebo --mp4), súbor
 kometa stiahni ODKAZ_NA_VIMEO --referer STRÁNKA    # video obmedzené na doménu, keď nemáš adresu celej stránky
 kometa stiahni ODKAZ --max-vyska 1080 --json       # udalosti ako JSON pre okno Komety
+kometa stiahni ODKAZ --presne 1080                 # presne Full HD (keď ho video nemá, najbližšia kvalita)
 kometa spoj -o film.mkv video.ts "cs.ts#zvuk#cs#Čeština" "sk.ts#zvuk#sk#Slovenčina"   # vlastné súbory → MKV/MP4
 kometa spoj -o film.mp4 video.mp4 "sk.m4a#zvuk#sk#Slovenčina#dabing" "en.webm#zvuk#en#English#povodny" \
    "sk.srt#titulky#sk#Slovenčina" --kapitola "0=Úvod" --kapitola "95=Druhá časť" --obal nahlad.jpg \

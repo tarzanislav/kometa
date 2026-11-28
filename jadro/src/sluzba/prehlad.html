@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="sk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="Kometa">
+<title>__TITUL__</title>
+<style>
+  /* Prehľad kurzu z Komety: farby témy Kometa (chladná obloha, zelená kóma, žlté jadro) */
+  :root {
+    color-scheme: light dark;
+    --bg: oklch(96.6% 0.012 255);
+    --panel: oklch(99.3% 0.004 255);
+    --sunken: oklch(93.6% 0.016 255);
+    --line: oklch(89.4% 0.02 255);
+    --ink: oklch(23% 0.034 255);
+    --ink-2: oklch(37% 0.03 255);
+    --muted: oklch(51% 0.025 255);
+    --faint: oklch(66% 0.02 255);
+    --accent: oklch(50% 0.125 172);
+    --accent-ink: oklch(44% 0.125 172);
+    --accent-soft: oklch(93.5% 0.038 172);
+    --on-accent: oklch(99% 0.008 172);
+    --head: oklch(86% 0.15 92);
+    --stage: oklch(19% 0.025 255);
+    --warn-soft: oklch(94.5% 0.045 80);
+    --font: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Noto Sans', 'Helvetica Neue', sans-serif;
+    --font-display: 'Segoe UI Variable Display', 'Segoe UI', system-ui, -apple-system, 'Noto Sans', sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: oklch(17.5% 0.032 255);
+      --panel: oklch(21% 0.031 255);
+      --sunken: oklch(14.8% 0.031 255);
+      --line: oklch(28.5% 0.031 255);
+      --ink: oklch(94.5% 0.01 255);
+      --ink-2: oklch(84% 0.014 255);
+      --muted: oklch(70.5% 0.022 255);
+      --faint: oklch(55% 0.023 255);
+      --accent: oklch(79% 0.125 172);
+      --accent-ink: oklch(82% 0.125 172);
+      --accent-soft: oklch(30% 0.052 172);
+      --on-accent: oklch(19% 0.03 172);
+      --head: oklch(91% 0.13 92);
+      --stage: oklch(12% 0.02 255);
+      --warn-soft: oklch(30% 0.05 75);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.5 var(--font);
+    display: grid;
+    grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  }
+  a { color: var(--accent-ink); }
+  button, select, input { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ---------- osnova ---------- */
+  .osnova {
+    height: 100vh;
+    position: sticky;
+    top: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--panel);
+    border-right: 1px solid var(--line);
+  }
+  .hlava { padding: 22px 22px 14px; border-bottom: 1px solid var(--line); }
+  .hlava h1 {
+    margin: 0;
+    font: 650 21px/1.25 var(--font-display);
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+  .hlava h1 a { color: inherit; text-decoration: none; }
+  .hlava h1 a:hover { text-decoration: underline; text-underline-offset: 3px; }
+  /* priebeh kurzu ako dráha kométy: chvost a žiariace jadro */
+  .draha { position: relative; height: 6px; margin: 16px 6px 10px 0; border-radius: 3px; background: var(--sunken); }
+  .chvost {
+    position: absolute; inset: 0 auto 0 0; width: var(--p, 0%);
+    border-radius: inherit;
+    background: linear-gradient(90deg, color-mix(in oklch, var(--accent) 8%, transparent), var(--accent));
+  }
+  .jadro {
+    position: absolute; top: 50%; left: var(--p, 0%);
+    width: 12px; height: 12px; border-radius: 50%;
+    translate: -50% -50%;
+    background: var(--head);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--head) 30%, transparent), 0 0 16px 2px color-mix(in oklch, var(--head) 70%, transparent);
+  }
+  .suhrn { margin: 0; color: var(--muted); font-size: 13.5px; }
+  .hladanie { margin-top: 12px; }
+  .hladanie input {
+    width: 100%; padding: 7px 11px;
+    border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg);
+  }
+  .zoznam { flex: 1; overflow: auto; padding: 8px 10px 24px; }
+  .kapitola { margin-top: 6px; }
+  .kapitola > button {
+    width: 100%;
+    display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: baseline;
+    padding: 9px 10px; border: 0; border-radius: 8px;
+    background: none; text-align: left; cursor: pointer;
+  }
+  .kapitola > button:hover { background: var(--sunken); }
+  .kapitola .c { font: 600 12.5px/1 var(--font-display); color: var(--muted); font-variant-numeric: tabular-nums; }
+  .kapitola .n { font-weight: 620; }
+  .kapitola .pocet { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .kapitola.zbalena ol { display: none; }
+  ol { list-style: none; margin: 0; padding: 0 0 4px; }
+  .lekcia {
+    display: grid; grid-template-columns: 26px 1fr auto; gap: 8px; align-items: start;
+    padding: 6px 10px 6px 12px; border-radius: 8px;
+    color: var(--ink-2); text-decoration: none;
+  }
+  .lekcia:hover { background: var(--sunken); color: var(--ink); }
+  .lekcia[aria-current='true'] { background: var(--accent-soft); color: var(--ink); }
+  .lekcia .c { color: var(--faint); font-size: 12.5px; padding-top: 2px; font-variant-numeric: tabular-nums; }
+  .lekcia .t { min-width: 0; overflow-wrap: anywhere; }
+  .lekcia .d { color: var(--muted); font-size: 12.5px; padding-top: 2px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .lekcia .druh { display: inline-block; margin-left: 6px; font-size: 11.5px; color: var(--muted); }
+  .lekcia.pozreta .c { color: var(--accent-ink); }
+  .lekcia.pozreta .c::before { content: '✓'; }
+  .lekcia.pozreta .c span { display: none; }
+  .lekcia.chyba { color: var(--faint); }
+  .lekcia.chyba .t::after { content: ' – nie je stiahnutá'; font-size: 12px; }
+  .paticka { padding: 10px 22px 14px; border-top: 1px solid var(--line); color: var(--faint); font-size: 12px; }
+
+  /* ---------- javisko ---------- */
+  main { min-width: 0; padding: 28px clamp(18px, 4vw, 56px) 56px; }
+  .vnutro { max-width: 1120px; margin: 0 auto; }
+  .kde { margin: 0; color: var(--muted); font-size: 13.5px; }
+  main h2 {
+    margin: 2px 0 18px;
+    font: 650 clamp(22px, 2.6vw, 30px)/1.2 var(--font-display);
+    letter-spacing: -0.015em; text-wrap: balance;
+  }
+  .plocha {
+    position: relative; overflow: hidden;
+    border-radius: 12px; background: var(--stage);
+    aspect-ratio: 16 / 9;
+    display: grid; place-items: center;
+  }
+  .plocha video, .plocha img { width: 100%; height: 100%; object-fit: contain; background: #000; }
+  .plocha.stranka { aspect-ratio: auto; height: min(78vh, 900px); background: var(--panel); border: 1px solid var(--line); }
+  .plocha.stranka iframe { width: 100%; height: 100%; border: 0; background: #fff; }
+  .plocha.zvuk { aspect-ratio: auto; padding: 36px 24px; background: var(--panel); border: 1px solid var(--line); }
+  .plocha.zvuk audio { width: min(640px, 100%); }
+  .plocha.karta, .plocha.oznam {
+    aspect-ratio: auto; padding: 40px 28px; text-align: center;
+    background: var(--panel); border: 1px solid var(--line); color: var(--ink-2);
+  }
+  .plocha.oznam { background: var(--warn-soft); }
+  .plocha p { margin: 6px 0; max-width: 60ch; }
+  .plocha .velky { font: 620 18px/1.35 var(--font-display); color: var(--ink); }
+  .ovladanie { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; margin-top: 14px; }
+  .tl {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 7px 14px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--panel);
+    cursor: pointer; text-decoration: none; color: var(--ink);
+  }
+  .tl:hover { border-color: var(--faint); }
+  .tl.hlavne { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+  .tl:disabled { opacity: 0.45; cursor: default; }
+  .tl svg { width: 16px; height: 16px; flex: none; }
+  .medzera { flex: 1; }
+  .volba { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); font-size: 14px; cursor: pointer; }
+  .volba select { padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+  .volba input { accent-color: var(--accent); width: 16px; height: 16px; }
+  .info { margin-top: 12px; color: var(--muted); font-size: 13.5px; display: flex; flex-wrap: wrap; gap: 4px 18px; }
+  .info a { color: var(--muted); }
+
+  /* uvítanie */
+  .uvod h2 { font-size: clamp(28px, 3.4vw, 40px); margin-bottom: 10px; }
+  .uvod .obsah { color: var(--ink-2); max-width: 62ch; font-size: 16px; }
+  .uvod .ovladanie { margin-top: 22px; }
+  .kapitoly-uvod { margin-top: 34px; display: grid; gap: 2px; max-width: 760px; }
+  .kapitoly-uvod a {
+    display: grid; grid-template-columns: 40px 1fr auto; gap: 12px; align-items: baseline;
+    padding: 10px 12px; border-radius: 8px; color: var(--ink); text-decoration: none;
+  }
+  .kapitoly-uvod a:hover { background: var(--sunken); }
+  .kapitoly-uvod .c { font: 650 15px/1 var(--font-display); color: var(--accent-ink); font-variant-numeric: tabular-nums; }
+  .kapitoly-uvod .p { color: var(--muted); font-size: 13.5px; font-variant-numeric: tabular-nums; }
+
+  .prepinac { display: none; }
+  @media (max-width: 820px) {
+    body { display: block; }
+    .osnova { position: static; height: auto; max-height: none; border-right: 0; border-bottom: 1px solid var(--line); }
+    .osnova:not(.otvorena) .zoznam, .osnova:not(.otvorena) .hladanie, .osnova:not(.otvorena) .paticka { display: none; }
+    .zoznam { max-height: 60vh; }
+    .prepinac { display: inline-flex; margin-top: 12px; }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .chvost, .jadro { transition: width 0.6s ease, left 0.6s ease; }
+  }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<aside class="osnova" id="osnova">
+  <div class="hlava">
+    <h1><a href="#" id="nazov"></a></h1>
+    <div class="draha" id="draha" role="progressbar" aria-label="Pozreté lekcie" aria-valuemin="0" aria-valuemax="100"><div class="chvost"></div><div class="jadro"></div></div>
+    <p class="suhrn" id="suhrn"></p>
+    <div class="hladanie">
+      <label for="hladaj" hidden>Hľadať lekciu</label>
+      <input id="hladaj" type="search" placeholder="Hľadať lekciu" autocomplete="off">
+    </div>
+    <button class="tl prepinac" id="prepinac" aria-expanded="false" aria-controls="zoznam">Osnova kurzu</button>
+  </div>
+  <nav class="zoznam" id="zoznam" aria-label="Osnova kurzu"></nav>
+  <div class="paticka" id="paticka"></div>
+</aside>
+<main id="javisko" tabindex="-1"><div class="vnutro" id="vnutro"></div></main>
+<script id="udaje" type="application/json">__UDAJE__</script>
+<script>
+(() => {
+  'use strict';
+  const D = JSON.parse(document.getElementById('udaje').textContent);
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, vlastnosti = {}, ...deti) => {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(vlastnosti)) {
+      if (v == null || v === false) continue;
+      if (k === 'text') e.textContent = v;
+      else if (k === 'class') e.className = v;
+      else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+      else e.setAttribute(k, v === true ? '' : v);
+    }
+    for (const d of deti) if (d != null) e.append(d);
+    return e;
+  };
+  const IKONY = {
+    spat: '<path d="M15 18l-6-6 6-6"/>',
+    dalej: '<path d="M9 18l6-6-6-6"/>',
+    play: '<path d="M7 5l12 7-12 7z"/>',
+    subor: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
+  };
+  const ikona = (meno) => {
+    const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    s.setAttribute('viewBox', '0 0 24 24');
+    s.setAttribute('fill', 'none');
+    s.setAttribute('stroke', 'currentColor');
+    s.setAttribute('stroke-width', '2');
+    s.setAttribute('stroke-linecap', 'round');
+    s.setAttribute('stroke-linejoin', 'round');
+    s.setAttribute('aria-hidden', 'true');
+    s.innerHTML = IKONY[meno];
+    return s;
+  };
+
+  // ---------- údaje ----------
+  const lekcie = [];
+  D.kapitoly.forEach((k, ki) => k.lekcie.forEach((l) => lekcie.push(Object.assign({}, l, { ki, kapitola: k }))));
+  const podla = new Map(lekcie.map((l, i) => [l.kluc, i]));
+  const dvecifry = (n) => String(n).padStart(2, '0');
+  const pripona = (s) => ((s || '').match(/\.([a-z0-9]+)$/i) || [, ''])[1].toLowerCase();
+  const cesta = (s) => s.split('/').map(encodeURIComponent).join('/');
+  const DRUHY = { text: 'text', test: 'test', material: 'materiál' };
+  const VIDEO = ['mp4', 'm4v', 'webm', 'mkv', 'mov', 'ogv'];
+  const ZVUK = ['mp3', 'm4a', 'aac', 'opus', 'ogg', 'oga', 'wav', 'flac'];
+  const OBRAZ = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif'];
+  const STRANKA = ['html', 'htm', 'pdf', 'txt'];
+  const trvanie = (s) => {
+    if (!s) return '';
+    const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60);
+    return h ? `${h} h ${m} min` : `${Math.max(1, m)} min`;
+  };
+  const tvar = (n, a, b, c) => (n === 1 ? a : n >= 2 && n <= 4 ? b : c);
+
+  // ---------- stav (pozreté, kde si skončil) v prehliadači ----------
+  const KLUC = 'kometa-kurz:' + (D.adresa || D.nazov);
+  let stav = { pozrete: {}, pozicie: {}, posledna: '', rychlost: 1, dalej: false, zbalene: {} };
+  try { Object.assign(stav, JSON.parse(localStorage.getItem(KLUC) || '{}')); } catch (e) { /* bez pamäte */ }
+  const uloz = () => { try { localStorage.setItem(KLUC, JSON.stringify(stav)); } catch (e) { /* bez pamäte */ } };
+
+  // ---------- osnova ----------
+  document.title = D.nazov;
+  $('nazov').textContent = D.nazov;
+  const odkazy = new Map();
+  const kapitolyEl = [];
+  function osnova() {
+    const z = $('zoznam');
+    z.textContent = '';
+    D.kapitoly.forEach((k, ki) => {
+      const ol = el('ol');
+      const tl = el('button', {
+        'aria-expanded': String(!stav.zbalene[ki]),
+        onclick: () => {
+          stav.zbalene[ki] = !stav.zbalene[ki];
+          uloz();
+          sekcia.classList.toggle('zbalena', !!stav.zbalene[ki]);
+          tl.setAttribute('aria-expanded', String(!stav.zbalene[ki]));
+        },
+      },
+        el('span', { class: 'c', text: dvecifry(k.cislo) }),
+        el('span', { class: 'n', text: k.nazov || 'Kapitola ' + k.cislo }),
+        el('span', { class: 'pocet' }));
+      const sekcia = el('section', { class: 'kapitola' + (stav.zbalene[ki] ? ' zbalena' : '') }, tl, ol);
+      kapitolyEl.push({ sekcia, pocet: tl.querySelector('.pocet'), ki });
+      k.lekcie.forEach((l) => {
+        const i = podla.get(l.kluc);
+        const a = el('a', { class: 'lekcia', href: '#lekcia=' + encodeURIComponent(l.kluc) },
+          el('span', { class: 'c' }, el('span', { text: dvecifry(l.cislo) })),
+          el('span', { class: 't', text: l.nazov },
+            DRUHY[l.druh] ? el('span', { class: 'druh', text: DRUHY[l.druh] }) : null),
+          el('span', { class: 'd', text: l.dlzka || '' }));
+        odkazy.set(i, a);
+        ol.append(el('li', {}, a));
+      });
+      z.append(sekcia);
+    });
+    if (!D.kapitoly.length) z.append(el('p', { class: 'suhrn', text: 'Kurz zatiaľ nemá žiadne lekcie.' }));
+    const p = $('paticka');
+    p.textContent = 'Vytvorila Kometa ' + (D.verzia || '') + '. ';
+    if (D.adresa) p.append(el('a', { href: D.adresa, target: '_blank', rel: 'noopener', text: 'Stránka kurzu' }));
+  }
+
+  function obnovStav() {
+    const pozrete = lekcie.filter((l) => stav.pozrete[l.kluc]).length;
+    const podiel = lekcie.length ? Math.round((pozrete / lekcie.length) * 100) : 0;
+    const d = $('draha');
+    d.style.setProperty('--p', podiel + '%');
+    d.setAttribute('aria-valuenow', String(podiel));
+    const zostava = lekcie.filter((l) => !stav.pozrete[l.kluc] && l.druh === 'video').reduce((a, l) => a + (l.sekund || 0), 0);
+    const chyba = lekcie.filter((l) => !l.je).length;
+    let t = `Pozreté ${pozrete} z ${lekcie.length} ${tvar(lekcie.length, 'lekcie', 'lekcií', 'lekcií')}.`;
+    if (zostava) t += ` Zostáva ${trvanie(zostava)} videa.`;
+    if (chyba) t += ` Nestiahnuté: ${chyba}.`;
+    $('suhrn').textContent = t;
+    lekcie.forEach((l, i) => {
+      const a = odkazy.get(i);
+      a.classList.toggle('pozreta', !!stav.pozrete[l.kluc]);
+      a.classList.toggle('chyba', !l.je);
+    });
+    for (const k of kapitolyEl) {
+      const ls = D.kapitoly[k.ki].lekcie;
+      k.pocet.textContent = `${ls.filter((l) => stav.pozrete[l.kluc]).length}/${ls.length}`;
+    }
+  }
+
+  // ---------- hľadanie ----------
+  const bezDiakritiky = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  $('hladaj').addEventListener('input', (e) => {
+    const q = bezDiakritiky(e.target.value.trim());
+    lekcie.forEach((l, i) => {
+      odkazy.get(i).parentElement.hidden = !!q && !bezDiakritiky(l.nazov).includes(q);
+    });
+    for (const k of kapitolyEl) {
+      const vidno = [...k.sekcia.querySelectorAll('li')].some((li) => !li.hidden);
+      k.sekcia.hidden = !!q && !vidno;
+      if (q) k.sekcia.classList.remove('zbalena');
+      else k.sekcia.classList.toggle('zbalena', !!stav.zbalene[k.ki]);
+    }
+  });
+  $('prepinac').addEventListener('click', () => {
+    const o = $('osnova').classList.toggle('otvorena');
+    $('prepinac').setAttribute('aria-expanded', String(o));
+  });
+
+  // ---------- lekcia ----------
+  let aktualna = -1;
+  let casovac = 0;
+  function oznac(l, ano) {
+    if (ano) stav.pozrete[l.kluc] = true;
+    else delete stav.pozrete[l.kluc];
+    uloz();
+    obnovStav();
+    const cb = $('pozrete');
+    if (cb && aktualna >= 0 && lekcie[aktualna] === l) cb.checked = ano;
+  }
+
+  function plocha(l) {
+    if (!l.je) {
+      return el('div', { class: 'plocha oznam' },
+        el('div', {},
+          el('p', { class: 'velky', text: 'Táto lekcia ešte nie je stiahnutá.' }),
+          el('p', { text: 'Ak sa práve sťahuje, obnov stránku neskôr (F5). Inak ju stiahni v Komete znova.' }),
+          l.adresa ? el('p', {}, el('a', { href: l.adresa, target: '_blank', rel: 'noopener', text: 'Otvoriť lekciu na stránke kurzu' })) : null));
+    }
+    const p = pripona(l.subor);
+    const src = cesta(l.subor);
+    if (VIDEO.includes(p)) {
+      const v = el('video', { controls: true, preload: 'metadata', src, playsinline: true });
+      v.playbackRate = stav.rychlost || 1;
+      v.addEventListener('loadedmetadata', () => {
+        const poz = stav.pozicie[l.kluc] || 0;
+        if (poz > 5 && poz < v.duration - 10) v.currentTime = poz;
+        v.playbackRate = stav.rychlost || 1;
+      });
+      let ulozene = 0;
+      v.addEventListener('timeupdate', () => {
+        if (Math.abs(v.currentTime - ulozene) >= 5) {
+          ulozene = v.currentTime;
+          stav.pozicie[l.kluc] = Math.floor(v.currentTime);
+          uloz();
+        }
+        if (v.duration && v.currentTime / v.duration >= 0.92 && !stav.pozrete[l.kluc]) oznac(l, true);
+      });
+      v.addEventListener('pause', () => { stav.pozicie[l.kluc] = Math.floor(v.currentTime); uloz(); });
+      v.addEventListener('ended', () => {
+        delete stav.pozicie[l.kluc];
+        oznac(l, true);
+        if (stav.dalej && aktualna < lekcie.length - 1) chod(aktualna + 1, true);
+      });
+      v.addEventListener('error', () => {
+        const o = el('div', { class: 'plocha oznam' },
+          el('div', {},
+            el('p', { class: 'velky', text: `Prehliadač toto video neprehrá (${p.toUpperCase()}).` }),
+            el('p', { text: 'Otvor ho v prehrávači videa, napríklad VLC alebo Filmy a TV.' }),
+            el('p', {}, el('a', { href: src, text: 'Otvoriť súbor' }))));
+        v.parentElement && v.parentElement.replaceWith(o);
+      });
+      return el('div', { class: 'plocha' }, v);
+    }
+    if (ZVUK.includes(p)) {
+      const a = el('audio', { controls: true, preload: 'metadata', src });
+      a.addEventListener('ended', () => oznac(l, true));
+      return el('div', { class: 'plocha zvuk' }, a);
+    }
+    if (OBRAZ.includes(p)) return el('div', { class: 'plocha' }, el('img', { src, alt: l.nazov }));
+    if (STRANKA.includes(p)) return el('div', { class: 'plocha stranka' }, el('iframe', { src, title: l.nazov }));
+    return el('div', { class: 'plocha karta' },
+      el('div', {},
+        el('p', { class: 'velky', text: l.subor.split('/').pop() }),
+        el('p', { text: 'Tento materiál sa otvorí vo svojej aplikácii.' }),
+        el('p', {}, el('a', { class: 'tl hlavne', href: src, target: '_blank' }, ikona('subor'), 'Otvoriť materiál'))));
+  }
+
+  function chod(i, hraj) {
+    location.hash = 'lekcia=' + encodeURIComponent(lekcie[i].kluc);
+    if (hraj) setTimeout(() => { const v = document.querySelector('video'); if (v) v.play().catch(() => {}); }, 300);
+  }
+
+  function lekcia(i) {
+    clearTimeout(casovac);
+    aktualna = i;
+    const l = lekcie[i];
+    stav.posledna = l.kluc;
+    uloz();
+    odkazy.forEach((a, j) => a.setAttribute('aria-current', String(j === i)));
+    const a = odkazy.get(i);
+    if (a && !a.parentElement.hidden) a.scrollIntoView({ block: 'nearest' });
+    const k = l.kapitola;
+    const rychlost = el('select', {
+      onchange: (e) => {
+        stav.rychlost = Number(e.target.value);
+        uloz();
+        const v = document.querySelector('video');
+        if (v) v.playbackRate = stav.rychlost;
+      },
+    });
+    for (const r of [0.75, 1, 1.25, 1.5, 1.75, 2]) rychlost.append(el('option', { value: r, selected: r === (stav.rychlost || 1), text: String(r).replace('.', ',') + '×' }));
+    const pozrete = el('input', { type: 'checkbox', id: 'pozrete', checked: !!stav.pozrete[l.kluc], onchange: (e) => oznac(l, e.target.checked) });
+    const dalej = el('input', { type: 'checkbox', checked: !!stav.dalej, onchange: (e) => { stav.dalej = e.target.checked; uloz(); } });
+    const jeVideo = l.je && VIDEO.includes(pripona(l.subor));
+    const v = $('vnutro');
+    v.textContent = '';
+    v.append(
+      el('p', { class: 'kde', text: `${dvecifry(k.cislo)} ${k.nazov || 'Kapitola'}` }),
+      el('h2', { text: `${dvecifry(l.cislo)} ${l.nazov}` }),
+      plocha(l),
+      el('div', { class: 'ovladanie' },
+        el('button', { class: 'tl', disabled: i === 0, title: 'Predchádzajúca lekcia (P)', onclick: () => chod(i - 1) }, ikona('spat'), 'Predchádzajúca'),
+        el('button', { class: 'tl hlavne', disabled: i === lekcie.length - 1, title: 'Ďalšia lekcia (N)', onclick: () => chod(i + 1, jeVideo) }, 'Ďalšia', ikona('dalej')),
+        el('span', { class: 'medzera' }),
+        el('label', { class: 'volba' }, pozrete, 'Pozreté'),
+        jeVideo ? el('label', { class: 'volba' }, 'Rýchlosť', rychlost) : null,
+        jeVideo ? el('label', { class: 'volba', title: 'Po dopozeraní videa sa spustí ďalšia lekcia' }, dalej, 'Prehrať ďalšiu') : null),
+      el('div', { class: 'info' },
+        l.dlzka ? el('span', { text: 'Dĺžka ' + l.dlzka }) : null,
+        l.je ? el('span', { text: 'Súbor ' + l.subor.split('/').pop() }) : null,
+        l.je ? el('a', { href: cesta(l.subor), target: '_blank', text: 'Otvoriť súbor' }) : null,
+        l.adresa ? el('a', { href: l.adresa, target: '_blank', rel: 'noopener', text: 'Lekcia na stránke kurzu' }) : null));
+    // text, test a materiál: pozreté, keď ostanú otvorené pár sekúnd
+    if (l.je && !jeVideo && !ZVUK.includes(pripona(l.subor)) && !stav.pozrete[l.kluc]) {
+      casovac = setTimeout(() => oznac(l, true), 4000);
+    }
+    $('javisko').focus({ preventScroll: true });
+    window.scrollTo({ top: 0 });
+    $('osnova').classList.remove('otvorena');
+  }
+
+  function uvod() {
+    aktualna = -1;
+    odkazy.forEach((a) => a.setAttribute('aria-current', 'false'));
+    const videi = lekcie.filter((l) => l.druh === 'video').length;
+    const textov = lekcie.filter((l) => l.druh === 'text' || l.druh === 'test').length;
+    const materialov = lekcie.filter((l) => l.druh === 'material').length;
+    const spolu = lekcie.filter((l) => l.druh === 'video').reduce((a, l) => a + (l.sekund || 0), 0);
+    const casti = [];
+    if (videi) casti.push(`${videi} ${tvar(videi, 'video', 'videá', 'videí')}${spolu ? ` (${trvanie(spolu)})` : ''}`);
+    if (textov) casti.push(`${textov} ${tvar(textov, 'text alebo test', 'texty a testy', 'textov a testov')}`);
+    if (materialov) casti.push(`${materialov} ${tvar(materialov, 'materiál', 'materiály', 'materiálov')}`);
+    const kapitol = D.kapitoly.length;
+    const obsah = `${kapitol} ${tvar(kapitol, 'kapitola', 'kapitoly', 'kapitol')}` + (casti.length ? ': ' + casti.join(', ') + '.' : '.');
+    const posledna = podla.has(stav.posledna) ? podla.get(stav.posledna) : -1;
+    const prva = lekcie.findIndex((l) => !stav.pozrete[l.kluc] && l.je);
+    const v = $('vnutro');
+    v.textContent = '';
+    const tlacidla = el('div', { class: 'ovladanie' });
+    if (posledna >= 0) {
+      tlacidla.append(el('button', { class: 'tl hlavne', onclick: () => chod(posledna) }, ikona('play'), 'Pokračovať: ' + lekcie[posledna].nazov));
+    } else if (lekcie.length) {
+      const z = prva >= 0 ? prva : 0;
+      tlacidla.append(el('button', { class: 'tl hlavne', onclick: () => chod(z) }, ikona('play'), 'Začať: ' + lekcie[z].nazov));
+    }
+    if (D.adresa) tlacidla.append(el('a', { class: 'tl', href: D.adresa, target: '_blank', rel: 'noopener', text: 'Stránka kurzu' }));
+    const zoznam = el('div', { class: 'kapitoly-uvod' });
+    D.kapitoly.forEach((k) => {
+      if (!k.lekcie.length) return;
+      const pozrete = k.lekcie.filter((l) => stav.pozrete[l.kluc]).length;
+      zoznam.append(el('a', { href: '#lekcia=' + encodeURIComponent(k.lekcie[0].kluc) },
+        el('span', { class: 'c', text: dvecifry(k.cislo) }),
+        el('span', { text: k.nazov || 'Kapitola ' + k.cislo }),
+        el('span', { class: 'p', text: `${pozrete}/${k.lekcie.length}` })));
+    });
+    v.append(el('section', { class: 'uvod' },
+      el('h2', { text: D.nazov }),
+      el('p', { class: 'obsah', text: obsah }),
+      tlacidla,
+      zoznam));
+  }
+
+  function podlaAdresy() {
+    const m = location.hash.match(/^#lekcia=(.+)$/);
+    const kluc = m ? decodeURIComponent(m[1]) : '';
+    if (podla.has(kluc)) lekcia(podla.get(kluc));
+    else uvod();
+  }
+
+  // klávesy N a P (nie pri písaní a nie s Ctrl/Alt)
+  document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey || /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
+    const k = e.key.toLowerCase();
+    if (k === 'n' && aktualna < lekcie.length - 1) chod(aktualna + 1);
+    else if (k === 'p' && aktualna > 0) chod(aktualna - 1);
+  });
+  $('nazov').addEventListener('click', (e) => { e.preventDefault(); history.pushState(null, '', location.pathname); uvod(); });
+  window.addEventListener('hashchange', podlaAdresy);
+
+  osnova();
+  obnovStav();
+  podlaAdresy();
+})();
+</script>
+</body>
+</html>

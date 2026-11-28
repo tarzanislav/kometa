@@ -145,15 +145,26 @@ pub struct Lekcia {
     /// text alebo test lekcie uložený pri prechode (zapíše sa ako stránka HTML)
     #[serde(default)]
     pub obsah_id: String,
+    /// poradie lekcie v kapitole na stránke (od 1) – číslo v názve súboru sedí, aj keď sa
+    /// sťahuje len časť kapitoly; 0 = podľa poradia vo výbere
+    #[serde(default, skip_serializing_if = "je_nula")]
+    pub cislo: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+fn je_nula(n: &usize) -> bool {
+    *n == 0
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Kapitola {
     pub nazov: String,
     pub lekcie: Vec<Lekcia>,
     /// odkazy z menu a päty stránky – nie sú súčasťou kurzu, nikdy sa neoznačia samy
     #[serde(default)]
     pub menu: bool,
+    /// poradie kapitoly v kurze (od 1); 0 = podľa poradia vo výbere
+    #[serde(default, skip_serializing_if = "je_nula")]
+    pub cislo: usize,
 }
 
 /// Názov časti s odkazmi z menu a päty stránky.
@@ -168,6 +179,120 @@ pub struct Kurz {
     /// lekcií, lekcie sa prepínajú kliknutím a treba prechod osnovy
     #[serde(default)]
     pub riadkov_osnovy: usize,
+    /// koľko kapitol má celý kurz (pri sťahovaní časti kurzu: kapitola dostane vlastný
+    /// priečinok, aj keď sa práve sťahuje len jedna); 0 = podľa výberu
+    #[serde(default, skip_serializing_if = "je_nula")]
+    pub kapitol: usize,
+}
+
+/// Lišta prehliadača kurzov (Späť, Dopredu, Obnoviť, adresa) – skript, ktorý aplikácia pridá
+/// do každej stránky v okne prehliadača kurzov. V stránke nemá žiadny prístup ku Komete.
+pub const LISTA_PREHLIADACA: &str = include_str!("lista_prehliadaca.js");
+
+/// Priečinok so všetkými kurzami v priečinku na sťahovanie.
+pub const PRIECINOK_KURZOV: &str = "KURZY";
+/// Priečinok kurzu na materiály s odkazom (.txt) a súbory stiahnuté v prehliadači kurzov.
+pub const PRIECINOK_MATERIALOV: &str = "MATERIALY";
+
+/// Voľný názov súboru v priečinku: keď už súbor s tým menom je (alebo sa práve sťahuje),
+/// dostane na koniec číslo – „Materiály.zip“, „Materiály (2).zip“…
+pub fn volny_subor(
+    priecinok: &std::path::Path,
+    navrh: &str,
+    obsadeny: &dyn Fn(&std::path::Path) -> bool,
+) -> std::path::PathBuf {
+    let meno = zdroje::bezpecny_nazov(navrh, 180);
+    let meno = if meno.is_empty() {
+        "stiahnuté".to_string()
+    } else {
+        meno
+    };
+    let (kmen, pripona) = match meno.rsplit_once('.') {
+        Some((k, p)) if !k.is_empty() && (1..=8).contains(&p.len()) && !p.contains(' ') => {
+            (k.to_string(), format!(".{p}"))
+        }
+        _ => (meno.clone(), String::new()),
+    };
+    let mut c = priecinok.join(&meno);
+    let mut n = 2;
+    while c.exists() || obsadeny(&c) {
+        c = priecinok.join(format!("{kmen} ({n}){pripona}"));
+        n += 1;
+    }
+    c
+}
+
+/// Odkazy (http/https) v textovom súbore – materiál „odkaz vo vnútri súboru“.
+pub fn odkazy_v_texte(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    for slovo in text.split(|c: char| c.is_whitespace() || matches!(c, '<' | '>' | '"' | '\'')) {
+        let slovo = slovo.trim_end_matches(['.', ',', ';', ')', ']']);
+        if (slovo.starts_with("https://") || slovo.starts_with("http://"))
+            && url::Url::parse(slovo).is_ok()
+            && !out.iter().any(|x| x == slovo)
+        {
+            out.push(slovo.to_string());
+        }
+    }
+    out
+}
+
+/// Názov kurzu bez mena portálu na konci („Excel pre pokročilých | Vita“ → „Excel pre
+/// pokročilých“). Koniec sa odreže, len keď v ňom je meno stránky – „Python – základy“ ostane.
+pub fn cisty_nazov(nazov: &str, adresa: &str) -> String {
+    let nazov = nazov.trim();
+    // mená stránky z adresy: „kurzy.vita.sk“ → „kurzy“, „vita“ (bez koncovky domény)
+    let host = hostitel(adresa).unwrap_or_default();
+    let casti: Vec<&str> = host.split('.').collect();
+    let mena: Vec<&str> = casti[..casti.len().saturating_sub(1)]
+        .iter()
+        .copied()
+        .filter(|m| m.len() >= 3)
+        .collect();
+    if mena.is_empty() {
+        return nazov.to_string();
+    }
+    for odd in [" | ", " – ", " — ", " - ", " :: "] {
+        if let Some((zaciatok, koniec)) = nazov.rsplit_once(odd) {
+            let k = koniec.to_lowercase();
+            if !zaciatok.trim().is_empty()
+                && mena.iter().any(|m| k.contains(m))
+                && k.chars().count() <= 40
+            {
+                return cisty_nazov(zaciatok, adresa);
+            }
+        }
+    }
+    nazov.to_string()
+}
+
+/// Priečinok kurzu: `<sťahovanie>/KURZY/<názov kurzu>`.
+pub fn koren_kurzu(kurz: &Kurz, vystup: &str) -> std::path::PathBuf {
+    let nazov = cisty_nazov(&kurz.nazov, &kurz.adresa);
+    let nazov = if nazov.is_empty() {
+        "Kurz".to_string()
+    } else {
+        nazov
+    };
+    std::path::Path::new(vystup)
+        .join(PRIECINOK_KURZOV)
+        .join(zdroje::bezpecny_nazov(&nazov, 100))
+}
+
+/// Miesto lekcie na disku: priečinok kapitoly, názov súboru (bez prípony; materiál s ňou)
+/// a kľúč lekcie v prehľade kurzu.
+pub struct Miesto<'a> {
+    pub kapitola: &'a Kapitola,
+    pub cislo_kapitoly: usize,
+    pub priecinok: std::path::PathBuf,
+    /// priečinok kapitoly voči priečinku kurzu („“ = priamo v ňom)
+    pub relativny: String,
+    pub lekcia: &'a Lekcia,
+    pub cislo: usize,
+    /// „03 Premenné“, materiál „04 Pracovný list.pdf“
+    pub nazov: String,
+    /// „02 Základy/03 Premenné“ – jednoznačný v rámci kurzu
+    pub kluc: String,
 }
 
 fn bez_hash(u: &str) -> &str {
@@ -298,6 +423,7 @@ pub fn kurz_zo_zberu(z: &Zber) -> Kurz {
                 ..Default::default()
             }],
             menu: false,
+            cislo: 0,
         });
     }
     for (i, o) in z.odkazy.iter().enumerate() {
@@ -355,6 +481,7 @@ pub fn kurz_zo_zberu(z: &Zber) -> Kurz {
                     nazov: nazov_kap,
                     lekcie: vec![],
                     menu,
+                    cislo: 0,
                 });
                 kapitoly.last_mut().unwrap()
             }
@@ -387,6 +514,7 @@ pub fn kurz_zo_zberu(z: &Zber) -> Kurz {
         adresa: z.url.clone(),
         kapitoly,
         riadkov_osnovy: z.dlzok,
+        kapitol: 0,
     }
 }
 
@@ -405,100 +533,139 @@ pub fn cookies_pre(v: &Vnutro, url: &str) -> Vec<(String, String)> {
     p.clone()
 }
 
-/// Položky frontu pre vybrané lekcie: priečinok kurzu, podpriečinky kapitol, čísla v názvoch.
-/// Priečinky kapitol (pri jednej kapitole priečinok kurzu) – pre lekcie aj uložené texty.
-fn priecinky<'a>(kurz: &'a Kurz, vystup: &str) -> Vec<(std::path::PathBuf, &'a Kapitola)> {
-    let koren = std::path::Path::new(vystup).join(zdroje::bezpecny_nazov(&kurz.nazov, 100));
+/// Kde bude každá vybraná lekcia: priečinok kurzu, podpriečinky kapitol (pri kurze s jednou
+/// kapitolou rovno priečinok kurzu), čísla podľa poradia na stránke.
+pub fn plan<'a>(kurz: &'a Kurz, vystup: &str) -> (std::path::PathBuf, Vec<Miesto<'a>>) {
+    let koren = koren_kurzu(kurz, vystup);
     let kapitoly: Vec<&Kapitola> = kurz
         .kapitoly
         .iter()
         .filter(|k| !k.lekcie.is_empty())
         .collect();
-    let jedna = kapitoly.len() <= 1;
-    kapitoly
-        .into_iter()
-        .enumerate()
-        .map(|(ki, k)| {
-            let p = if jedna {
-                koren.clone()
-            } else {
-                let meno = if k.nazov.trim().is_empty() {
-                    format!("{:02}", ki + 1)
-                } else {
-                    format!("{:02} {}", ki + 1, k.nazov.trim())
-                };
-                koren.join(zdroje::bezpecny_nazov(&meno, 100))
-            };
-            (p, k)
-        })
-        .collect()
-}
-
-/// Text alebo test lekcie z prechodu osnovy (zapíše sa ako stránka HTML, nejde do frontu).
-fn je_text(l: &Lekcia) -> bool {
-    !l.obsah_id.is_empty()
-}
-
-/// Uloží texty a testy lekcií ako stránky HTML do priečinkov kapitol. Vráti počet súborov.
-pub fn uloz_texty(kurz: &Kurz, vystup: &str) -> usize {
-    let mut n = 0;
-    for (priecinok, k) in priecinky(kurz, vystup) {
-        for (li, l) in k.lekcie.iter().enumerate().filter(|(_, l)| je_text(l)) {
-            let Some(html) = super::osnova::obsah(&l.obsah_id) else {
-                continue;
-            };
-            let meno = zdroje::bezpecny_nazov(&format!("{:02} {}", li + 1, l.nazov.trim()), 150);
-            let mut cesta = priecinok.join(format!("{meno}.html"));
-            let mut i = 2;
-            while cesta.exists() {
-                cesta = priecinok.join(format!("{meno} ({i}).html"));
-                i += 1;
-            }
-            if std::fs::create_dir_all(&priecinok).is_ok() && std::fs::write(&cesta, html).is_ok() {
-                n += 1;
-            }
-        }
-    }
-    n
-}
-
-pub fn polozky(kurz: &Kurz, vystup: &str, format: &str) -> Vec<Nova> {
+    let jedna = if kurz.kapitol > 0 {
+        kurz.kapitol <= 1
+    } else {
+        kapitoly.len() <= 1
+    };
     let mut out = vec![];
-    for (priecinok, k) in priecinky(kurz, vystup) {
+    for (ki, k) in kapitoly.into_iter().enumerate() {
+        let cislo_kapitoly = if k.cislo > 0 { k.cislo } else { ki + 1 };
+        let relativny = if jedna {
+            String::new()
+        } else {
+            let meno = if k.nazov.trim().is_empty() {
+                format!("{cislo_kapitoly:02}")
+            } else {
+                format!("{cislo_kapitoly:02} {}", k.nazov.trim())
+            };
+            zdroje::bezpecny_nazov(&meno, 100)
+        };
+        let priecinok = if relativny.is_empty() {
+            koren.clone()
+        } else {
+            koren.join(&relativny)
+        };
         for (li, l) in k.lekcie.iter().enumerate() {
-            if je_text(l) {
-                continue;
-            }
-            let mut nazov = format!("{:02} {}", li + 1, l.nazov.trim());
+            let cislo = if l.cislo > 0 { l.cislo } else { li + 1 };
+            let mut nazov = format!("{cislo:02} {}", l.nazov.trim());
             // materiál si nechá svoju príponu („03 Pracovný list.pdf“)
-            if let Some(p) = url::Url::parse(&l.url)
+            let pripona = url::Url::parse(&l.url)
                 .ok()
                 .as_ref()
-                .and_then(pripona_materialu)
-            {
+                .and_then(pripona_materialu);
+            if let Some(p) = pripona {
                 if !nazov.to_ascii_lowercase().ends_with(&format!(".{p}")) {
                     nazov = format!("{nazov}.{p}");
                 }
             }
+            // textový súbor s odkazom na zdieľaný priečinok: do MATERIALY kurzu
+            let priecinok = if pripona == Some("txt") {
+                koren.join(PRIECINOK_MATERIALOV)
+            } else {
+                priecinok.clone()
+            };
+            // kľúč = cesta k súboru bez prípony (názov ako na disku, bez „/“ a pod.)
+            let kmen = zdroje::bezpecny_nazov(&nazov, 180);
+            let kluc = if relativny.is_empty() {
+                kmen
+            } else {
+                format!("{relativny}/{kmen}")
+            };
+            out.push(Miesto {
+                kapitola: k,
+                cislo_kapitoly,
+                priecinok,
+                relativny: relativny.clone(),
+                lekcia: l,
+                cislo,
+                nazov,
+                kluc,
+            });
+        }
+    }
+    (koren, out)
+}
+
+/// Text alebo test lekcie z prechodu osnovy (zapíše sa ako stránka HTML, nejde do frontu).
+pub fn je_text(l: &Lekcia) -> bool {
+    !l.obsah_id.is_empty()
+}
+
+/// Uloží texty a testy lekcií ako stránky HTML do priečinkov kapitol. Vráti kľúč lekcie a súbor.
+pub fn uloz_texty(miesta: &[Miesto]) -> Vec<(String, std::path::PathBuf)> {
+    let mut out = vec![];
+    for m in miesta.iter().filter(|m| je_text(m.lekcia)) {
+        let Some(html) = super::osnova::obsah(&m.lekcia.obsah_id) else {
+            continue;
+        };
+        let meno = zdroje::bezpecny_nazov(&m.nazov, 150);
+        // ten istý text pri opakovanom sťahovaní sa prepíše, nie zdvojí
+        let cesta = m.priecinok.join(format!("{meno}.html"));
+        if std::fs::create_dir_all(&m.priecinok).is_ok() && std::fs::write(&cesta, html).is_ok() {
+            out.push((m.kluc.clone(), cesta));
+        }
+    }
+    out
+}
+
+/// Položky frontu pre vybrané lekcie (bez textov – tie sa uložia hneď).
+pub fn polozky(miesta: &[Miesto], kurz: &Kurz, format: &str, setrne: bool) -> Vec<Nova> {
+    miesta
+        .iter()
+        .filter(|m| !je_text(m.lekcia))
+        .map(|m| {
+            let l = m.lekcia;
             // video z prechodu osnovy: priamo prehrávač, stránka lekcie ako odkiaľ prišiel
             let (url, referer) = if l.zdroj.is_empty() {
                 (l.url.clone(), kurz.adresa.clone())
             } else {
                 (l.zdroj.clone(), bez_hash(&l.url).to_string())
             };
-            out.push(Nova {
+            // materiál (PDF, odkaz v .txt…) sa stiahne ako súbor, nehľadá sa v ňom video
+            let material = l.material
+                || url::Url::parse(&l.url)
+                    .ok()
+                    .as_ref()
+                    .and_then(pripona_materialu)
+                    .is_some();
+            Nova {
                 url,
-                format: format.to_string(),
-                priecinok: priecinok.to_string_lossy().into_owned(),
-                nazov,
+                format: if material && l.zdroj.is_empty() {
+                    "subor".to_string()
+                } else {
+                    format.to_string()
+                },
+                priecinok: m.priecinok.to_string_lossy().into_owned(),
+                nazov: m.nazov.clone(),
                 zdroj: "Kurz".into(),
                 referer,
                 prihlasenie: true,
+                setrne,
+                lekcia: m.kluc.clone(),
                 ..Default::default()
-            });
-        }
-    }
-    out
+            }
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -543,21 +710,171 @@ pub fn sluzba_hesla(host: &str) -> String {
     format!("kurz:{host}")
 }
 
-pub fn zalozky() -> Vec<Zalozka> {
+/// `kurzy.json`: „zalozky“ (stránky s kurzami) a „vybrane“ (konkrétne kurzy).
+fn citaj_kurzy_json() -> Value {
     std::fs::read_to_string(subor_zaloziek())
         .ok()
         .and_then(|t| serde_json::from_str::<Value>(&t).ok())
-        .and_then(|v| serde_json::from_value(v["zalozky"].clone()).ok())
-        .unwrap_or_default()
+        .filter(Value::is_object)
+        .unwrap_or_else(|| serde_json::json!({}))
 }
 
-fn uloz_zalozky(z: &[Zalozka]) -> Result<(), String> {
-    let t = serde_json::to_string_pretty(&serde_json::json!({ "zalozky": z }))
-        .map_err(|e| e.to_string())?;
+/// Zapíše jeden kľúč `kurzy.json`, ostatné nechá.
+fn zapis_kurzy_json(kluc: &str, hodnota: Value) -> Result<(), String> {
+    let mut v = citaj_kurzy_json();
+    v[kluc] = hodnota;
+    let t = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
     let cesta = subor_zaloziek();
+    if let Some(d) = cesta.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
     let docasny = cesta.with_extension("json.novy");
     std::fs::write(&docasny, t).map_err(|e| format!("Záložky sa nepodarilo uložiť: {e}"))?;
     std::fs::rename(&docasny, &cesta).map_err(|e| format!("Záložky sa nepodarilo uložiť: {e}"))
+}
+
+pub fn zalozky() -> Vec<Zalozka> {
+    serde_json::from_value(citaj_kurzy_json()["zalozky"].clone()).unwrap_or_default()
+}
+
+fn uloz_zalozky(z: &[Zalozka]) -> Result<(), String> {
+    zapis_kurzy_json("zalozky", serde_json::json!(z))
+}
+
+// ---------------------------------------------------------------------------------------------
+// Vybrané kurzy: konkrétne stránky kurzov (osnova), aby sa nemuselo preklikávať
+// ---------------------------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct VybranyKurz {
+    pub id: String,
+    pub nazov: String,
+    pub adresa: String,
+    #[serde(default)]
+    pub pridane: f64,
+}
+
+pub fn vybrane() -> Vec<VybranyKurz> {
+    serde_json::from_value(citaj_kurzy_json()["vybrane"].clone()).unwrap_or_default()
+}
+
+/// Adresa kurzu na porovnanie: bez vnútornej značky lekcie a bez „/“ na konci.
+fn adresa_kurzu(a: &str) -> String {
+    a.trim()
+        .split("#kometa-lekcia-")
+        .next()
+        .unwrap_or("")
+        .trim_end_matches('/')
+        .to_string()
+}
+
+/// Pridá kurz do Vybraných (ten istý kurz sa nezdvojí – len sa premenuje a posunie navrch).
+pub fn uloz_vybrany(nazov: &str, adresa: &str) -> Result<(), String> {
+    let adresa = adresa_kurzu(adresa);
+    let host = hostitel(&adresa)
+        .filter(|_| adresa.starts_with("http://") || adresa.starts_with("https://"))
+        .ok_or("Kurz sa dá uložiť, keď je v prehliadači otvorená stránka kurzu.")?;
+    let mut vsetky = vybrane();
+    let stary = vsetky
+        .iter()
+        .position(|k| adresa_kurzu(&k.adresa) == adresa)
+        .map(|i| vsetky.remove(i));
+    if stary.is_none() && vsetky.len() >= 300 {
+        return Err("Vybraných kurzov je už priveľa (300) – niektoré odstráň.".into());
+    }
+    let nazov: String = match cisty_nazov(nazov, &adresa).as_str() {
+        "" => host,
+        n => n.chars().take(150).collect(),
+    };
+    vsetky.insert(
+        0,
+        VybranyKurz {
+            id: stary
+                .as_ref()
+                .map(|k| k.id.clone())
+                .unwrap_or_else(super::fronta::nove_id),
+            nazov,
+            adresa,
+            pridane: stary
+                .map(|k| k.pridane)
+                .unwrap_or_else(super::fronta::teraz),
+        },
+    );
+    zapis_kurzy_json("vybrane", serde_json::json!(vsetky))
+}
+
+/// Odstráni vybrané kurzy podľa id (`None` = všetky).
+pub fn zmaz_vybrane(ids: Option<&[String]>) -> Result<(), String> {
+    let zvysne: Vec<VybranyKurz> = match ids {
+        None => vec![],
+        Some(ids) => vybrane()
+            .into_iter()
+            .filter(|k| !ids.contains(&k.id))
+            .collect(),
+    };
+    zapis_kurzy_json("vybrane", serde_json::json!(zvysne))
+}
+
+pub fn vybrane_pre_okno() -> Value {
+    let zalozky = zalozky();
+    Value::Array(
+        vybrane()
+            .into_iter()
+            .map(|k| {
+                let host = hostitel(&k.adresa);
+                // stránka s uloženým prihlásením, ku ktorej kurz patrí
+                let stranka = host.as_ref().and_then(|h| {
+                    zalozky
+                        .iter()
+                        .filter(|z| hostitel(&z.adresa).is_some_and(|zh| patri(h, &zh)))
+                        .max_by_key(|z| hostitel(&z.adresa).map_or(0, |x| x.len()))
+                });
+                let s_heslom = stranka.is_some_and(|z| {
+                    !z.meno.is_empty()
+                        && hostitel(&z.adresa).is_some_and(|zh| {
+                            super::ucty::heslo(&sluzba_hesla(&zh), &z.meno).is_some()
+                        })
+                });
+                serde_json::json!({
+                    "id": k.id, "nazov": k.nazov, "adresa": k.adresa, "host": host,
+                    "stranka": stranka.map(|z| z.nazov.clone()), "s_heslom": s_heslom,
+                })
+            })
+            .collect(),
+    )
+}
+
+/// Stiahnuté kurzy v priečinku KURZY (podľa `kometa-kurz.json`), naposledy zmenené prvé.
+pub fn stiahnute(vystup: &str) -> Value {
+    let koren = std::path::Path::new(vystup).join(PRIECINOK_KURZOV);
+    let mut out: Vec<(std::time::SystemTime, Value)> = std::fs::read_dir(&koren)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let d = e.path();
+            let manifest = d.join(super::prehlad::MANIFEST);
+            let cas = std::fs::metadata(&manifest)
+                .and_then(|m| m.modified())
+                .ok()?;
+            let m: super::prehlad::Manifest =
+                serde_json::from_str(&std::fs::read_to_string(&manifest).ok()?).ok()?;
+            let lekcie: Vec<&super::prehlad::MLekcia> =
+                m.kapitoly.iter().flat_map(|k| k.lekcie.iter()).collect();
+            let stranka = d.join(super::prehlad::STRANKA);
+            Some((
+                cas,
+                serde_json::json!({
+                    "nazov": m.nazov, "adresa": m.adresa,
+                    "lekcii": lekcie.len(),
+                    "stiahnutych": lekcie.iter().filter(|l| !l.subor.is_empty()).count(),
+                    "priecinok": d, "prehlad": stranka.is_file().then_some(stranka),
+                }),
+            ))
+        })
+        .collect();
+    out.sort_by_key(|x| std::cmp::Reverse(x.0));
+    Value::Array(out.into_iter().take(50).map(|x| x.1).collect())
 }
 
 /// Záložky pre okno: bez hesiel, len či je heslo uložené.
@@ -772,8 +1089,12 @@ mod testy {
                 ("Päta", vec![("Blog", false)]),
             ]
         );
-        let p = polozky(&k, "/tmp/out", "video");
+        let (koren, m) = plan(&k, "/tmp/out");
+        assert!(koren.starts_with("/tmp/out/KURZY"));
+        let p = polozky(&m, &k, "video", true);
         assert_eq!(p.len(), 4);
+        assert!(p.iter().all(|x| x.setrne));
+        assert_eq!(p[2].lekcia, "02 Generovanie/01 Prvý obrázok");
         assert_eq!(p[0].nazov, "01 Úvod do kurzu");
         let cesta = |x: &Nova| std::path::PathBuf::from(&x.priecinok);
         let kurz = std::path::Path::new("AI grafika, dizajn a multimédiá");
@@ -956,9 +1277,93 @@ mod testy {
         // materiál si nechá príponu, lekcie nie
         let mut vyber = k.clone();
         vyber.kapitoly.truncate(3);
-        let p = polozky(&vyber, "/tmp/out", "video");
+        let (_, m) = plan(&vyber, "/tmp/out");
+        let p = polozky(&m, &vyber, "video", false);
         assert_eq!(p.last().unwrap().nazov, "01 klavesove-skratky.pdf");
         assert_eq!(p[0].nazov, "01 Ako funguje AI grafika");
+    }
+
+    #[test]
+    fn volny_nazov_a_odkazy_v_texte() {
+        let d = std::env::temp_dir().join(format!("kometa-volny-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("Materiály.zip"), b"x").unwrap();
+        let nic = |_: &std::path::Path| false;
+        assert_eq!(
+            volny_subor(&d, "Materiály.zip", &nic),
+            d.join("Materiály (2).zip")
+        );
+        assert_eq!(volny_subor(&d, "nový.pdf", &nic), d.join("nový.pdf"));
+        let obsadeny = |c: &std::path::Path| c.ends_with("Materiály (2).zip");
+        assert_eq!(
+            volny_subor(&d, "Materiály.zip", &obsadeny),
+            d.join("Materiály (3).zip")
+        );
+        assert_eq!(volny_subor(&d, "a/b:c.zip", &nic), d.join("a-b -c.zip"));
+        let _ = std::fs::remove_dir_all(&d);
+        assert_eq!(
+            odkazy_v_texte("Materiály (Odkaz vo vnútri súboru)\r\nhttps://a.example.com/:f:/g/x?e=1.\nznova https://a.example.com/:f:/g/x?e=1 a <http://b.example.com/y>"),
+            ["https://a.example.com/:f:/g/x?e=1", "http://b.example.com/y"]
+        );
+        assert!(odkazy_v_texte("žiadny odkaz, ftp://x").is_empty());
+    }
+
+    #[test]
+    fn material_s_odkazom_ide_do_materialov_a_stiahne_sa_ako_subor() {
+        let u = "https://kurzy.example.com";
+        let k = Kurz {
+            nazov: "Kurz".into(),
+            adresa: format!("{u}/kurz"),
+            kapitoly: vec![Kapitola {
+                nazov: "Úvod".into(),
+                lekcie: vec![
+                    Lekcia {
+                        url: format!("{u}/l/1"),
+                        nazov: "Video".into(),
+                        ..Default::default()
+                    },
+                    Lekcia {
+                        url: format!("{u}/m/odkaz.txt"),
+                        nazov: "Materiály (odkaz)".into(),
+                        material: true,
+                        ..Default::default()
+                    },
+                    Lekcia {
+                        url: format!("{u}/m/list.pdf"),
+                        nazov: "List".into(),
+                        material: true,
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            kapitol: 2,
+            ..Default::default()
+        };
+        let (koren, m) = plan(&k, "/tmp/out");
+        let p = polozky(&m, &k, "fhd", false);
+        let kde: Vec<(&str, &str, String)> = p
+            .iter()
+            .map(|x| {
+                (
+                    x.nazov.as_str(),
+                    x.format.as_str(),
+                    std::path::Path::new(&x.priecinok)
+                        .strip_prefix(&koren)
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            kde,
+            [
+                ("01 Video", "fhd", "01 Úvod".to_string()),
+                ("02 Materiály (odkaz).txt", "subor", "MATERIALY".to_string()),
+                ("03 List.pdf", "subor", "01 Úvod".to_string()),
+            ]
+        );
     }
 
     #[test]

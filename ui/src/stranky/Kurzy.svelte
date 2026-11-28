@@ -4,16 +4,18 @@
   // sú v trezore systému a Kometa ich vyplní len na ich stránke.
   import { onMount } from 'svelte'
   import { volaj } from '../lib/api'
-  import { app, skus, toast } from '../lib/app.svelte'
+  import { app, nastav, skus, toast } from '../lib/app.svelte'
   import { pocet } from '../lib/format'
-  import type { Kurz, PrechodOsnovy, Zalozka } from '../lib/typy'
+  import type { Kurz, OdkazMaterialu, PrechodOsnovy, StiahnutyKurz, VybranyKurz, Zalozka } from '../lib/typy'
   import Ikona from '../components/Ikona.svelte'
 
   let adresa = $state('')
   let kurz = $state<Kurz | null>(null)
   let vybrane = $state<Set<string>>(new Set())
   let nacitava = $state(false)
-  let format = $state('video')
+  // formát a šetrné sťahovanie si Kometa pamätá
+  let format = $state(app.nastavenia?.kurzy_format ?? 'video')
+  const setrne = $derived(app.nastavenia?.kurzy_setrne ?? true)
 
   const prehliadac = $derived(app.stav?.prehliadac ?? null)
   const vsetkyLekcie = $derived(kurz?.kapitoly.flatMap((k) => k.lekcie) ?? [])
@@ -46,9 +48,86 @@
     )
   })
 
-  onMount(async () => {
-    zalozky = (await skus<Zalozka[]>('kurz_zalozky')) ?? []
+  // ---- vybrané kurzy (konkrétne stránky kurzov) a stiahnuté kurzy ----
+  let vybraneKurzy = $state<VybranyKurz[]>([])
+  let oznaceneKurzy = $state<Set<string>>(new Set())
+  let potvrditVsetky = $state(false)
+  let stiahnute = $state<StiahnutyKurz[]>([])
+
+  // odkazy v textových súboroch s materiálmi (podľa priečinka kurzu)
+  let odkazy = $state<Record<string, OdkazMaterialu[]>>({})
+
+  async function nacitatStiahnute() {
+    stiahnute = (await skus<StiahnutyKurz[]>('kurzy_stiahnute')) ?? stiahnute
+    const nove: Record<string, OdkazMaterialu[]> = {}
+    for (const k of stiahnute) {
+      nove[k.priecinok] = (await skus<OdkazMaterialu[]>('kurz_odkazy_materialov', k.priecinok)) ?? []
+    }
+    odkazy = nove
+  }
+
+  // odkaz z materiálov v prehliadači kurzov (tam si prihlásený); čo sa tam stiahne, ide do MATERIALY
+  async function otvoritOdkaz(k: StiahnutyKurz, o: OdkazMaterialu) {
+    try {
+      await volaj('kurz_otvorit', o.odkaz, { priecinok: k.priecinok })
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), 'chyba')
+      return
+    }
+    toast(`Odkaz je otvorený v prehliadači kurzov. Čo tam stiahneš, uloží sa do ${k.nazov} › MATERIALY.`, 'ok')
+  }
+
+  onMount(() => {
+    skus<Zalozka[]>('kurz_zalozky').then((r) => (zalozky = r ?? []))
+    skus<VybranyKurz[]>('kurz_vybrane').then((r) => (vybraneKurzy = r ?? []))
+    nacitatStiahnute()
+    // stiahnuté lekcie pribúdajú – zoznam sa raz za čas obnoví
+    const t = window.setInterval(() => !document.hidden && nacitatStiahnute(), 15000)
+    return () => clearInterval(t)
   })
+
+  const bezZnacky = (u: string) => u.replace(/#kometa-lekcia-\d+$/, '').replace(/\/+$/, '')
+  // otvorená stránka je už vo Vybraných?
+  const vybranyStranky = $derived.by(() => {
+    const a = prehliadac ? bezZnacky(prehliadac.adresa) : ''
+    return a ? (vybraneKurzy.find((k) => bezZnacky(k.adresa) === a) ?? null) : null
+  })
+
+  async function pridatDoVybranych() {
+    if (!prehliadac) return
+    // názov: načítaný kurz z tejto stránky, inak titulok stránky
+    const nazov = kurz && bezZnacky(kurz.adresa) === bezZnacky(prehliadac.adresa) ? kurz.nazov : prehliadac.titulok
+    const r = await skus<VybranyKurz[]>('kurz_vybrany_ulozit', nazov, prehliadac.adresa)
+    if (!r) return
+    vybraneKurzy = r
+    toast('Kurz je vo Vybraných kurzoch – nabudúce ho otvoríš jedným klikom.', 'ok')
+  }
+
+  async function otvoritVybrany(k: VybranyKurz) {
+    adresa = k.adresa
+    await skus('kurz_otvorit', k.adresa, { nazov: k.nazov })
+    // keď portál najprv ukáže prihlásenie, meno a heslo sa vyplnia samé
+    if (k.s_heslom) setTimeout(() => prihlasit(true), 3500)
+  }
+
+  function prepniKurz(id: string) {
+    const s = new Set(oznaceneKurzy)
+    if (s.has(id)) s.delete(id)
+    else s.add(id)
+    oznaceneKurzy = s
+  }
+
+  async function odstranitKurzy(ids: string[] | null) {
+    const r = await skus<VybranyKurz[]>('kurz_vybrane_zmazat', ids)
+    if (!r) return
+    vybraneKurzy = r
+    oznaceneKurzy = new Set([...oznaceneKurzy].filter((id) => r.some((k) => k.id === id)))
+    potvrditVsetky = false
+  }
+
+  async function otvoritPrehlad(k: StiahnutyKurz) {
+    if (k.prehlad) await skus('kurz_prehlad_otvorit', k.prehlad)
+  }
 
   function pridatZalozku() {
     const z = prehliadac && !zalozkaStranky ? prehliadac : null
@@ -232,20 +311,37 @@
 
   async function stiahnut() {
     if (!kurz) return
+    // čísla kapitol a lekcií podľa stránky: pri sťahovaní časti kurzu (aj neskôr ďalšej časti)
+    // sedia názvy súborov a priečinkov s osnovou
     const vyber: Kurz = {
       nazov: kurz.nazov.trim() || 'Kurz',
       adresa: kurz.adresa,
+      kapitol: kurz.kapitoly.filter((k) => !k.menu && k.lekcie.length).length,
       kapitoly: kurz.kapitoly
-        .map((k) => ({ nazov: k.nazov, lekcie: k.lekcie.filter((l) => vybrane.has(l.url)) }))
+        .map((k, i) => ({
+          nazov: k.nazov,
+          menu: k.menu,
+          cislo: i + 1,
+          lekcie: k.lekcie.map((l, j) => ({ ...l, cislo: j + 1 })).filter((l) => vybrane.has(l.url)),
+        }))
         .filter((k) => k.lekcie.length),
     }
-    const r = await skus<{ pridane: number; uz_vo_fronte: number; texty?: number }>('kurz_stiahnut', vyber, format)
-    if (!r) return
-    toast(
-      `Do sťahovania: ${pocet(r.pridane, 'lekcia', 'lekcie', 'lekcií')}.` +
-        (r.texty ? ` Uložené texty a testy: ${r.texty}.` : ''),
-      'ok',
+    const r = await skus<{ pridane: number; uz_vo_fronte: number; texty?: number; prehlad?: string | null }>(
+      'kurz_stiahnut',
+      vyber,
+      format,
+      { setrne },
     )
+    if (!r) return
+    const prehlad = r.prehlad
+    toast(
+      `Do sťahovania: ${pocet(r.pridane, 'lekcia', 'lekcie', 'lekcií')}${setrne ? ' (šetrne)' : ''}.` +
+        (r.texty ? ` Uložené texty a testy: ${r.texty}.` : '') +
+        (prehlad ? ' V priečinku kurzu je Prehľad kurzu.' : ''),
+      'ok',
+      prehlad ? { text: 'Otvoriť prehľad', spusti: () => skus('kurz_prehlad_otvorit', prehlad) } : undefined,
+    )
+    nacitatStiahnute()
     app.stranka = 'stahovanie'
   }
 </script>
@@ -261,6 +357,57 @@
 
   <section class="plocha krok" aria-labelledby="h-krok1">
     <h2 id="h-krok1"><span class="cislo">1</span> Otvor portál a prihlás sa</h2>
+    {#if vybraneKurzy.length}
+      <div class="zalozky">
+        <div class="zalozky-hlava">
+          <h3 id="h-vybrane">Vybrané kurzy</h3>
+          <div class="akcie-vybranych">
+            {#if oznaceneKurzy.size}
+              <button class="tl tiche nebezpecne" onclick={() => odstranitKurzy([...oznaceneKurzy])}>
+                <Ikona meno="kos" velkost={16} /> Odstrániť označené ({oznaceneKurzy.size})
+              </button>
+            {/if}
+            {#if potvrditVsetky}
+              <span class="male">Odstrániť všetky vybrané kurzy ({vybraneKurzy.length})?</span>
+              <button class="tl tiche nebezpecne" onclick={() => odstranitKurzy(null)}>Áno, odstrániť</button>
+              <button class="tl tiche" onclick={() => (potvrditVsetky = false)}>Nie</button>
+            {:else}
+              <button class="tl tiche" onclick={() => (potvrditVsetky = true)}>Odstrániť všetky</button>
+            {/if}
+          </div>
+        </div>
+        <ul class="zoznam-zaloziek vybrane-kurzy" aria-labelledby="h-vybrane">
+          {#each vybraneKurzy as k (k.id)}
+            <li class:aktivna={vybranyStranky?.id === k.id}>
+              <input
+                type="checkbox"
+                checked={oznaceneKurzy.has(k.id)}
+                onchange={() => prepniKurz(k.id)}
+                aria-label="Označiť kurz {k.nazov}"
+              />
+              <button class="zalozka" onclick={() => otvoritVybrany(k)} title="Otvoriť {k.adresa}">
+                <Ikona meno="kurz" velkost={18} />
+                <span class="zalozka-text">
+                  <strong>{k.nazov}</strong>
+                  <span class="tlmene male">{k.stranka || k.host}</span>
+                </span>
+                {#if k.s_heslom}
+                  <span class="s-heslom" title="Prihlásenie sa vyplní samo"><Ikona meno="zamok" velkost={14} /></span>
+                {/if}
+              </button>
+              <button
+                class="tl ikona"
+                title="Odstrániť z Vybraných"
+                aria-label="Odstrániť {k.nazov} z Vybraných kurzov"
+                onclick={() => odstranitKurzy([k.id])}
+              >
+                <Ikona meno="zavriet" velkost={16} />
+              </button>
+            </li>
+          {/each}
+        </ul>
+      </div>
+    {/if}
     <div class="zalozky">
       <div class="zalozky-hlava">
         <h3 id="h-zalozky">Moje stránky s kurzami</h3>
@@ -367,10 +514,19 @@
   <section class="plocha krok" aria-labelledby="h-krok2">
     <h2 id="h-krok2"><span class="cislo">2</span> Načítaj lekcie z otvorenej stránky</h2>
     {#if prehliadac}
-      <p class="stranka-prehliadaca">
-        <Ikona meno="web" velkost={16} />
-        <span><strong>{prehliadac.titulok || 'Stránka'}</strong> <span class="tlmene vyber-text">{prehliadac.adresa}</span></span>
-      </p>
+      <div class="stranka-riadok">
+        <p class="stranka-prehliadaca">
+          <Ikona meno="web" velkost={16} />
+          <span><strong>{prehliadac.titulok || 'Stránka'}</strong> <span class="tlmene vyber-text">{prehliadac.adresa}</span></span>
+        </p>
+        {#if vybranyStranky}
+          <span class="male tlmene ulozeny"><Ikona meno="fajka" velkost={14} /> Vo Vybraných kurzoch</span>
+        {:else}
+          <button class="tl tiche" onclick={pridatDoVybranych} title="Nabudúce otvoríš tento kurz jedným klikom">
+            <Ikona meno="plus" velkost={16} /> Pridať do Vybraných kurzov
+          </button>
+        {/if}
+      </div>
       <div class="nacitanie">
         <button class="tl" onclick={nacitat} disabled={nacitava || !!prechod?.bezi}>
           <Ikona meno="hladat" velkost={16} />
@@ -380,6 +536,12 @@
           <Ikona meno="playlist" velkost={16} /> Prejsť lekcie v osnove
         </button>
       </div>
+      {#if app.stav?.prehliadac_materialy}
+        <p class="male tlmene">
+          Čo stiahneš priamo v prehliadači kurzov (napr. ZIP so zdieľanými materiálmi), uloží sa do
+          <span class="vyber-text">{app.stav.prehliadac_materialy}</span>; rovnaký názov dostane na koniec číslo.
+        </p>
+      {/if}
       <p class="male tlmene">
         <strong>Prejsť lekcie v osnove</strong> – pre portály, kde sa lekcie otvárajú kliknutím na tej istej stránke. Kometa
         v okne prehliadača postupne otvorí každú lekciu a zapíše si video, text, test aj materiály (pár sekúnd na lekciu;
@@ -485,17 +647,69 @@
       </div>
       <div class="pata">
         <label class="skryte" for="kurz-format">Formát</label>
-        <select id="kurz-format" class="vyber" bind:value={format}>
+        <select id="kurz-format" class="vyber" bind:value={format} onchange={() => nastav({ kurzy_format: format })}>
           {#each formaty as f (f.id)}<option value={f.id}>{f.nazov}</option>{/each}
         </select>
+        <label class="volba-setrne">
+          <input type="checkbox" checked={setrne} onchange={(e) => nastav({ kurzy_setrne: e.currentTarget.checked })} />
+          Sťahovať šetrne
+        </label>
         <button class="tl hlavne velke" disabled={!vybrane.size} onclick={stiahnut}>
           <Ikona meno="stiahnut" velkost={18} hrubka={2} /> Stiahnuť {pocet(vybrane.size, 'lekciu', 'lekcie', 'lekcií')}
         </button>
       </div>
       <p class="male tlmene">
-        Vybraté: {vybrane.size} z {kurzoveLekcie.length}{materialov ? ` (z toho materiálov ${materialov})` : ''}. Každá lekcia dostane číslo podľa poradia na stránke, kapitoly
-        vlastný priečinok.
+        Vybraté: {vybrane.size} z {kurzoveLekcie.length}{materialov ? ` (z toho materiálov ${materialov})` : ''}. Kurz sa uloží do
+        priečinka <strong>KURZY</strong> › <strong>{kurz.nazov.trim() || 'Kurz'}</strong>, každá kapitola do vlastného priečinka
+        a lekcia dostane číslo podľa poradia na stránke. V priečinku kurzu bude aj <strong>Prehľad kurzu</strong> – stránka,
+        v ktorej si kurz prezrieš a pustíš aj bez internetu.
       </p>
+      {#if setrne}
+        <p class="male tlmene">
+          Šetrne: jedna lekcia naraz, najviac {app.nastavenia?.setrne_rychlost ?? 2} MB/s, jedno spojenie na server a medzi
+          videami prestávka okolo {app.nastavenia?.setrne_pauza ?? 45} s – domáca sieť ostane voľná a stránka kurzu nezaťažená.
+          Zmeníš v Nastaveniach.
+        </p>
+      {/if}
+    </section>
+  {/if}
+
+  {#if stiahnute.length}
+    <section class="plocha krok" aria-labelledby="h-stiahnute">
+      <h2 id="h-stiahnute">Stiahnuté kurzy</h2>
+      <ul class="stiahnute">
+        {#each stiahnute as k (k.priecinok)}
+          <li class:s-odkazmi={odkazy[k.priecinok]?.length}>
+            <span class="zalozka-text">
+              <strong>{k.nazov}</strong>
+              <span class="tlmene male cisla">
+                {k.stiahnutych === k.lekcii
+                  ? pocet(k.lekcii, 'lekcia', 'lekcie', 'lekcií')
+                  : `stiahnuté ${k.stiahnutych} z ${k.lekcii}`}
+              </span>
+            </span>
+            {#if k.prehlad}
+              <button class="tl" onclick={() => otvoritPrehlad(k)}><Ikona meno="play" velkost={16} /> Otvoriť prehľad</button>
+              <button class="tl tiche ikona" title="Otvoriť priečinok kurzu" aria-label="Otvoriť priečinok kurzu {k.nazov}"
+                onclick={() => skus('otvorit_subor', k.prehlad)}><Ikona meno="priecinok" velkost={16} /></button>
+            {/if}
+            {#if odkazy[k.priecinok]?.length}
+              <div class="odkazy-materialov">
+                <span class="male tlmene">Materiály s odkazom (v priečinku MATERIALY):</span>
+                {#each odkazy[k.priecinok] as o, i (i)}
+                  <div class="odkaz-materialu">
+                    <span class="male vyber-text" title={o.subor}>{o.subor}</span>
+                    <button class="tl tiche" onclick={() => otvoritOdkaz(k, o)}
+                      title="Otvorí sa v prehliadači kurzov, kde si prihlásený">
+                      <Ikona meno="vonku" velkost={15} /> Otvoriť v prehliadači kurzov{o.host ? ` (${o.host})` : ''}
+                    </button>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </li>
+        {/each}
+      </ul>
     </section>
   {/if}
 </div>
@@ -746,5 +960,71 @@
   }
   .pata .vyber {
     width: 300px;
+  }
+  .volba-setrne {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    margin-right: auto;
+    cursor: pointer;
+  }
+  .akcie-vybranych {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2);
+  }
+  .vybrane-kurzy li {
+    padding-left: var(--s2);
+  }
+  .stranka-riadok {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s2) var(--s3);
+  }
+  .stranka-riadok .stranka-prehliadaca {
+    flex: 1;
+    min-width: 0;
+  }
+  .ulozeny {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+  }
+  .stiahnute {
+    display: grid;
+    gap: var(--s2);
+    list-style: none;
+    padding: 0;
+  }
+  .stiahnute li {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    padding: var(--s2) var(--s3);
+    border: 1px solid var(--line);
+    border-radius: var(--r-ctl);
+  }
+  .stiahnute .zalozka-text {
+    flex: 1;
+  }
+  .stiahnute li.s-odkazmi {
+    flex-wrap: wrap;
+  }
+  .odkazy-materialov {
+    display: grid;
+    gap: var(--s1);
+    flex-basis: 100%;
+    padding-top: var(--s2);
+    border-top: 1px dashed var(--line);
+  }
+  .odkaz-materialu {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s2);
   }
 </style>

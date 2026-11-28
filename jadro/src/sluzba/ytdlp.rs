@@ -324,6 +324,12 @@ pub fn format_ytdlp(format: &str, zvuk: &str, tiktok: bool) -> (String, Vec<Stri
             "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b".into(),
             vec!["--merge-output-format", "mp4/mkv"],
         ),
+        // Full HD presne: 1080p, inak najbližšie nižšie, inak čokoľvek
+        "fhd" => (
+            "bv*[height=1080]+ba/b[height=1080]/bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b"
+                .into(),
+            vec!["--merge-output-format", "mp4/mkv"],
+        ),
         "720" => (
             "bv*[height<=720]+ba/b[height<=720]/bv*+ba/b".into(),
             vec!["--merge-output-format", "mp4/mkv"],
@@ -335,7 +341,7 @@ pub fn format_ytdlp(format: &str, zvuk: &str, tiktok: bool) -> (String, Vec<Stri
         "audio" => ("ba[ext=m4a]/ba/b".into(), vec![]),
         _ => ("bv*+ba/b".into(), vec!["--merge-output-format", "mp4/mkv"]),
     };
-    if matches!(format, "video" | "1080" | "720") {
+    if matches!(format, "video" | "fhd" | "1080" | "720") {
         let vsel = f.split('+').next().unwrap_or("bv*").to_string();
         match zvuk {
             "aac" => f = format!("{vsel}+ba[acodec^=mp4a]/{f}"),
@@ -404,6 +410,8 @@ pub struct Uloha<'a> {
     pub format: &'a str,
     pub zvuk: &'a str,
     pub spojenia: usize,
+    /// strop rýchlosti v bajtoch za sekundu (šetrné sťahovanie)
+    pub limit: Option<u64>,
     pub spolocne: Spolocne,
     /// prepínače na vloženie údajov, kapitol a obrázka (pozri [`super::doplnky::argumenty_ytdlp`])
     pub doplnky: Vec<String>,
@@ -455,6 +463,9 @@ async fn stiahni_raz(
         "%(title).120B [%(id)s].%(ext)s".into(),
     ]);
     a.extend(extra);
+    if let Some(l) = u.limit {
+        a.extend(["--limit-rate".into(), l.to_string()]);
+    }
     if u.ffmpeg.is_some() {
         a.extend(u.doplnky.iter().cloned());
     }
@@ -614,6 +625,25 @@ pub fn vyber_formaty(info: &Value, format: &str, zvuk_rezim: &str) -> Option<Vyb
         "720" => 720.0,
         _ => f64::INFINITY,
     };
+    // trieda obrazu (kratšia strana); pri Full HD presne len najbližšia trieda k 1080
+    let trieda = |f: &Value| {
+        crate::kvalita::trieda(
+            Some(n(f, "width") as u32).filter(|w| *w > 0),
+            Some(n(f, "height") as u32).filter(|h| *h > 0),
+        )
+    };
+    let presna = (format == "fhd")
+        .then(|| {
+            crate::kvalita::presna_trieda(
+                formaty.iter().filter(|f| je_obraz(f)).filter_map(trieda),
+                1080,
+            )
+        })
+        .flatten();
+    let v_kvalite = |f: &Value| match presna {
+        Some(t) => trieda(f) == Some(t),
+        None => (trieda(f).unwrap_or(0) as f64) <= max_vyska,
+    };
     let najlepsi_zvuk = |kodek: &str, pripony: &[&str]| {
         formaty
             .iter()
@@ -660,7 +690,7 @@ pub fn vyber_formaty(info: &Value, format: &str, zvuk_rezim: &str) -> Option<Vyb
                 && matches!(s(f, "ext").as_str(), "mp4" | "webm")
                 && !vodoznak(f)
         })
-        .filter(|f| n(f, "height") <= max_vyska)
+        .filter(|f| v_kvalite(f))
         .filter(|f| !h264 || s(f, "vcodec").starts_with("avc1"))
         .max_by(|a, b| {
             let k = |f: &Value| {
@@ -697,7 +727,7 @@ pub fn vyber_formaty(info: &Value, format: &str, zvuk_rezim: &str) -> Option<Vyb
     // jeden súbor s obrazom aj zvukom (aj priamy súbor zo stránky bez údajov o kodekoch)
     let f = formaty
         .iter()
-        .filter(|f| je_obraz(f) && je_zvuk(f) && !vodoznak(f) && n(f, "height") <= max_vyska)
+        .filter(|f| je_obraz(f) && je_zvuk(f) && !vodoznak(f) && v_kvalite(f))
         .filter(|f| !h264 || matches!(s(f, "ext").as_str(), "mp4" | "m4v"))
         .max_by(|a, b| {
             let k = |f: &Value| (n(f, "height"), n(f, "tbr"));
@@ -752,6 +782,27 @@ mod testy {
     fn f(id: &str, ext: &str, v: &str, a: &str, h: f64, tbr: f64) -> Value {
         json!({"format_id": id, "ext": ext, "vcodec": v, "acodec": a, "height": h, "tbr": tbr,
                "protocol": "https", "url": format!("https://cdn/{id}"), "http_headers": {"User-Agent": "UA"}})
+    }
+
+    #[test]
+    fn full_hd_presne() {
+        let aac = f("140", "m4a", "none", "mp4a.40.2", 0.0, 128.0);
+        let info = json!({"formats": [
+            aac.clone(),
+            f("136", "mp4", "avc1.4d401f", "none", 720.0, 2000.0),
+            f("137", "mp4", "avc1.640028", "none", 1080.0, 4000.0),
+            f("271", "webm", "vp9", "none", 1440.0, 9000.0),
+            f("313", "webm", "vp9", "none", 2160.0, 18000.0),
+        ]});
+        let v = vyber_formaty(&info, "fhd", "aac").unwrap();
+        assert_eq!(v.formaty[0].url, "https://cdn/137");
+        // bez 1080p: 1440 aj 720 sú rovnako ďaleko → nižšia
+        let info = json!({"formats": [aac, f("136", "mp4", "avc1.4d401f", "none", 720.0, 2000.0),
+                                      f("271", "webm", "vp9", "none", 1440.0, 9000.0)]});
+        assert_eq!(
+            vyber_formaty(&info, "fhd", "aac").unwrap().formaty[0].url,
+            "https://cdn/136"
+        );
     }
 
     #[test]

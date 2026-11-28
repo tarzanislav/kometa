@@ -48,7 +48,11 @@ pub async fn prace(v: Arc<Vnutro>, id: String, zrusenie: CancellationToken) {
         return;
     };
     let h = hlasic_polozky(&v, &id);
-    let mut vysledok = stiahni(&v, &p, &zrusenie, &h).await;
+    // šetrné sťahovanie: strop rýchlosti platí pre všetky spojenia tejto položky
+    let brzda = p
+        .setrne
+        .then(|| crate::brzda::Brzda::new(setrna_rychlost(&v)));
+    let mut vysledok = crate::brzda::s_brzdou(brzda, stiahni(&v, &p, &zrusenie, &h)).await;
     // bez prípony („.bin“): podľa obsahu súboru – MKV, MP4, RAR…
     if let Ok(Koniec::Subor(c)) = &vysledok {
         if let Some(novy) = oprav_priponu(c).await {
@@ -119,8 +123,14 @@ pub async fn prace(v: Arc<Vnutro>, id: String, zrusenie: CancellationToken) {
         });
         f.uloz(true);
     }
-    if let Ok(Koniec::Subor(_)) = &vysledok {
+    if let Ok(Koniec::Subor(c)) = &vysledok {
+        if !p.lekcia.is_empty() {
+            super::prehlad::po_stiahnuti(&p, c, dlzka_polozky(&v, &id));
+        }
         skus_rozbalit(&v, &id, None, false);
+    }
+    if p.setrne && !matches!(vysledok, Err(Chyba::Pauza)) {
+        prestavka(&v, velkost.unwrap_or(u64::MAX));
     }
     match &vysledok {
         Ok(Koniec::Subor(c)) => v.zapis(format!(
@@ -135,6 +145,65 @@ pub async fn prace(v: Arc<Vnutro>, id: String, zrusenie: CancellationToken) {
         )),
     }
     v.naplanuj();
+}
+
+/// Strop rýchlosti šetrného sťahovania v bajtoch za sekundu (nastavenie v MB/s).
+fn setrna_rychlost(v: &Vnutro) -> u64 {
+    let mb = v
+        .nastavenia
+        .lock()
+        .unwrap()
+        .cislo("setrne_rychlost", 2)
+        .clamp(1, 50) as u64;
+    mb * 1024 * 1024
+}
+
+fn dlzka_polozky(v: &Vnutro, id: &str) -> Option<f64> {
+    v.fronta.lock().unwrap().najdi(id).and_then(|p| p.dlzka)
+}
+
+/// Prestávka pred ďalšou šetrnou položkou: okolo nastavenej dĺžky (±⅓, aby požiadavky nechodili
+/// v pravidelnom rytme), po malom súbore (materiál, < 5 MB) len krátka.
+fn prestavka(v: &Arc<Vnutro>, velkost: u64) {
+    let zaklad = v
+        .nastavenia
+        .lock()
+        .unwrap()
+        .cislo("setrne_pauza", 45)
+        .clamp(0, 600) as f64;
+    let nahoda = {
+        let n = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0);
+        // rozptýlenie bitov (nech nie je náhoda len z posledných číslic času)
+        let x = (n as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 40;
+        (x % 10_000) as f64 / 10_000.0
+    };
+    let mut s = zaklad * (2.0 / 3.0 + nahoda * 2.0 / 3.0);
+    if velkost < 5 * 1024 * 1024 {
+        s /= 6.0;
+    }
+    let d = std::time::Duration::from_secs_f64(s);
+    let caka = {
+        let mut f = v.fronta.lock().unwrap();
+        f.setrne_od = Some(std::time::Instant::now() + d);
+        f.polozky.iter().any(|p| p.setrne && p.stav == Stav::Caka)
+    };
+    if !caka || d.is_zero() {
+        return;
+    }
+    v.zapis(format!(
+        "🐢 Šetrné sťahovanie: ďalšie o {} s",
+        s.round() as u64
+    ));
+    let v2 = Arc::downgrade(v);
+    tokio::spawn(async move {
+        tokio::time::sleep(d).await;
+        if let Some(v) = v2.upgrade() {
+            v.naplanuj();
+        }
+    });
 }
 
 /// Priebeh viacerých stôp (obraz, zvuky) ako jeden: stopy idú za sebou, celková veľkosť sa odhadne.
@@ -423,12 +492,17 @@ fn nastavenia_siete(v: &Vnutro, p: &Polozka) -> Nastavenia {
         cookies,
         referer: Some(p.referer.clone()).filter(|r| !r.is_empty()),
         hlavicky: vec![],
-        spojenia: n.cislo("connections", 4).clamp(1, 16) as usize,
+        spojenia: if p.setrne {
+            1
+        } else {
+            n.cislo("connections", 4).clamp(1, 16) as usize
+        },
         max_vyska: match p.format.as_str() {
-            "1080" => Some(1080),
+            "1080" | "fhd" => Some(1080),
             "720" => Some(720),
             _ => None,
         },
+        presna_vyska: p.format == "fhd",
         jazyky: n.jazyky(),
     }
 }
@@ -449,6 +523,22 @@ async fn nativne(
     }
     let n = nastavenia_siete(v, p);
     let k = klient::klient(&n)?;
+    // súbor (materiál kurzu – PDF, .txt s odkazom…): stiahne sa, ako je, bez hľadania videa
+    if p.format == "subor" {
+        let meno = Some(p.nazov.clone())
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| nazov_z_adresy(&p.url));
+        let c = ciel_suboru(v, p, &meno);
+        let m = Moznosti {
+            spojenia: n.spojenia,
+            ocakavana_velkost: None,
+            zrusenie: z.clone(),
+            hlasic: h.clone(),
+        };
+        return Ok(Koniec::Subor(
+            http::stiahni(&k, http::pevna_url(p.url.clone()), &c, &m).await?,
+        ));
+    }
     let r = riesenie::vyries(&k, &p.url, n.referer.as_deref(), h).await?;
     if !p.zo_skenu && !r.dalsie.is_empty() {
         let vsetky: Vec<_> = r.nalez.iter().chain(r.dalsie.iter()).collect();
@@ -479,6 +569,13 @@ async fn nativne(
                 zo_skenu: true,
                 jazyky: None,
                 prihlasenie: p.prihlasenie,
+                setrne: p.setrne,
+                // lekcia kurzu s viacerými videami: v prehľade kurzu bude prvé
+                lekcia: if i == 0 {
+                    p.lekcia.clone()
+                } else {
+                    String::new()
+                },
             })
             .collect();
         let pocet = nove.len();
@@ -645,10 +742,15 @@ async fn cez_ytdlp(
         (
             n.text("cookies_browser"),
             n.text("audio_mode"),
-            n.cislo("connections", 4).clamp(1, 16) as usize,
+            if p.setrne {
+                1
+            } else {
+                n.cislo("connections", 4).clamp(1, 16) as usize
+            },
             super::doplnky::Volby::z_nastaveni(&n),
         )
     };
+    let limit = p.setrne.then(|| setrna_rychlost(v));
     let spolocne = Spolocne {
         prehliadac,
         referer: p.referer.clone(),
@@ -687,6 +789,7 @@ async fn cez_ytdlp(
             format: &p.format,
             zvuk: &zvuk,
             spojenia,
+            limit,
             spolocne,
             doplnky: super::doplnky::argumenty_ytdlp(volby, &p.format),
         };

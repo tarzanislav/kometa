@@ -13,6 +13,7 @@ pub mod nastavenia;
 pub mod nastroje;
 pub mod osnova;
 pub mod pomocnici;
+pub mod prehlad;
 pub mod prostredie;
 pub mod server;
 pub mod stahovanie;
@@ -52,6 +53,7 @@ pub const METODY: &[&str] = &[
     "pridat_zo_skenu",
     "pozastavit",
     "spustit",
+    "presunut",
     "odstranit",
     "vycistit_hotove",
     "vycistit_front",
@@ -71,6 +73,12 @@ pub const METODY: &[&str] = &[
     "kurz_prejst",
     "kurz_prechod",
     "kurz_prechod_zastavit",
+    "kurz_vybrane",
+    "kurz_vybrany_ulozit",
+    "kurz_vybrane_zmazat",
+    "kurzy_stiahnute",
+    "kurz_prehlad_otvorit",
+    "kurz_odkazy_materialov",
     "subory_na_zmazanie",
     "zmazat_subory",
     "pozastavit_vsetko",
@@ -123,6 +131,11 @@ pub struct Vnutro {
     pub strazca: Mutex<strazca::Strazca>,
     /// prihlásenie z prehliadača kurzov (cookies) – len v pamäti
     pub prihlasenia: Mutex<Vec<(String, String)>>,
+    /// priečinok kurzu, ktorý je práve otvorený – súbory stiahnuté v prehliadači kurzov idú
+    /// do jeho MATERIALY
+    pub kurz_aktivny: Mutex<Option<PathBuf>>,
+    /// súbory, ktoré sa práve sťahujú v prehliadači kurzov (aby rovnaký názov dostal číslo)
+    z_prehliadaca: Mutex<std::collections::HashSet<PathBuf>>,
     /// nová verzia Komety: kontrola, stiahnutie, inštalácia
     pub aktualizacia: Mutex<aktualizacie::StavAktualizacie>,
     rt: tokio::runtime::Handle,
@@ -245,6 +258,8 @@ impl Sluzba {
             instalacia: Mutex::new(Instalacia::default()),
             strazca: Mutex::new(strazca::Strazca::default()),
             prihlasenia: Mutex::new(vec![]),
+            kurz_aktivny: Mutex::new(None),
+            z_prehliadaca: Mutex::new(Default::default()),
             aktualizacia: Mutex::new(aktualizacie::StavAktualizacie::default()),
             rt,
             okno,
@@ -280,6 +295,79 @@ impl Sluzba {
     }
 
     /// Pri zatváraní: zastaví sťahovania tak, aby sa pri ďalšom spustení pokračovalo.
+    /// Priečinok MATERIALY práve otvoreného kurzu – sem sa ukladá, čo sa stiahne v prehliadači
+    /// kurzov (bez otvoreného kurzu `KURZY/Z prehliadača kurzov/MATERIALY`).
+    pub fn priecinok_z_prehliadaca(&self) -> PathBuf {
+        let v = &self.v;
+        v.kurz_aktivny
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| {
+                Path::new(&v.priecinok_vystupu())
+                    .join(kurzy::PRIECINOK_KURZOV)
+                    .join("Z prehliadača kurzov")
+            })
+            .join(kurzy::PRIECINOK_MATERIALOV)
+    }
+
+    /// Prehliadač kurzov začína sťahovať súbor (napr. ZIP z odkazu v materiáloch): kam ho uložiť –
+    /// do MATERIALY otvoreného kurzu, s číslom na konci, keď už súbor s tým názvom je.
+    pub fn ciel_z_prehliadaca(&self, navrh: &Path) -> PathBuf {
+        let priecinok = self.priecinok_z_prehliadaca();
+        let _ = std::fs::create_dir_all(&priecinok);
+        let meno = navrh
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let mut rezervovane = self.v.z_prehliadaca.lock().unwrap();
+        let c = kurzy::volny_subor(&priecinok, &meno, &|c| rezervovane.contains(c));
+        rezervovane.insert(c.clone());
+        c
+    }
+
+    /// Sťahovanie v prehliadači kurzov skončilo: súbor pribudne do zoznamu (Hotové) a do
+    /// prehľadu kurzu.
+    pub fn stiahnute_z_prehliadaca(&self, url: &str, cesta: &Path, ok: bool) {
+        let v = &self.v;
+        v.z_prehliadaca.lock().unwrap().remove(cesta);
+        let meno = cesta
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if !ok || !cesta.is_file() {
+            v.zapis(format!(
+                "✖ Prehliadač kurzov: „{meno}“ sa nepodarilo stiahnuť"
+            ));
+            return;
+        }
+        let velkost = std::fs::metadata(cesta).map(|m| m.len()).unwrap_or(0);
+        v.fronta
+            .lock()
+            .unwrap()
+            .pridaj_hotovy(url, &meno, cesta, velkost);
+        let kde = cesta
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::file_name)
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        v.zapis(format!(
+            "📎 Z prehliadača kurzov: {meno} → {kde}/{}",
+            kurzy::PRIECINOK_MATERIALOV
+        ));
+        if let Some(koren) = cesta.parent().and_then(Path::parent) {
+            prehlad::obnov(koren);
+        }
+        v.prostredie.oznam(
+            "Kometa – materiál stiahnutý",
+            &format!(
+                "{meno} je v priečinku {kde}/{}",
+                kurzy::PRIECINOK_MATERIALOV
+            ),
+        );
+    }
+
     pub async fn zatvor(&self) {
         let (ulohy, bezalo) = {
             let mut f = self.v.fronta.lock().unwrap();
@@ -407,8 +495,51 @@ impl Sluzba {
                 if url::Url::parse(&url).is_err() {
                     return Err(chyba("Zadaj adresu stránky, napríklad https://www.vita.sk"));
                 }
+                // ktorý kurz sa otvára (Vybrané kurzy, odkaz z materiálov) – tam pôjdu súbory
+                // stiahnuté v prehliadači
+                let kurz = arg::<Value>(a, 1)?;
+                let vystup = v.priecinok_vystupu();
+                let kurzy_dir = Path::new(&vystup).join(kurzy::PRIECINOK_KURZOV);
+                if let Some(p) = kurz["priecinok"].as_str().map(PathBuf::from) {
+                    if p.parent() == Some(kurzy_dir.as_path()) {
+                        *v.kurz_aktivny.lock().unwrap() = Some(p);
+                    }
+                } else if let Some(n) = kurz["nazov"].as_str().filter(|n| !n.trim().is_empty()) {
+                    let k = kurzy::Kurz { nazov: n.into(), adresa: url.clone(), ..Default::default() };
+                    *v.kurz_aktivny.lock().unwrap() = Some(kurzy::koren_kurzu(&k, &vystup));
+                }
                 v.prostredie.prehliadac_otvor(&url).map_err(chyba)?;
                 Value::Null
+            }
+            "kurz_odkazy_materialov" => {
+                // odkazy v .txt materiáloch stiahnutého kurzu (len priečinky v KURZY)
+                let p = PathBuf::from(arg::<String>(a, 0)?);
+                let kurzy_dir = Path::new(&v.priecinok_vystupu()).join(kurzy::PRIECINOK_KURZOV);
+                if p.parent() != Some(kurzy_dir.as_path()) {
+                    return Err(chyba("Kurz sa nenašiel."));
+                }
+                let mut out = vec![];
+                let mut subory: Vec<PathBuf> = std::fs::read_dir(p.join(kurzy::PRIECINOK_MATERIALOV))
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .map(|e| e.path())
+                    .filter(|c| c.extension().is_some_and(|x| x.eq_ignore_ascii_case("txt")))
+                    .collect();
+                subory.sort();
+                for c in subory.into_iter().take(100) {
+                    let Ok(t) = std::fs::read(&c) else { continue };
+                    if t.len() > 64 * 1024 {
+                        continue;
+                    }
+                    for odkaz in kurzy::odkazy_v_texte(&String::from_utf8_lossy(&t)).into_iter().take(5) {
+                        out.push(json!({
+                            "subor": c.file_name().map(|n| n.to_string_lossy().into_owned()),
+                            "host": kurzy::hostitel(&odkaz), "odkaz": odkaz,
+                        }));
+                    }
+                }
+                Value::Array(out)
             }
             "kurz_prejst" => {
                 if !v.prostredie.ma_prehliadac() {
@@ -436,12 +567,39 @@ impl Sluzba {
                 });
                 Value::Null
             }
-            "kurz_prechod" => json!({"stav": osnova::stav(), "kurz": osnova::vysledok()}),
+            "kurz_prechod" => {
+                let kurz = osnova::vysledok();
+                if let Some(k) = &kurz {
+                    *v.kurz_aktivny.lock().unwrap() = Some(kurzy::koren_kurzu(k, &v.priecinok_vystupu()));
+                }
+                json!({"stav": osnova::stav(), "kurz": kurz})
+            }
             "kurz_prechod_zastavit" => {
                 osnova::zastav();
                 Value::Null
             }
             "kurz_zalozky" => kurzy::zalozky_pre_okno(),
+            "kurz_vybrane" => kurzy::vybrane_pre_okno(),
+            "kurz_vybrany_ulozit" => {
+                kurzy::uloz_vybrany(&arg::<String>(a, 0)?, &arg::<String>(a, 1)?).map_err(chyba)?;
+                kurzy::vybrane_pre_okno()
+            }
+            "kurz_vybrane_zmazat" => {
+                // bez zoznamu (null) = všetky
+                kurzy::zmaz_vybrane(arg::<Option<Vec<String>>>(a, 0)?.as_deref()).map_err(chyba)?;
+                kurzy::vybrane_pre_okno()
+            }
+            "kurzy_stiahnute" => kurzy::stiahnute(&v.priecinok_vystupu()),
+            "kurz_prehlad_otvorit" => {
+                let c = PathBuf::from(arg::<String>(a, 0)?);
+                // len stránka prehľadu kurzu, nič iné
+                if c.file_name().is_some_and(|n| n == prehlad::STRANKA) && c.is_file() {
+                    self.blokujuco(move |v| v.prostredie.spusti_subor(&c)).await;
+                } else {
+                    return Err(chyba("Prehľad kurzu sa nenašiel – stiahni kurz znova."));
+                }
+                Value::Null
+            }
             "kurz_zalozka_ulozit" => {
                 let z: kurzy::Zalozka = arg(a, 0)?;
                 let heslo = arg::<Option<String>>(a, 1)?;
@@ -491,11 +649,13 @@ impl Sluzba {
                         "Na tejto stránke som nenašiel lekcie ani video. Prejdi na stránku s obsahom kurzu (zoznam lekcií).",
                     ));
                 }
+                *v.kurz_aktivny.lock().unwrap() = Some(kurzy::koren_kurzu(&k, &v.priecinok_vystupu()));
                 json!(k)
             }
             "kurz_stiahnut" => {
                 let k: kurzy::Kurz = arg(a, 0)?;
                 let preset = self.preset(&arg::<String>(a, 1)?);
+                let setrne = arg::<Value>(a, 2)?["setrne"].as_bool().unwrap_or(false);
                 let v2 = v.clone();
                 let adresy: Vec<String> = std::iter::once(k.adresa.clone())
                     .chain(k.kapitoly.iter().flat_map(|x| x.lekcie.iter().map(|l| l.url.clone())))
@@ -517,16 +677,34 @@ impl Sluzba {
                 if !cookies.is_empty() {
                     *v.prihlasenia.lock().unwrap() = cookies;
                 }
-                let nove = kurzy::polozky(&k, &v.priecinok_vystupu(), &preset);
-                let texty = kurzy::uloz_texty(&k, &v.priecinok_vystupu());
+                let vystup = v.priecinok_vystupu();
+                let (koren, miesta) = kurzy::plan(&k, &vystup);
+                *v.kurz_aktivny.lock().unwrap() = Some(koren.clone());
+                let texty = kurzy::uloz_texty(&miesta);
+                let nove = kurzy::polozky(&miesta, &k, &preset, setrne);
+                // prehľad kurzu (stránka HTML) hneď – stiahnuté lekcie v ňom pribúdajú
+                let prehlad = match prehlad::zapis_kurz(&k, &koren, &miesta, &texty) {
+                    Ok(c) => Some(c),
+                    Err(e) => {
+                        v.zapis(format!("Prehľad kurzu sa nepodarilo zapísať: {e}"));
+                        None
+                    }
+                };
                 let pocet = nove.len();
                 let n = v.fronta.lock().unwrap().pridaj(nove).len();
                 v.naplanuj();
-                v.zapis(format!("🎓 Kurz „{}“: {n} lekcií do sťahovania", k.nazov));
-                if texty > 0 {
-                    v.zapis(format!("🎓 Kurz „{}“: uložené texty a testy lekcií: {texty}", k.nazov));
+                let nazov = koren.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                v.zapis(format!(
+                    "🎓 Kurz „{nazov}“: {n} lekcií do sťahovania{}",
+                    if setrne { " (šetrne)" } else { "" }
+                ));
+                if !texty.is_empty() {
+                    v.zapis(format!("🎓 Kurz „{nazov}“: uložené texty a testy lekcií: {}", texty.len()));
                 }
-                json!({"pridane": n, "uz_vo_fronte": pocet - n, "texty": texty})
+                json!({
+                    "pridane": n, "uz_vo_fronte": pocet - n, "texty": texty.len(),
+                    "priecinok": koren, "prehlad": prehlad,
+                })
             }
             "rozpoznat" => Value::Array(
                 zdroje::odkazy(&arg::<String>(a, 0)?)
@@ -552,6 +730,13 @@ impl Sluzba {
                 v.fronta.lock().unwrap().spusti(&arg::<Vec<String>>(a, 0)?);
                 v.naplanuj();
                 Value::Null
+            }
+            "presunut" => {
+                let kam = arg::<String>(a, 1)?;
+                if !matches!(kam.as_str(), "hore" | "vyssie" | "nizsie" | "dole") {
+                    return Err(chyba("Neplatný smer presunu."));
+                }
+                json!(v.fronta.lock().unwrap().presun(&arg::<Vec<String>>(a, 0)?, &kam))
             }
             "odstranit" => {
                 let ids = arg::<Vec<String>>(a, 0)?;
@@ -721,11 +906,12 @@ impl Sluzba {
     }
 
     fn stav(&self) -> Value {
-        let (polozky, rychlost) = {
+        let (polozky, rychlost, prestavka) = {
             let f = self.v.fronta.lock().unwrap();
             (
                 f.polozky.iter().map(polozka_pre_okno).collect::<Vec<_>>(),
                 f.rychlost(),
+                f.setrna_prestavka(),
             )
         };
         let graf = {
@@ -743,6 +929,8 @@ impl Sluzba {
         json!({
             "polozky": polozky,
             "rychlost": rychlost,
+            "setrne_prestavka": prestavka,
+            "prehliadac_materialy": self.priecinok_z_prehliadaca().to_string_lossy(),
             "graf": graf,
             "jazyky": self.v.jazyky.stav(),
             "ucty": self.v.ucty.stav(),
@@ -996,6 +1184,8 @@ impl Sluzba {
                 zo_skenu: true,
                 jazyky: None,
                 prihlasenie: false,
+                setrne: false,
+                lekcia: String::new(),
             })
             .collect();
         let n = self.v.fronta.lock().unwrap().pridaj(nove).len();
@@ -1027,6 +1217,7 @@ fn polozka_pre_okno(p: &Polozka) -> Value {
         "jazyky": p.jazyky.as_ref().map(jazyky::popis_volieb),
         "treba_heslo": p.treba_heslo,
         "s_heslom": !p.heslo.is_empty(),
+        "setrne": p.setrne,
         "rozbalenie": p.rozbalenie.as_ref().map(|r| json!({
             "stav": r.stav, "text": r.text, "podiel": r.podiel,
             "ciel": Path::new(&r.ciel).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),

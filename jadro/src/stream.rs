@@ -173,7 +173,7 @@ async fn naplanuj_hls(k: &Client, text: &str, base: &Url, n: &Nastavenia) -> Vys
             if let Some(s) = m.sifrovanie.clone() {
                 return Err(Chyba::Drm(s));
             }
-            let v = hls::vyber_variantu(&m.varianty, n.max_vyska)
+            let v = hls::vyber_variantu(&m.varianty, n.max_vyska, n.presna_vyska)
                 .ok_or_else(|| Chyba::Format("playlist nemá žiadnu kvalitu".into()))?;
             let zvuky: Vec<&hls::Rendicia> =
                 hls::vyber_zvuk(&m.rendicie, v.audio.as_deref(), &n.jazyky)
@@ -235,7 +235,7 @@ async fn naplanuj_hls(k: &Client, text: &str, base: &Url, n: &Nastavenia) -> Vys
 fn naplanuj_dash(text: &str, base: &Url, n: &Nastavenia) -> Vysledok<Plan> {
     let m = dash::parse(text, base)?;
     let mut stopy = vec![];
-    let video = dash::vyber_video(&m, n.max_vyska);
+    let video = dash::vyber_video(&m, n.max_vyska, n.presna_vyska);
     let zvuky = dash::vyber_zvuk(&m, &n.jazyky);
     if let Some(v) = video {
         stopy.push(StopaPlanu {

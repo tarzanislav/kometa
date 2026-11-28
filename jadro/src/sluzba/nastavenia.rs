@@ -23,8 +23,9 @@ pub const TEMY: [&str; 7] = [
 pub const KVALITY: [&str; 6] = ["Najlepšia", "2160p", "1440p", "1080p", "720p", "480p"];
 
 /// Formáty sťahovania: (kľúč, popis). Kľúče sú tie isté ako v Kometa pre Python (nastavenia ostanú platné).
-pub const FORMATY: [(&str, &str); 7] = [
+pub const FORMATY: [(&str, &str); 8] = [
     ("video", "Video – najlepšia kvalita"),
+    ("fhd", "Video – Full HD 1080p (presne)"),
     ("jazyky", "Video s jazykmi (YouTube, podľa karty Jazyky)"),
     ("mp4", "Video – MP4 pre TV a mobil (H.264)"),
     ("1080", "Video – najviac 1080p"),
@@ -40,7 +41,7 @@ pub const ZVUK: [(&str, &str); 3] = [
 ];
 
 /// Kľúče, ktoré smie meniť okno.
-pub const KLUCE_OKNA: [&str; 26] = [
+pub const KLUCE_OKNA: [&str; 30] = [
     "outdir",
     "dl_preset",
     "parallel",
@@ -67,6 +68,10 @@ pub const KLUCE_OKNA: [&str; 26] = [
     "vlozit_kapitoly",
     "vlozit_obal",
     "aktualizacie",
+    "kurzy_setrne",
+    "kurzy_format",
+    "setrne_rychlost",
+    "setrne_pauza",
 ];
 
 /// Domovský priečinok používateľa.
@@ -403,6 +408,10 @@ fn predvolene() -> Map<String, Value> {
         "vlozit_kapitoly": true,
         "vlozit_obal": true,
         "aktualizacie": true,
+        "kurzy_setrne": true,
+        "kurzy_format": "video",
+        "setrne_rychlost": 2,
+        "setrne_pauza": 45,
     });
     match v {
         Value::Object(m) => m,
@@ -438,7 +447,7 @@ pub fn over(k: &str, v: &Value) -> Option<Value> {
         "connections" => json!(cele(v)?.clamp(1, 16)),
         "autoresume" | "include_original" | "keep_separate" | "rozbalovat" | "strazca"
         | "strazca_ukazat" | "titulky_auto" | "vlozit_udaje" | "vlozit_kapitoly"
-        | "vlozit_obal" | "aktualizacie" => {
+        | "vlozit_obal" | "aktualizacie" | "kurzy_setrne" => {
             json!(v.as_bool()?)
         }
         "titulky" => jedno_z(v, &["vypnute", "jazyky"], "vypnute"),
@@ -452,6 +461,10 @@ pub fn over(k: &str, v: &Value) -> Option<Value> {
         "mode" => jedno_z(v, &["video", "existing", "audio"], "video"),
         "kontajner" => jedno_z(v, &["mkv", "mp4"], "mkv"),
         "max_height" => jedno_z(v, &KVALITY, "Najlepšia"),
+        "kurzy_format" => jedno_z(v, &formaty, "video"),
+        // šetrné sťahovanie: MB/s a sekundy prestávky medzi videami
+        "setrne_rychlost" => json!(cele(v)?.clamp(1, 50)),
+        "setrne_pauza" => json!(cele(v)?.clamp(0, 600)),
         _ => return None,
     })
 }

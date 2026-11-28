@@ -1066,6 +1066,7 @@ async fn stiahni_format(
             .cislo("connections", 4)
             .clamp(1, 16) as usize,
         max_vyska: None,
+        presna_vyska: false,
         jazyky: vec![],
         cookies: vec![],
     };

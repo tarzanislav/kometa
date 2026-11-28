@@ -391,13 +391,24 @@ pub fn parse(text: &str, adresa: &Url) -> Vysledok<Mpd> {
     Ok(out)
 }
 
-/// Najlepšie video do zadanej výšky (bez obmedzenia najlepšie vôbec).
-pub fn vyber_video(m: &Mpd, max_vyska: Option<u32>) -> Option<&Reprezentacia> {
+/// Najlepšie video do zadanej výšky (bez obmedzenia najlepšie vôbec); pri `presne` práve tá
+/// kvalita, inak najbližšia – pozri [`crate::kvalita`].
+pub fn vyber_video(m: &Mpd, max_vyska: Option<u32>, presne: bool) -> Option<&Reprezentacia> {
     let videa = m.reprezentacie.iter().filter(|r| r.druh == Druh::Video);
-    let vyhovuju: Vec<_> = videa
-        .clone()
-        .filter(|r| max_vyska.map_or(true, |h| r.vyska.unwrap_or(0) <= h))
-        .collect();
+    let trieda = |r: &Reprezentacia| crate::kvalita::trieda(r.sirka, r.vyska);
+    let vyhovuju: Vec<_> = match (max_vyska, presne) {
+        (Some(ciel), true) => {
+            let t = crate::kvalita::presna_trieda(videa.clone().filter_map(trieda), ciel);
+            videa
+                .clone()
+                .filter(|r| t.is_none() || trieda(r) == t)
+                .collect()
+        }
+        _ => videa
+            .clone()
+            .filter(|r| crate::kvalita::do_stropu(trieda(r).or(Some(0)), max_vyska))
+            .collect(),
+    };
     let z = if vyhovuju.is_empty() {
         videa.collect()
     } else {
@@ -589,9 +600,11 @@ mod testy {
             &u(),
         )
         .unwrap();
-        assert_eq!(vyber_video(&m, None).unwrap().id, "1080");
-        assert_eq!(vyber_video(&m, Some(720)).unwrap().id, "720");
-        assert_eq!(vyber_video(&m, Some(100)).unwrap().id, "1080"); // nič nevyhovuje → najlepšie
+        assert_eq!(vyber_video(&m, None, false).unwrap().id, "1080");
+        assert_eq!(vyber_video(&m, Some(720), false).unwrap().id, "720");
+        assert_eq!(vyber_video(&m, Some(100), false).unwrap().id, "1080"); // nič nevyhovuje → najlepšie
+        assert_eq!(vyber_video(&m, Some(1080), true).unwrap().id, "1080");
+        assert_eq!(vyber_video(&m, Some(600), true).unwrap().id, "720"); // najbližšia
         let j: Vec<_> = vyber_zvuk(&m, &["cs".into(), "sk".into(), "de".into()])
             .iter()
             .map(|r| r.id.clone())

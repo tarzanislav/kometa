@@ -241,6 +241,7 @@ pub async fn jedno_spojenie(
                     Some(Err(e)) => { chyba_prenosu = Some(e); break; }
                     Some(Ok(b)) => {
                         f.write_all(&b).await?;
+                        crate::brzda::pockaj(b.len() as u64).await;
                         poz += b.len() as u64;
                         dostal += b.len() as u64;
                         let teraz = Instant::now();
@@ -596,6 +597,7 @@ impl Useky {
             f.write_all(kus)
                 .await
                 .map_err(|e| ChybaUseku::Ina(e.to_string()))?;
+            crate::brzda::pockaj(kus.len() as u64).await;
             self.sp.lock().unwrap().useky[i][2] += kus.len() as u64;
             if (kus.len() as u64) == miesto {
                 break;
@@ -636,7 +638,12 @@ impl Useky {
                 .clamp(1, sp.limit)
         };
         let mut vlakna: Vec<tokio::task::JoinHandle<Result<(), ChybaUseku>>> = (0..pocet)
-            .map(|_| tokio::spawn(self.clone().pracovnik()))
+            .map(|_| {
+                tokio::spawn(crate::brzda::s_brzdou(
+                    crate::brzda::aktualna(),
+                    self.clone().pracovnik(),
+                ))
+            })
             .collect();
 
         let mut okno = vec![(Instant::now(), self.stiahnute())];
@@ -686,7 +693,10 @@ impl Useky {
                         .any(|u| (u[1] + 1).saturating_sub(u[0] + u[2]) >= 2 * MIN_USEK)
             };
             if pridaj && !self.zastav.is_cancelled() {
-                vlakna.push(tokio::spawn(self.clone().pracovnik()));
+                vlakna.push(tokio::spawn(crate::brzda::s_brzdou(
+                    crate::brzda::aktualna(),
+                    self.clone().pracovnik(),
+                )));
             }
         }
         self.uloz_stav();

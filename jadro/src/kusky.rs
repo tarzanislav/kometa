@@ -219,6 +219,10 @@ async fn stiahni_kusok(
         };
         tokio::fs::write(&tmp, &data).await?;
         tokio::fs::rename(&tmp, cesta).await?;
+        tokio::select! {
+            _ = z.cancelled() => return Err(Chyba::Pauza),
+            _ = crate::brzda::pockaj(data.len() as u64) => {}
+        }
         return Ok(data.len() as u64);
     }
     Err(Chyba::Siet(format!(
