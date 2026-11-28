@@ -115,6 +115,9 @@ struct Volby {
     /// Najvyššia výška obrazu, napr. 1080
     #[arg(long)]
     max_vyska: Option<u32>,
+    /// Presne táto kvalita (napr. --presne 1080 = Full HD), inak najbližšia
+    #[arg(long, conflicts_with = "max_vyska")]
+    presne: Option<u32>,
     /// Jazyky zvuku v poradí, napr. cs,sk,en
     #[arg(short = 'j', long, value_delimiter = ',')]
     jazyky: Vec<String>,
@@ -128,7 +131,8 @@ impl Volby {
         Nastavenia {
             referer: self.referer.clone(),
             spojenia: self.spojenia.clamp(1, 32),
-            max_vyska: self.max_vyska,
+            max_vyska: self.presne.or(self.max_vyska),
+            presna_vyska: self.presne.is_some(),
             jazyky: self.jazyky.clone(),
             ..Default::default()
         }

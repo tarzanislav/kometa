@@ -319,6 +319,7 @@ pub fn prejdi(
                     nazov: kap,
                     lekcie: vec![],
                     menu: false,
+                    cislo: 0,
                 });
                 kapitoly.len() - 1
             }
@@ -337,6 +338,7 @@ pub fn prejdi(
                 druh: "nezistene".into(),
                 zdroj: String::new(),
                 obsah_id: String::new(),
+                cislo: 0,
             });
             continue;
         };
@@ -381,6 +383,7 @@ pub fn prejdi(
             druh: druh.into(),
             zdroj,
             obsah_id,
+            cislo: 0,
         });
         for m in &o.materialy {
             if materialy.insert(m.href.clone()) {
@@ -398,6 +401,7 @@ pub fn prejdi(
                     druh: "material".into(),
                     zdroj: String::new(),
                     obsah_id: String::new(),
+                    cislo: 0,
                 });
             }
         }
@@ -408,6 +412,7 @@ pub fn prejdi(
         adresa: predosly.url.split('#').next().unwrap_or("").to_string(),
         kapitoly,
         riadkov_osnovy: riadky.len(),
+        kapitol: 0,
     })
 }
 
@@ -578,11 +583,13 @@ mod skusky {
                         ..Default::default()
                     },
                 ],
-                menu: false,
+                ..Default::default()
             }],
             riadkov_osnovy: 2,
+            ..Default::default()
         };
-        let p = super::super::kurzy::polozky(&k, "/tmp/out", "video");
+        let (_, m) = super::super::kurzy::plan(&k, "/tmp/out");
+        let p = super::super::kurzy::polozky(&m, &k, "video", false);
         assert_eq!(p.len(), 1);
         assert_eq!(p[0].url, "https://player.vimeo.com/video/1?h=a");
         assert_eq!(p[0].referer, u);

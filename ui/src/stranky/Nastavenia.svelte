@@ -150,6 +150,38 @@
     </div>
   </section>
 
+  <section class="plocha blok" aria-labelledby="h-setrne">
+    <h2 id="h-setrne">Šetrné sťahovanie kurzov</h2>
+    <div class="riadky">
+      <p class="male tlmene">
+        Pri kurzoch sťahuje Kometa šetrne (vypneš to pri sťahovaní kurzu): jednu lekciu naraz, jedným spojením na server,
+        s obmedzenou rýchlosťou a s prestávkou medzi videami. Prestávka sa trochu mení, po malom materiáli je kratšia.
+      </p>
+      <div class="nastavenie">
+        <div>
+          <label class="nazov" for="setrne-rychlost">Najvyššia rýchlosť</label>
+          <span class="male tlmene">Zvyšok linky ostane pre ostatných doma.</span>
+        </div>
+        <select id="setrne-rychlost" class="vyber" value={n.setrne_rychlost ?? 2}
+          onchange={(e) => nastav({ setrne_rychlost: +e.currentTarget.value })}>
+          {#each [1, 2, 3, 5, 10, 20] as r (r)}<option value={r}>{r} MB/s ({r * 8} Mbit/s)</option>{/each}
+        </select>
+      </div>
+      <div class="nastavenie">
+        <div>
+          <label class="nazov" for="setrne-pauza">Prestávka medzi videami</label>
+          <span class="male tlmene">Približne – skutočná je o niečo kratšia alebo dlhšia.</span>
+        </div>
+        <select id="setrne-pauza" class="vyber" value={n.setrne_pauza ?? 45}
+          onchange={(e) => nastav({ setrne_pauza: +e.currentTarget.value })}>
+          {#each [[0, 'Bez prestávky'], [15, '15 sekúnd'], [30, '30 sekúnd'], [45, '45 sekúnd'], [60, '1 minúta'], [120, '2 minúty'], [300, '5 minút']] as [s, t] (s)}
+            <option value={s}>{t}</option>
+          {/each}
+        </select>
+      </div>
+    </div>
+  </section>
+
   <section class="plocha blok" aria-labelledby="h-vlozit">
     <h2 id="h-vlozit">Do stiahnutého videa vložiť</h2>
     <div class="riadky">

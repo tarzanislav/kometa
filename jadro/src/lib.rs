@@ -8,12 +8,14 @@
 /// Verzia vydania Komety (z `[workspace.package]` v Cargo.toml) – rovnaká v aplikácii aj v programe.
 pub const VERZIA: &str = env!("CARGO_PKG_VERSION");
 
+pub mod brzda;
 pub mod chyba;
 pub mod dash;
 pub mod hls;
 pub mod http;
 pub mod klient;
 pub mod kusky;
+pub mod kvalita;
 pub mod media;
 pub mod sluzba;
 pub mod spajanie;

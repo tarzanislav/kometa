@@ -32,6 +32,8 @@ export interface Polozka {
   s_heslom?: boolean
   /** rozbaľovanie archívu po stiahnutí */
   rozbalenie?: Rozbalenie | null
+  /** šetrné sťahovanie (kurzy): po jednej, pomalšie, s prestávkami */
+  setrne?: boolean
 }
 
 export interface Rozbalenie {
@@ -89,6 +91,8 @@ export interface Lekcia {
   zdroj?: string
   /** text alebo test uložený pri prechode */
   obsah_id?: string
+  /** poradie v kapitole na stránke (od 1) */
+  cislo?: number
 }
 
 /** Priebeh prechodu osnovy (Kometa kliká na lekcie v okne prehliadača). */
@@ -106,6 +110,8 @@ export interface Kapitola {
   lekcie: Lekcia[]
   /** odkazy z menu a päty stránky – nie sú súčasťou kurzu */
   menu?: boolean
+  /** poradie kapitoly v kurze (od 1) */
+  cislo?: number
 }
 
 /** Stránka s kurzami (heslo je v trezore systému, okno vidí len či je uložené). */
@@ -124,6 +130,37 @@ export interface Kurz {
   nazov: string
   adresa: string
   kapitoly: Kapitola[]
+  /** koľko kapitol má celý kurz (aj keď sa sťahuje len časť) */
+  kapitol?: number
+}
+
+/** Konkrétny kurz uložený do Vybraných (otvorí sa jedným klikom). */
+export interface VybranyKurz {
+  id: string
+  nazov: string
+  adresa: string
+  host?: string | null
+  /** stránka s kurzami, ku ktorej patrí */
+  stranka?: string | null
+  s_heslom?: boolean
+}
+
+/** Odkaz v textovom súbore s materiálmi (napr. zdieľaný priečinok). */
+export interface OdkazMaterialu {
+  subor: string
+  host: string | null
+  odkaz: string
+}
+
+/** Stiahnutý kurz v priečinku KURZY. */
+export interface StiahnutyKurz {
+  nazov: string
+  adresa: string
+  lekcii: number
+  stiahnutych: number
+  priecinok: string
+  /** stránka „Prehľad kurzu.html“ */
+  prehlad: string | null
 }
 
 export interface StavAktualizacie {
@@ -149,6 +186,10 @@ export interface Stav {
   prehliadac?: { adresa: string; titulok: string } | null
   polozky: Polozka[]
   rychlost: number
+  /** šetrné sťahovanie: sekundy do ďalšej šetrnej položky */
+  setrne_prestavka?: number | null
+  /** kam sa ukladá, čo sa stiahne v prehliadači kurzov (MATERIALY kurzu) */
+  prehliadac_materialy?: string
   graf: number[]
   jazyky: StavJazykov
   ucty: Record<string, StavUctu>
@@ -183,6 +224,14 @@ export interface Nastavenia {
   /** po zachytení prepnúť na kartu Zo schránky */
   strazca_ukazat?: boolean
   strazca_format?: string
+  /** kurzy: sťahovať šetrne (predvolene áno) */
+  kurzy_setrne?: boolean
+  /** kurzy: naposledy vybratý formát */
+  kurzy_format?: string
+  /** šetrné sťahovanie: strop rýchlosti v MB/s */
+  setrne_rychlost?: number
+  /** šetrné sťahovanie: prestávka medzi videami v sekundách */
+  setrne_pauza?: number
 }
 
 export interface Init {

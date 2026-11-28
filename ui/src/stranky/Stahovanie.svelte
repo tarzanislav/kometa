@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { app, nastav, skus, toast } from '../lib/app.svelte'
+  import { app, nastav, obnovovat, skus, toast } from '../lib/app.svelte'
   import { pocet } from '../lib/format'
   import { ikonaZdroja } from '../lib/ikony'
   import type { Polozka, Rozpoznany } from '../lib/typy'
@@ -88,6 +88,13 @@
   async function hromadne(metoda: 'pozastavit' | 'spustit' | 'odstranit') {
     await skus(metoda, oznacene)
     if (metoda === 'odstranit') vybrane = []
+  }
+
+  // poradie: v časti „V poradí“ je to aj poradie sťahovania
+  async function presunut(kam: 'hore' | 'vyssie' | 'nizsie' | 'dole') {
+    if (!oznacene.length) return
+    await skus('presunut', oznacene, kam)
+    await obnovovat()
   }
 
   const aktivnych = $derived(skupiny.stahuje.length + skupiny.caka.length)
@@ -322,6 +329,20 @@
           placeholder="Jedno heslo pre všetky označené"
         />
         <button class="tl" disabled={!hromadneHeslo.trim()}><Ikona meno="zamok" velkost={16} /> Priradiť heslo</button>
+        <div class="presun" role="group" aria-label="Presunúť označené">
+          <button type="button" class="tl tiche ikona" title="Presunúť úplne hore" aria-label="Presunúť úplne hore" onclick={() => presunut('hore')}>
+            <Ikona meno="navrch" velkost={16} />
+          </button>
+          <button type="button" class="tl tiche ikona" title="Presunúť vyššie" aria-label="Presunúť vyššie" onclick={() => presunut('vyssie')}>
+            <Ikona meno="hore" velkost={16} />
+          </button>
+          <button type="button" class="tl tiche ikona" title="Presunúť nižšie" aria-label="Presunúť nižšie" onclick={() => presunut('nizsie')}>
+            <Ikona meno="dole" velkost={16} />
+          </button>
+          <button type="button" class="tl tiche ikona" title="Presunúť úplne dole" aria-label="Presunúť úplne dole" onclick={() => presunut('dole')}>
+            <Ikona meno="naspodok" velkost={16} />
+          </button>
+        </div>
         <button type="button" class="tl tiche" onclick={() => hromadne('pozastavit')}><Ikona meno="pauza" velkost={16} /> Pozastaviť</button>
         <button type="button" class="tl tiche" onclick={() => hromadne('spustit')}><Ikona meno="play" velkost={16} /> Spustiť</button>
         <button type="button" class="tl tiche nebezpecne" onclick={() => hromadne('odstranit')}>
@@ -500,6 +521,12 @@
   .hromadne-front .pole {
     width: 260px;
     height: 34px;
+  }
+  .presun {
+    display: inline-flex;
+    gap: 2px;
+    padding: 0 var(--s1);
+    border-inline: 1px solid var(--line);
   }
   .pocet-oznacenych {
     font-weight: 600;

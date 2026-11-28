@@ -149,7 +149,12 @@ WS_SUBOR = os.urandom(3 << 20)
 DT_MKV = bytes([0x1A, 0x45, 0xDF, 0xA3, 0x9F, 0x42, 0x82, 0x88]) + b"matroska" + os.urandom(200_000)
 FF_ARCHIV: list[bytes] = []
 ARCHIVY: dict[str, bytes] = {}
-UNIKY: list[str] = []            # cookies kurzu, ktoré by odišli na cudziu doménu   # názov → obsah (vytvorí priprav_archivy())   # [archív tar.xz, program ffmpeg] – vytvorí priprav_ffmpeg()
+UNIKY: list[str] = []            # cookies kurzu, ktoré by odišli na cudziu doménu
+CESTY: list[str] = []            # požiadavky GET na server (ktorá kvalita streamu sa stiahla)
+# materiály šetrného kurzu: dosť veľké, aby bolo vidieť strop rýchlosti a prestávku po nich
+SETRNE = {n: os.urandom(5_500_000) for n in ("cast-1.pdf", "cast-2.pdf")}
+# materiál „odkaz vo vnútri súboru“ (vymyslený zdieľaný priečinok)
+ODKAZ_TXT = "Materiály kurzu (Odkaz vo vnútri súboru)\r\nhttps://zdielane.example.com/:f:/g/priecinok?e=abc\r\n".encode()
 WS_SOL, WS_HESLO = "AbCd1234", "tajné heslo"
 op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -210,6 +215,7 @@ class Server(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self):  # noqa: N802
         u = urllib.parse.urlparse(self.path)
+        CESTY.append(self.path)
         if u.path == "/velky.bin":
             return self.rozsah(VELKY, pomaly=True)
         if u.path == "/ws/subor.bin":
@@ -289,6 +295,11 @@ class Server(http.server.SimpleHTTPRequestHandler):
             return self.posli(200, ARCHIVY[u.path.rsplit("/", 1)[1]], "application/octet-stream")
         if u.path == "/oembed":
             return self.posli(200, json.dumps({"title": "Pieseň o kométe", "author_name": "Kanál"}), "application/json")
+        if u.path == "/verejne/odkaz.txt":
+            return self.posli(200, f"Materiály (Odkaz vo vnútri súboru)\r\n{BASE}/portal/prihlasenie\r\n",
+                              "text/plain; charset=utf-8")
+        if u.path == "/verejne/s-ramcom":
+            return self.posli(200, f'<html><body><h1>S rámom</h1><iframe src="{BASE}/verejne/odkaz.txt"></iframe></body></html>')
         if u.path == "/portal/spa/course-progress":
             return self.posli(200, SPA_STRANKA)
         if u.path.startswith("/portal/lms/"):
@@ -301,6 +312,10 @@ class Server(http.server.SimpleHTTPRequestHandler):
                 return self.posli(403, "<p>Prihlás sa</p>")
             if u.path == "/kurz/material/skratky.pdf":
                 return self.posli(200, MATERIAL_PDF, "application/pdf")
+            if u.path == "/kurz/material/odkaz.txt":
+                return self.posli(200, ODKAZ_TXT, "text/plain; charset=utf-8")
+            if u.path.startswith("/kurz/subory/") and u.path.rsplit("/", 1)[1] in SETRNE:
+                return self.posli(200, SETRNE[u.path.rsplit("/", 1)[1]], "application/pdf")
             if u.path == "/kurz/lekcia-1":
                 return self.posli(200, f'<html><h1>Úvod</h1><video src="{BASE}/media/a.mp4"></video></html>')
             if u.path == "/kurz/lekcia-2":
@@ -491,6 +506,12 @@ def priprav():
     (m / "master.m3u8").write_text(
         '#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",LANGUAGE="sk",NAME="Slovenčina",DEFAULT=YES,URI="z.m3u8"\n'
         '#EXT-X-STREAM-INF:BANDWIDTH=600000,RESOLUTION=320x240,AUDIO="a"\nv.m3u8\n', encoding="utf-8")
+    # tri kvality (ten istý obsah): Full HD presne vs. najlepšia
+    (m / "master-kvality.m3u8").write_text(
+        '#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",LANGUAGE="sk",NAME="Slovenčina",DEFAULT=YES,URI="z.m3u8"\n'
+        + "".join(f'#EXT-X-STREAM-INF:BANDWIDTH={b},RESOLUTION={r},AUDIO="a"\nv.m3u8?q={q}\n'
+                  for b, r, q in ((2500000, "1280x720", 720), (5000000, "1920x1080", 1080), (16000000, "3840x2160", 2160))),
+        encoding="utf-8")
 
 
 def zakladne(o: Okno, out: Path):
@@ -507,7 +528,8 @@ def zakladne(o: Okno, out: Path):
     skontroluj("neznáma akcia", o.volaj("zmaz_disk") == {"ok": False, "chyba": "Neznáma akcia."})
     i = o.data("init")
     skontroluj("init: jadro v Ruste a čo vie", i["jadro"] == "rust" and i["funkcie"]["jazyky"] is True
-               and i["funkcie"]["ucty"] and len(i["formaty"]) == 7 and i["nastavenia"]["tema"] == "les", i)
+               and i["funkcie"]["ucty"] and len(i["formaty"]) == 8
+               and i["formaty"][1] == {"id": "fhd", "nazov": "Video – Full HD 1080p (presne)"} and i["nastavenia"]["tema"] == "les", i)
     n = o.data("ulozit_nastavenia", {"outdir": str(out), "parallel": 99, "connections": "3", "heslo": "x"})
     ulozene = json.loads((o.priecinok / "nastavenia.json").read_text(encoding="utf-8"))
     skontroluj("nastavenia: kontrola hodnôt, neznáme kľúče okna zahodené, vlastné ostanú",
@@ -570,6 +592,51 @@ def front(o: Okno, out: Path):
     nove = [x for x in s["polozky"] if x["url"].endswith(("/a.mp4", "/b.mp4")) and x["nazov"].startswith("Dve videá")]
     skontroluj("stránka s viacerými videami sa rozbalí do frontu", polozka(s, us)["stav"] == "rozbalene"
                and len(nove) == 2 and all(x["stav"] == "hotovo" for x in nove), [(x["nazov"], x["stav"]) for x in s["polozky"]])
+
+
+def kvalita_a_poradie(o: Okno, out: Path):
+    print("Full HD presne a poradie vo fronte")
+    uq = BASE + "/media/master-kvality.m3u8"
+    for preset, q in (("fhd", "q=1080"), ("video", "q=2160")):
+        CESTY.clear()
+        u = f"{uq}?{preset}"
+        o.data("pridat", u, preset)
+        s = o.cakaj(lambda s: (polozka(s, u) or {}).get("stav") in ("hotovo", "chyba"), 40)
+        kvality = sorted({c.split("q=")[1] for c in CESTY if "v.m3u8?q=" in c})
+        skontroluj(f"stream: „{preset}“ stiahne {q.split('=')[1]}p", polozka(s, u)["stav"] == "hotovo"
+                   and kvality == [q.split("=")[1]], (polozka(s, u), kvality))
+    # poradie: jedno sťahovanie naraz, ostatné čakajú
+    o.data("ulozit_nastavenia", {"parallel": 1})
+    uv = BASE + "/velky.bin"
+    ostatne = [f"{BASE}/media/b.mp4?poradie={i}" for i in range(1, 5)]
+    o.data("pridat", "\n".join([uv, *ostatne]), "video")
+    o.cakaj(lambda s: (polozka(s, uv) or {}).get("stav") == "stahuje", 20)
+    ids = {u: polozka(o.data("stav"), u)["id"] for u in [uv, *ostatne]}
+    meno = {v: k.rsplit("=", 1)[1] for k, v in ids.items() if "poradie" in k}
+
+    def poradie():
+        return [meno[x["id"]] for x in o.data("stav")["polozky"] if x["id"] in meno and x["stav"] == "caka"]
+
+    kroky = []
+    for vyber, kam in (([4], "hore"), ([4], "nizsie"), ([2, 3], "vyssie"), ([3], "dole"), ([1], "vyssie"), ([4], "vyssie")):
+        o.data("presunut", [ids[ostatne[i - 1]] for i in vyber], kam)
+        kroky.append("".join(poradie()))
+    skontroluj("poradie vo fronte: úplne hore, nižšie, vyššie (aj viac naraz), úplne dole",
+               kroky == ["4123", "1423", "1234", "1243", "1243", "1423"], kroky)
+    o.data("presunut", [ids[ostatne[2]]], "hore")
+    o.data("pozastavit", [ids[uv]])
+    prvy, koniec = None, time.time() + 20
+    while prvy is None and time.time() < koniec:
+        s = o.data("stav")
+        prvy = next((meno[x["id"]] for x in s["polozky"] if x["id"] in meno and x["stav"] != "caka"), None)
+        time.sleep(0.02)
+    skontroluj("presunutá položka sa sťahuje ako prvá", prvy == "3", prvy)
+    skontroluj("neplatný smer presunu sa odmietne", not o.volaj("presunut", [ids[uv]], "bokom")["ok"])
+    o.data("odstranit", list(ids.values()))
+    o.data("ulozit_nastavenia", {"parallel": 2})
+    time.sleep(1)
+    for f in out.glob("velky.bin*"):
+        f.unlink()
 
 
 def ucty(o: Okno, out: Path):
@@ -886,7 +953,7 @@ def kurzy(out: Path):
                    {"href": BASE + "/kurz/lekcia-1", "text": "Úvod do kurzu", "kapitola": "Začíname"},
                    {"href": BASE + "/kurz/lekcia-2", "text": "Pokračovanie", "kapitola": "Ďalej"}],
         "ramce": [], "videa": []}))
-    o = Okno(D / "cfg-kurz", KOMETA_SKUSKA_PREHLIADAC=str(pr))
+    o = Okno(D / "cfg-kurz", KOMETA_SKUSKA_PREHLIADAC=str(pr), KOMETA_SKUSKA_OTVOR=str(D / "otvorene.txt"))
     try:
         o.data("ulozit_nastavenia", {"outdir": str(out)})
         skontroluj("kurzy: aplikácia ich ponúka", o.data("init")["funkcie"]["kurzy"] is True)
@@ -902,12 +969,13 @@ def kurzy(out: Path):
         r = o.data("kurz_stiahnut", k, "video")
         skontroluj("kurz do sťahovania", r["pridane"] == 2, r)
         s = o.cakaj(lambda s: all(x["stav"] in ("hotovo", "chyba") for x in s["polozky"]) and s["polozky"], 40)
-        d = out / "Testovací kurz"
-        skontroluj("lekcie stiahnuté s prihlásením do priečinkov kapitol",
+        d = out / "KURZY" / "Testovací kurz"
+        skontroluj("lekcie stiahnuté s prihlásením do priečinkov kapitol (KURZY › kurz › kapitola)",
                    (d / "01 Začíname" / "01 Úvod do kurzu.mp4").read_bytes() == (D / "web/media/a.mp4").read_bytes()
                    and (d / "02 Ďalej" / "01 Pokračovanie (premenované).mp4").exists(),
                    [(x["nazov"], x["stav"], x["chyba"]) for x in s["polozky"]])
         skontroluj("prihlásenie neodišlo na cudziu doménu (vložené video)", not UNIKY, UNIKY)
+        kurz_prehlad_a_setrne(o, out)
         kurzy_zalozky_a_osnova(o, pr, out)
     finally:
         o.zatvor()
@@ -931,6 +999,7 @@ def kurzy_zalozky_a_osnova(o: Okno, pr: Path, out: Path):
                subor)
     z = o.data("kurz_zalozka_ulozit", dict(z[0], nazov="Môj portál"), None)
     skontroluj("úprava záložky bez hesla heslo nechá", z[0]["nazov"] == "Môj portál" and z[0]["s_heslom"], z)
+    vybrane_kurzy(o)
     (pr / "prihlasenie.json").write_text(json.dumps({"meno": True, "heslo": True}))
     o.data("kurz_otvorit", BASE + "/portal/prihlasenie")
     r = o.data("kurz_prihlasit")
@@ -981,7 +1050,7 @@ def kurzy_zalozky_a_osnova(o: Okno, pr: Path, out: Path):
         o.data("kurz_stiahnut", material, "video")
         s = o.cakaj(lambda s: any("skratky.pdf" in x["url"] and x["stav"] in ("hotovo", "chyba") for x in s["polozky"]), 30)
         q = next(x for x in s["polozky"] if "skratky.pdf" in x["url"])
-        f = next(iter(out.glob(f"*/{q.get('subor') or '-'}")), out / "-")
+        f = next(iter((out / "KURZY").rglob(q.get("subor") or "-")), out / "-")
         skontroluj("materiál kurzu stiahnutý s prihlásením a so svojou príponou",
                    q["stav"] == "hotovo" and f.name == "01 Klávesové skratky (PDF).pdf" and f.is_file()
                    and f.read_bytes() == MATERIAL_PDF, q)
@@ -990,6 +1059,185 @@ def kurzy_zalozky_a_osnova(o: Okno, pr: Path, out: Path):
     z2 = o.data("kurz_zalozka_ulozit", {"id": "", "nazov": "", "adresa": BASE + "/kurz/obsah", "meno": "ja@example.sk"}, None)
     skontroluj("odstránená záložka zmaže aj heslo z trezoru", z == [] and not z2[0]["s_heslom"], (z, z2))
     o.data("kurz_zalozka_zmazat", z2[0]["id"])
+
+
+def vybrane_kurzy(o: Okno):
+    """Vybrané kurzy: konkrétne stránky kurzov, aby sa nemuselo preklikávať."""
+    v = o.data("kurz_vybrany_ulozit", "Testovací kurz | 127", BASE + "/kurz/obsah#kometa-lekcia-2")
+    skontroluj("Vybrané kurzy: uložený bez značky lekcie, s čistým názvom a prihlásením zo stránky", len(v) == 1
+               and v[0]["adresa"] == BASE + "/kurz/obsah" and v[0]["nazov"] == "Testovací kurz"
+               and v[0]["stranka"] == "Môj portál" and v[0]["s_heslom"], v)
+    v = o.data("kurz_vybrany_ulozit", "Premenovaný", BASE + "/kurz/obsah/")
+    skontroluj("Vybrané kurzy: ten istý kurz sa nezdvojí, len premenuje", len(v) == 1 and v[0]["nazov"] == "Premenovaný", v)
+    o.data("kurz_vybrany_ulozit", "Druhý", BASE + "/portal/spa/course-progress")
+    v = o.data("kurz_vybrany_ulozit", "Tretí", BASE + "/portal/lms/ako-funguje")
+    skontroluj("Vybrané kurzy: najnovší navrchu", [x["nazov"] for x in v] == ["Tretí", "Druhý", "Premenovaný"], v)
+    skontroluj("Vybrané kurzy: bez otvorenej stránky kurzu sa neuložia",
+               not o.volaj("kurz_vybrany_ulozit", "Nič", "nie adresa")["ok"])
+    v = o.data("kurz_vybrane_zmazat", [v[0]["id"], v[2]["id"]])
+    skontroluj("Vybrané kurzy: odstránenie označených", [x["nazov"] for x in v] == ["Druhý"], v)
+    subor = json.loads((o.priecinok / "kurzy.json").read_text(encoding="utf-8"))
+    skontroluj("Vybrané kurzy: záložky stránok s kurzami ostali", len(subor.get("zalozky", [])) == 1
+               and [x["nazov"] for x in subor.get("vybrane", [])] == ["Druhý"], subor)
+    skontroluj("Vybrané kurzy: odstránenie všetkých", o.data("kurz_vybrane_zmazat", None) == [])
+
+
+def kurz_prehlad_a_setrne(o: Okno, out: Path):
+    """Prehľad kurzu (HTML v priečinku kurzu), šetrné sťahovanie, stiahnuté kurzy."""
+    d = out / "KURZY" / "Testovací kurz"
+    m = json.loads((d / "kometa-kurz.json").read_text(encoding="utf-8"))
+    skontroluj("prehľad kurzu: podklad so stiahnutými lekciami a stránka HTML",
+               [l["subor"] for k in m["kapitoly"] for l in k["lekcie"]]
+               == ["01 Začíname/01 Úvod do kurzu.mp4", "02 Ďalej/01 Pokračovanie (premenované).mp4"]
+               and (d / "Prehľad kurzu.html").is_file(), m)
+
+    o.data("ulozit_nastavenia", {"setrne_rychlost": 1, "setrne_pauza": 3})
+    lekcia = lambda u, n, c, **x: dict(url=u, nazov=n, cislo=c, odporucana=True, **x)  # noqa: E731
+    kurz = {"nazov": "Šetrný kurz | 127", "adresa": BASE + "/kurz/obsah", "kapitol": 2, "kapitoly": [
+        {"nazov": "Prvá", "cislo": 1, "lekcie": [
+            lekcia(BASE + "/kurz/subory/cast-1.pdf", "Balík 1", 1, material=True),
+            lekcia(BASE + "/kurz/chyba-404", "Chýbajúca", 3, dlzka="4:05")]},
+        {"nazov": "Druhá", "cislo": 2, "lekcie": [lekcia(BASE + "/kurz/subory/cast-2.pdf", "Balík 2", 2, material=True)]},
+    ]}
+    r = o.data("kurz_stiahnut", kurz, "fhd", {"setrne": True})
+    # .txt s odkazom na zdieľaný priečinok: len súbor, do MATERIALY (bez šetrnej prestávky – iný kurz)
+    odkaz = {"nazov": "Kurz s odkazom", "adresa": BASE + "/kurz/obsah", "kapitol": 1, "kapitoly": [
+        {"nazov": "Úvod", "cislo": 1, "lekcie": [
+            lekcia(BASE + "/kurz/material/odkaz.txt", "Materiály kurzu (Odkaz vo vnútri súboru)", 2, material=True)]}]}
+    r2 = o.data("kurz_stiahnut", odkaz, "video")
+    txt = out / "KURZY" / "Kurz s odkazom" / "MATERIALY" / "02 Materiály kurzu (Odkaz vo vnútri súboru).txt"
+    s2 = o.cakaj(lambda s: any(x["nazov"] == txt.name and x["stav"] in ("hotovo", "chyba") for x in s["polozky"]), 30)
+    q = next((x for x in s2["polozky"] if x["nazov"] == txt.name), {})
+    skontroluj("materiál .txt s odkazom: stiahne sa len súbor, do priečinka MATERIALY",
+               r2["pridane"] == 1 and q.get("stav") == "hotovo" and q.get("format") == "subor"
+               and txt.is_file() and txt.read_bytes() == ODKAZ_TXT, (q, r2))
+    om = o.data("kurz_odkazy_materialov", str(txt.parent.parent))
+    skontroluj("odkaz z materiálu sa dá otvoriť v prehliadači kurzov",
+               [x["odkaz"] for x in om] == ["https://zdielane.example.com/:f:/g/priecinok?e=abc"], om)
+    koren = out / "KURZY" / "Šetrný kurz"
+    skontroluj("šetrný kurz do sťahovania, prehľad hneď v priečinku kurzu", r["pridane"] == 3
+               and r["prehlad"] == str(koren / "Prehľad kurzu.html") and Path(r["prehlad"]).is_file(), r)
+    zaznam = []
+    koniec = time.time() + 90
+    while time.time() < koniec:
+        s = o.data("stav")
+        moje = [x for x in s["polozky"] if x.get("setrne")]
+        zaznam.append((time.time(), {x["nazov"]: x["stav"] for x in moje}, s.get("setrne_prestavka")))
+        if len(moje) == 3 and all(x["stav"] in ("hotovo", "chyba") for x in moje):
+            break
+        time.sleep(0.1)
+    zacal = lambda n: next((t for t, st, _ in zaznam if st.get(n, "caka") != "caka"), 0)  # noqa: E731
+    skoncil = lambda n: next((t for t, st, _ in zaznam if st.get(n) in ("hotovo", "chyba")), 0)  # noqa: E731
+    a, b, c = "01 Balík 1.pdf", "03 Chýbajúca", "02 Balík 2.pdf"
+    naraz = max(sum(1 for x in st.values() if x == "stahuje") for _, st, _ in zaznam)
+    casy = dict(trvanie=skoncil(a) - zacal(a), pauza1=zacal(b) - skoncil(a), pauza2=zacal(c) - skoncil(b))
+    skontroluj("šetrne: jedna lekcia naraz, strop rýchlosti, prestávka po videu aj po chybe", naraz == 1
+               and casy["trvanie"] >= 3.3 and casy["pauza1"] >= 1.5 and casy["pauza2"] >= 1.5
+               and any(x for _, _, x in zaznam), (naraz, casy, zaznam[-1]))
+    skontroluj("šetrne: súbory celé a v priečinkoch kapitol podľa čísel zo stránky",
+               (koren / "01 Prvá" / "01 Balík 1.pdf").read_bytes() == SETRNE["cast-1.pdf"]
+               and (koren / "02 Druhá" / "02 Balík 2.pdf").read_bytes() == SETRNE["cast-2.pdf"],
+               sorted(str(x.relative_to(koren)) for x in koren.rglob("*")))
+    html = (koren / "Prehľad kurzu.html").read_text(encoding="utf-8")
+    udaje = json.loads(html.split('type="application/json">')[1].split("</script>")[0])
+    lekcie = {l["nazov"]: l for k in udaje["kapitoly"] for l in k["lekcie"]}
+    skontroluj("prehľad kurzu: stiahnuté materiály, chýbajúca lekcia a dĺžka zo stránky",
+               lekcie["Balík 1"]["je"] and lekcie["Balík 2"]["subor"] == "02 Druhá/02 Balík 2.pdf"
+               and not lekcie["Chýbajúca"]["je"] and lekcie["Chýbajúca"]["sekund"] == 245
+               and udaje["nazov"] == "Šetrný kurz", lekcie)
+    st = o.data("kurzy_stiahnute")
+    skontroluj("stiahnuté kurzy v Komete", {x["nazov"]: (x["lekcii"], x["stiahnutych"]) for x in st}
+               == {"Šetrný kurz": (3, 2), "Testovací kurz": (2, 2), "Kurz s odkazom": (1, 1)}, st)
+    o.data("kurz_prehlad_otvorit", r["prehlad"])
+    skontroluj("prehľad kurzu sa otvorí v prehliadači systému",
+               (D / "otvorene.txt").read_text(encoding="utf-8").strip() == r["prehlad"])
+    skontroluj("otvoriť sa dá len prehľad kurzu", not o.volaj("kurz_prehlad_otvorit", str(koren / "01 Prvá" / "01 Balík 1.pdf"))["ok"])
+    o.data("ulozit_nastavenia", {"setrne_rychlost": 2, "setrne_pauza": 45})
+    prehlad_v_prehliadaci(d)
+
+
+def prehlad_v_prehliadaci(d: Path):
+    """Stránka prehľadu kurzu otvorená zo disku: osnova, lekcia, pozreté (zapamätá si to)."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print("Prehľad kurzu: Playwright nie je nainštalovaný – preskakujem")
+        return
+    with sync_playwright() as p:
+        b = p.chromium.launch()
+        s = b.new_page(viewport={"width": 1280, "height": 860})
+        chyby = []
+        s.on("pageerror", lambda e: chyby.append(str(e)))
+        s.goto((d / "Prehľad kurzu.html").as_uri())
+        s.get_by_role("heading", name="Testovací kurz").first.wait_for(timeout=10000)
+        skontroluj("prehľad kurzu: osnova s kapitolami a lekciami",
+                   s.locator(".kapitola").count() == 2 and s.locator(".lekcia").count() == 2
+                   and "Pozreté 0 z 2" in s.locator("#suhrn").inner_text(), s.locator("#suhrn").inner_text())
+        (Path(os.environ.get("KOMETA_SNIMKY", D)) / "prehlad-uvod.png").write_bytes(s.screenshot(full_page=True))
+        s.get_by_role("button", name="Začať: Úvod do kurzu").click()
+        s.get_by_role("heading", name="01 Úvod do kurzu").wait_for(timeout=5000)
+        src = s.locator("video").get_attribute("src") if s.locator("video").count() else ""
+        skontroluj("prehľad kurzu: lekcia s videom zo súboru vedľa stránky",
+                   src == "01%20Za%C4%8D%C3%ADname/01%20%C3%9Avod%20do%20kurzu.mp4"
+                   or s.get_by_text("Prehliadač toto video neprehrá").count() == 1, src)
+        s.get_by_label("Pozreté", exact=True).check()
+        s.locator("main h2").click()
+        s.keyboard.press("n")
+        s.get_by_role("heading", name="01 Pokračovanie (premenované)").wait_for(timeout=5000)
+        (Path(os.environ.get("KOMETA_SNIMKY", D)) / "prehlad-lekcia.png").write_bytes(s.screenshot())
+        s.reload()
+        s.get_by_role("heading", name="01 Pokračovanie (premenované)").wait_for(timeout=5000)
+        skontroluj("prehľad kurzu: pozreté si pamätá aj po obnovení stránky",
+                   "Pozreté 1 z 2" in s.locator("#suhrn").inner_text()
+                   and s.locator(".lekcia.pozreta").count() == 1, s.locator("#suhrn").inner_text())
+        s.locator("#hladaj").fill("pokracovanie")
+        skontroluj("prehľad kurzu: hľadanie bez diakritiky", s.locator(".lekcia:visible").count() == 1)
+        skontroluj("prehľad kurzu bez chýb JavaScriptu", not chyby, chyby)
+        b.close()
+
+
+def lista_prehliadaca():
+    """Lišta v prehliadači kurzov: Späť, Dopredu, adresa; adresy v .txt ako odkazy; len v hlavnej stránke."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print("Lišta prehliadača: Playwright nie je nainštalovaný – preskakujem")
+        return
+    print("Lišta prehliadača kurzov")
+    js = (KOREN / "jadro/src/sluzba/lista_prehliadaca.js").read_text(encoding="utf-8")
+    with sync_playwright() as p:
+        b = p.chromium.launch()
+        s = b.new_page(viewport={"width": 1100, "height": 500})
+        s.add_init_script(js)
+        chyby = []
+        s.on("pageerror", lambda e: chyby.append(str(e)))
+        txt = BASE + "/verejne/odkaz.txt"
+        s.goto(txt)
+        lista = s.get_by_role("toolbar", name="Prehliadač kurzov – Kometa")
+        adresa = lista.get_by_label("Adresa stránky")
+        skontroluj("lišta: adresa otvorenej stránky (aj pri textovom súbore)", adresa.input_value() == txt, adresa.input_value())
+        (Path(os.environ.get("KOMETA_SNIMKY", D)) / "lista-txt.png").write_bytes(s.screenshot())
+        s.get_by_role("link", name=BASE + "/portal/prihlasenie").click()
+        s.wait_for_url(BASE + "/portal/prihlasenie")
+        skontroluj("lišta: adresa v .txt je klikateľný odkaz", s.url == BASE + "/portal/prihlasenie")
+        lista.get_by_role("button", name="Späť").click()
+        s.wait_for_url(txt)
+        lista.get_by_role("button", name="Dopredu").click()
+        s.wait_for_url(BASE + "/portal/prihlasenie")
+        skontroluj("lišta: Späť a Dopredu", s.url == BASE + "/portal/prihlasenie")
+        adresa.fill(BASE + "/verejne/s-ramcom")
+        adresa.press("Enter")
+        s.get_by_role("heading", name="S rámom").wait_for(timeout=5000)
+        skontroluj("lišta: zadaná adresa sa otvorí, lišta len raz – nie v rámci",
+                   s.url.endswith("/verejne/s-ramcom") and s.locator("kometa-lista").count() == 1
+                   and s.frames[1].locator("kometa-lista").count() == 0, (s.url, len(s.frames)))
+        lista.get_by_role("button", name="Skryť lištu").click()
+        s.reload()
+        skontroluj("lišta: skrytá ostane skrytá, dá sa ukázať",
+                   s.get_by_role("button", name="Ukázať lištu Komety").is_visible() and not adresa.is_visible())
+        s.get_by_role("button", name="Ukázať lištu Komety").click()
+        skontroluj("lišta bez chýb JavaScriptu v stránke", adresa.is_visible() and not chyby, chyby)
+        b.close()
 
 
 def prechod_osnovy(o: Okno, pr: Path, out: Path):
@@ -1054,7 +1302,7 @@ def prechod_osnovy(o: Okno, pr: Path, out: Path):
         # texty, test a materiál (videá Vimea sa v skúške nesťahujú)
         bez_videi = dict(k, kapitoly=[dict(x, lekcie=[y for y in x["lekcie"] if y["druh"] != "video"]) for x in k["kapitoly"]])
         r = o.data("kurz_stiahnut", bez_videi, "video")
-        koren = out / "Online kurz AI Nástroje Umelej Inteligencie v Praxi"
+        koren = out / "KURZY" / "Online kurz AI Nástroje Umelej Inteligencie v Praxi"
         text = koren / "01 I. Prehľad AI nástrojov a ich praktické využitie" / "01 Ktoré chatovacie AI nástroje patria medzi najpoužívanejšie.html"
         test = koren / "02 II. Google Gemini AI, používateľské rozhranie a pokročilé funkcie" / "01 Priebežný test.html"
         skontroluj("text a test lekcie uložené ako stránky HTML v priečinkoch kapitol", r["texty"] == 2 and r["pridane"] == 1
@@ -1498,6 +1746,14 @@ def rozhranie(o: Okno, out: Path):
         s.get_by_role("button", name="Stiahnuť").click()
         s.get_by_text("b.mp4").first.wait_for(timeout=20000)
         o.cakaj(lambda st: (polozka(st, BASE + "/media/b.mp4") or {}).get("stav") == "hotovo", 20)
+        # označiť a presunúť: tlačidlá poradia v lište označených
+        s.locator(".polozka input.volba").first.check()
+        s.get_by_role("button", name="Presunúť úplne hore").click()
+        s.get_by_role("button", name="Presunúť úplne dole").click()
+        skontroluj("rozhranie: označené položky sa dajú presúvať (hore, vyššie, nižšie, dole)",
+                   all(s.get_by_role("button", name=n).count() == 1 for n in
+                       ("Presunúť úplne hore", "Presunúť vyššie", "Presunúť nižšie", "Presunúť úplne dole")))
+        s.get_by_role("button", name="Zrušiť výber").click()
         s.get_by_role("button", name="Nastavenia").first.click()
         s.get_by_role("heading", name="Pomocníci").wait_for(timeout=10000)
         skontroluj("rozhranie: Nastavenia ukazujú pomocníkov yt-dlp a FFmpeg", s.get_by_text("yt-dlp", exact=True).count() >= 1)
@@ -1658,6 +1914,7 @@ def main() -> int:
     try:
         zakladne(o, out)
         front(o, out)
+        kvalita_a_poradie(o, out)
         ucty(o, out)
         archivy(o, out)
         rozhranie(o, out)
@@ -1670,6 +1927,7 @@ def main() -> int:
         strazca(out)
         strazca_okno()
         kurzy(out)
+        lista_prehliadaca()
         if sys.platform.startswith("linux"):
             doinstalovanie()
             priecinky()

@@ -17,6 +17,8 @@ pub struct Nastavenia {
     /// Počet spojení na jeden súbor / súbežných kúskov streamu.
     pub spojenia: usize,
     pub max_vyska: Option<u32>,
+    /// `max_vyska` je cieľ, nie strop: práve táto kvalita (napr. Full HD), inak najbližšia
+    pub presna_vyska: bool,
     /// Poradie jazykov zvuku, napr. ["cs", "sk", "en"].
     pub jazyky: Vec<String>,
     /// Prihlásenie z prehliadača kurzov: (adresa, „meno=hodnota; Domain=…; Path=…“). Klient
@@ -31,6 +33,7 @@ impl Default for Nastavenia {
             hlavicky: vec![],
             spojenia: 4,
             max_vyska: None,
+            presna_vyska: false,
             jazyky: vec![],
             cookies: vec![],
         }

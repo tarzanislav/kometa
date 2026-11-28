@@ -229,15 +229,20 @@ pub fn parse(text: &str, base: &Url) -> Vysledok<Playlist> {
     Ok(Playlist::Media(m))
 }
 
-/// Najlepšia varianta, nanajvýš `max_vyska` (ak je zadaná).
-pub fn vyber_variantu(v: &[Varianta], max_vyska: Option<u32>) -> Option<&Varianta> {
-    let vhodne: Vec<&Varianta> = v
-        .iter()
-        .filter(|x| match (max_vyska, x.vyska) {
-            (Some(m), Some(h)) => h <= m,
-            _ => true,
-        })
-        .collect();
+/// Najlepšia varianta, nanajvýš `max_vyska` (ak je zadaná); pri `presne` práve tá kvalita
+/// (inak najbližšia) – pozri [`crate::kvalita`].
+pub fn vyber_variantu(v: &[Varianta], max_vyska: Option<u32>, presne: bool) -> Option<&Varianta> {
+    let trieda = |x: &Varianta| crate::kvalita::trieda(x.sirka, x.vyska);
+    let vhodne: Vec<&Varianta> = match (max_vyska, presne) {
+        (Some(ciel), true) => {
+            let t = crate::kvalita::presna_trieda(v.iter().filter_map(trieda), ciel);
+            v.iter().filter(|x| t.is_none() || trieda(x) == t).collect()
+        }
+        _ => v
+            .iter()
+            .filter(|x| crate::kvalita::do_stropu(trieda(x), max_vyska))
+            .collect(),
+    };
     let zoznam = if vhodne.is_empty() {
         v.iter().collect()
     } else {
@@ -312,8 +317,23 @@ mod testy {
             panic!()
         };
         assert_eq!(m.varianty.len(), 3);
-        assert_eq!(vyber_variantu(&m.varianty, None).unwrap().vyska, Some(1080));
-        let v720 = vyber_variantu(&m.varianty, Some(720)).unwrap();
+        assert_eq!(
+            vyber_variantu(&m.varianty, None, false).unwrap().vyska,
+            Some(1080)
+        );
+        let v720 = vyber_variantu(&m.varianty, Some(720), false).unwrap();
+        assert_eq!(
+            vyber_variantu(&m.varianty, Some(1080), true).unwrap().vyska,
+            Some(1080)
+        );
+        assert_eq!(
+            vyber_variantu(&m.varianty, Some(950), true).unwrap().vyska,
+            Some(1080)
+        );
+        assert_eq!(
+            vyber_variantu(&m.varianty, Some(900), true).unwrap().vyska,
+            Some(720)
+        ); // rovnako ďaleko → nižšia
         assert_eq!(v720.uri, "https://iny.example.com/720.m3u8");
         let z = vyber_zvuk(&m.rendicie, Some("a"), &["cs".into(), "sk".into()]);
         assert_eq!(

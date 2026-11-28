@@ -162,7 +162,7 @@ pub fn argumenty_ytdlp(volby: Volby, format: &str) -> Vec<String> {
         a.push("--embed-chapters");
     }
     // obrázok len tam, kde výsledok určite vie obrázok niesť (MP4/MKV/MP3), nie WebM/Opus
-    if volby.obal && matches!(format, "video" | "mp4" | "1080" | "720" | "mp3") {
+    if volby.obal && matches!(format, "video" | "fhd" | "mp4" | "1080" | "720" | "mp3") {
         a.extend(["--embed-thumbnail", "--convert-thumbnails", "jpg"]);
     }
     a.into_iter().map(str::to_string).collect()

@@ -116,6 +116,12 @@ pub struct Polozka {
     /// stránka po prihlásení (kurz) – pošlú sa cookies z prehliadača kurzov
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub prihlasenie: bool,
+    /// šetrné sťahovanie (kurzy): jedno naraz, obmedzená rýchlosť, jedno spojenie, prestávky
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub setrne: bool,
+    /// lekcia kurzu (kľúč v `kometa-kurz.json`) – po stiahnutí sa doplní prehľad kurzu
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub lekcia: String,
 }
 
 /// Stav rozbaľovania: „caka“ (na ďalšie časti), „bezi“, „hotovo“, „heslo“, „chyba“, „cast“
@@ -145,6 +151,8 @@ pub struct Nova {
     pub zo_skenu: bool,
     pub jazyky: Option<VolbyJazykov>,
     pub prihlasenie: bool,
+    pub setrne: bool,
+    pub lekcia: String,
 }
 
 pub struct Beh {
@@ -158,6 +166,8 @@ pub struct Fronta {
     subor: PathBuf,
     posledne_ulozenie: Instant,
     pub zatvara: bool,
+    /// šetrné sťahovanie: ďalšia šetrná položka sa spustí až po tejto chvíli (prestávka)
+    pub setrne_od: Option<Instant>,
 }
 
 pub fn teraz() -> f64 {
@@ -206,6 +216,7 @@ impl Fronta {
             subor,
             posledne_ulozenie: Instant::now(),
             zatvara: false,
+            setrne_od: None,
         };
         if f.prevezmi_z_pythonu(priecinok) > 0 {
             f.uloz(true);
@@ -257,6 +268,8 @@ impl Fronta {
                     .unwrap_or(false),
                 jazyky: None,
                 prihlasenie: false,
+                setrne: false,
+                lekcia: String::new(),
             })
             .collect();
         let pridane = self.pridaj(nove).len();
@@ -339,11 +352,96 @@ impl Fronta {
                 treba_heslo: String::new(),
                 rozbalenie: None,
                 prihlasenie: n.prihlasenie,
+                setrne: n.setrne,
+                lekcia: n.lekcia,
             });
             pridane.push(id);
         }
         self.uloz(true);
         pridane
+    }
+
+    /// Presunie označené položky v rámci ich časti zoznamu (Sťahuje sa, V poradí, Nepodarilo sa,
+    /// Hotové): „hore“ (úplne hore), „vyssie“ (o jedno), „nizsie“, „dole“. Poradie „V poradí“ je
+    /// aj poradie sťahovania. Hotové okno ukazuje od najnovších, preto sa tam smer otočí.
+    pub fn presun(&mut self, ids: &[String], kam: &str) -> bool {
+        let cast = |p: &Polozka| match p.stav {
+            Stav::Stahuje => 0,
+            Stav::Caka | Stav::Pauza => 1,
+            Stav::Chyba => 2,
+            _ => 3,
+        };
+        let mut zmena = false;
+        for c in 0..4 {
+            let miesta: Vec<usize> = (0..self.polozky.len())
+                .filter(|&i| cast(&self.polozky[i]) == c)
+                .collect();
+            let mut rad: Vec<Polozka> = miesta.iter().map(|&i| self.polozky[i].clone()).collect();
+            if !rad.iter().any(|p| ids.contains(&p.id)) {
+                continue;
+            }
+            let kam = match (c, kam) {
+                (3, "hore") => "dole",
+                (3, "dole") => "hore",
+                (3, "vyssie") => "nizsie",
+                (3, "nizsie") => "vyssie",
+                (_, k) => k,
+            };
+            let pred: Vec<String> = rad.iter().map(|p| p.id.clone()).collect();
+            presun_v_rade(&mut rad, |p| ids.contains(&p.id), kam);
+            if rad.iter().map(|p| &p.id).ne(pred.iter()) {
+                zmena = true;
+                for (&i, p) in miesta.iter().zip(rad) {
+                    self.polozky[i] = p;
+                }
+            }
+        }
+        if zmena {
+            self.uloz(true);
+        }
+        zmena
+    }
+
+    /// Koľko sekúnd ešte trvá prestávka šetrného sťahovania (len keď nejaká šetrná položka čaká).
+    pub fn setrna_prestavka(&self) -> Option<f64> {
+        let t = self.setrne_od?;
+        let zostava = t.saturating_duration_since(Instant::now()).as_secs_f64();
+        (zostava > 0.0
+            && self
+                .polozky
+                .iter()
+                .any(|p| p.setrne && p.stav == Stav::Caka))
+        .then_some(zostava)
+    }
+
+    /// Hotový súbor, ktorý sa stiahol mimo frontu (v prehliadači kurzov) – aby bol v zozname.
+    pub fn pridaj_hotovy(&mut self, url: &str, nazov: &str, subor: &Path, velkost: u64) {
+        let priecinok = subor
+            .parent()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let Some(id) = self
+            .pridaj(vec![Nova {
+                url: url.to_string(),
+                format: "subor".into(),
+                priecinok,
+                nazov: nazov.to_string(),
+                zdroj: "Kurz".into(),
+                ..Default::default()
+            }])
+            .pop()
+        else {
+            return;
+        };
+        let cesta = subor.to_string_lossy().into_owned();
+        self.uprav(&id, |x| {
+            x.stav = Stav::Hotovo;
+            x.subor = cesta.clone();
+            x.ciel = cesta;
+            x.hotovo = velkost;
+            x.celkom = Some(velkost);
+        });
+        self.uloz(true);
     }
 
     pub fn spusti(&mut self, ids: &[String]) {
@@ -419,14 +517,21 @@ impl Fronta {
             .iter()
             .filter(|p| p.stav == Stav::Stahuje)
             .count();
+        // šetrné položky (kurzy) idú po jednej a medzi nimi je prestávka; ostatné sa nezdržia
+        let mut setrna_bezi = self
+            .polozky
+            .iter()
+            .any(|p| p.stav == Stav::Stahuje && p.setrne);
+        let prestavka = self.setrne_od.is_some_and(|t| Instant::now() < t);
         let mut out = vec![];
         for p in self.polozky.iter_mut() {
             if bezi >= limit {
                 break;
             }
-            if p.stav != Stav::Caka {
+            if p.stav != Stav::Caka || (p.setrne && (setrna_bezi || prestavka)) {
                 continue;
             }
+            setrna_bezi |= p.setrne;
             p.stav = Stav::Stahuje;
             p.chyba.clear();
             p.podrobnosti.clear();
@@ -442,6 +547,37 @@ impl Fronta {
             bezi += 1;
         }
         out
+    }
+}
+
+/// Presun označených prvkov radu; súvislý blok označených sa pri „o jedno“ posúva celý.
+fn presun_v_rade<T>(rad: &mut Vec<T>, oznaceny: impl Fn(&T) -> bool, kam: &str) {
+    match kam {
+        "hore" | "dole" => {
+            let (mut ozn, mut ine): (Vec<T>, Vec<T>) = rad.drain(..).partition(|x| oznaceny(x));
+            if kam == "hore" {
+                ozn.append(&mut ine);
+                *rad = ozn;
+            } else {
+                ine.append(&mut ozn);
+                *rad = ine;
+            }
+        }
+        "vyssie" => {
+            for i in 1..rad.len() {
+                if oznaceny(&rad[i]) && !oznaceny(&rad[i - 1]) {
+                    rad.swap(i - 1, i);
+                }
+            }
+        }
+        "nizsie" => {
+            for i in (0..rad.len().saturating_sub(1)).rev() {
+                if oznaceny(&rad[i]) && !oznaceny(&rad[i + 1]) {
+                    rad.swap(i, i + 1);
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -484,6 +620,27 @@ pub fn zmaz_rozpracovane(p: &Polozka) {
 
 #[cfg(test)]
 mod testy {
+
+    #[test]
+    fn presun_poradia() {
+        let ozn = |x: &u8| matches!(x, 3 | 4 | 6);
+        let r = |kam: &str| {
+            let mut v: Vec<u8> = (1..=7).collect();
+            super::presun_v_rade(&mut v, ozn, kam);
+            v
+        };
+        assert_eq!(r("hore"), [3, 4, 6, 1, 2, 5, 7]);
+        assert_eq!(r("dole"), [1, 2, 5, 7, 3, 4, 6]);
+        assert_eq!(r("vyssie"), [1, 3, 4, 2, 6, 5, 7]);
+        assert_eq!(r("nizsie"), [1, 2, 5, 3, 4, 7, 6]);
+        // na okraji ostane, kde je
+        let mut v = vec![1u8, 2, 3];
+        super::presun_v_rade(&mut v, |x| *x == 1, "vyssie");
+        assert_eq!(v, [1, 2, 3]);
+        super::presun_v_rade(&mut v, |x| *x == 3, "nizsie");
+        assert_eq!(v, [1, 2, 3]);
+    }
+
     use super::*;
 
     fn nova(url: &str) -> Nova {

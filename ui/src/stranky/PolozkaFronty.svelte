@@ -43,6 +43,14 @@
       : (app.init?.formaty.find((f) => f.id === p.format)?.nazov ?? ''),
   )
   const podiel = $derived(p.podiel ?? (p.celkom ? p.hotovo / p.celkom : null))
+  // šetrné sťahovanie: prestávka pred touto položkou (prvá čakajúca šetrná)
+  const prestavka = $derived(
+    p.setrne && p.stav === 'caka' && app.stav?.setrne_prestavka
+      ? app.stav.polozky.find((x) => x.setrne && x.stav === 'caka')?.id === p.id
+        ? app.stav.setrne_prestavka
+        : 0
+      : 0,
+  )
   const kometaStav = $derived(
     p.stav === 'stahuje' ? 'bezi' : p.stav === 'pauza' ? 'pauza' : p.stav === 'chyba' ? 'chyba' : 'caka',
   )
@@ -98,6 +106,9 @@
       {#if p.autor && p.stav !== 'hotovo'}<span class="autor">{p.autor}</span>{/if}
       {#if p.s_heslom && p.stav !== 'hotovo'}
         <span class="s-heslom" title="Heslo je zadané vopred"><Ikona meno="zamok" velkost={13} /> S heslom</span>
+      {/if}
+      {#if p.setrne && p.stav !== 'hotovo'}
+        <span class="setrne" title="Šetrné sťahovanie: po jednej, pomalšie a s prestávkami">Šetrne</span>
       {/if}
     </div>
     {#if vopred}
@@ -186,6 +197,9 @@
       >
     {:else if p.stav === 'pauza'}
       <span class="stav pauza">Pozastavené</span>
+    {:else if p.stav === 'caka' && prestavka}
+      <span class="stav" title="Šetrné sťahovanie: prestávka medzi videami">Prestávka</span>
+      <span class="male tlmene cisla">ešte {Math.ceil(prestavka)} s</span>
     {:else if p.stav === 'caka'}
       <span class="stav">Čaká</span>
     {:else if p.stav === 'hotovo'}
@@ -289,6 +303,10 @@
   .male-tl {
     height: 28px;
     padding: 0 var(--s3);
+  }
+  .setrne {
+    color: var(--accent-ink);
+    font-weight: 600;
   }
   .s-heslom {
     display: inline-flex;

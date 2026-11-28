@@ -5,12 +5,14 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use kometa_jadro::sluzba::kurzy;
 use kometa_jadro::sluzba::prostredie::{Prostredie, Systemove};
 use kometa_jadro::sluzba::Sluzba;
 use serde_json::Value;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
+use tauri::webview::DownloadEvent;
 use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::DialogExt;
@@ -18,6 +20,9 @@ use tauri_plugin_notification::NotificationExt;
 
 /// Okno prehliadača kurzov – bežná stránka bez prístupu k jadru (žiadne povolenia v capabilities).
 const PREHLIADAC: &str = "kurz";
+
+/// Súbory, ktoré sa práve sťahujú v prehliadači kurzov (kam sa ukladajú).
+static CIELE: std::sync::Mutex<Vec<std::path::PathBuf>> = std::sync::Mutex::new(Vec::new());
 
 /// Natívne dialógy a schránka okna aplikácie.
 struct Okno {
@@ -123,12 +128,46 @@ impl Prostredie for Okno {
             let _ = w.set_focus();
             return Ok(());
         }
+        let app = self.app.clone();
         WebviewWindowBuilder::new(&self.app, PREHLIADAC, WebviewUrl::External(u))
             .title("Kometa – prehliadač kurzov")
             .inner_size(1200.0, 860.0)
             .min_inner_size(640.0, 480.0)
+            // lišta ako v prehliadači: Späť, Dopredu, Obnoviť, adresa (bez prístupu ku Komete)
+            .initialization_script(kurzy::LISTA_PREHLIADACA)
             // len bežné webové adresy (žiadne súbory ani vlastné schémy)
             .on_navigation(|u| matches!(u.scheme(), "http" | "https" | "about" | "blob" | "data"))
+            // stiahnuté súbory (napr. ZIP z odkazu v materiáloch) idú do MATERIALY kurzu
+            .on_download(move |_, udalost| {
+                let Some(s) = app.try_state::<Sluzba>() else {
+                    return true;
+                };
+                match udalost {
+                    DownloadEvent::Requested { destination, .. } => {
+                        *destination = s.ciel_z_prehliadaca(destination);
+                        if let Ok(mut c) = CIELE.lock() {
+                            c.push(destination.clone());
+                        }
+                    }
+                    DownloadEvent::Finished { url, path, success } => {
+                        // macOS cestu nepovie – vezme sa tá, ktorú sme určili (najstaršia čakajúca)
+                        let cesta = path.or_else(|| {
+                            CIELE
+                                .lock()
+                                .ok()
+                                .and_then(|mut c| (!c.is_empty()).then(|| c.remove(0)))
+                        });
+                        if let Some(cesta) = cesta {
+                            if let Ok(mut c) = CIELE.lock() {
+                                c.retain(|x| x != &cesta);
+                            }
+                            s.stiahnute_z_prehliadaca(url.as_str(), &cesta, success);
+                        }
+                    }
+                    _ => {}
+                }
+                true
+            })
             .build()
             .map(|_| ())
             .map_err(|e| format!("Prehliadač sa nepodarilo otvoriť: {e}"))
